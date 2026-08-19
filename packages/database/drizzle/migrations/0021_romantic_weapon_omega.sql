@@ -1,0 +1,1 @@
+ALTER TABLE "AgentProfileVersion" DROP COLUMN "skills";

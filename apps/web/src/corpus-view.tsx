@@ -319,14 +319,6 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
         <Alert className="shrink-0" tone="warn">This VM2 predates corpus-sync-v1. Run its generated installer with <span className="font-mono">--repair</span> to add signed corpus synchronization; no clean VM rebuild is required.</Alert>
       ) : null}
 
-      {/*
-        * Change control, revisions, and the set/memory panel used to stack in
-        * a third work column — three short cards that stole height from the
-        * file list. They sit beside the title and search dock now, so the
-        * mirror and its detail take the full remaining row.
-        */}
-      <div className="corpus-chrome grid shrink-0 gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)] lg:items-stretch">
-        <div className="grid min-w-0 content-start gap-3">
       <WorkspaceIntro
         icon={memoryScope ? <Brain className="size-4" aria-hidden="true" /> : <Sparkles className="size-4" aria-hidden="true" />}
         title={copy.title}
@@ -369,9 +361,16 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
           </Button>
         </div>
       </WorkspaceDock>
-        </div>
 
-        <div className="grid min-h-0 min-w-0 gap-3 sm:grid-cols-3 lg:h-0 lg:min-h-full">
+      {/*
+        * Three even columns on their own row, bounded in height. These sat
+        * beside the title in a 0.9/1.4 split, which squeezed the intro and
+        * ranged four unequal boxes across the top -- the clutter was the
+        * layout disagreeing with itself about what mattered. The page now
+        * reads in rows: what this is, how to search it, what changed, and
+        * then the mirror itself with the viewport's remainder.
+        */}
+      <div className="corpus-chrome grid shrink-0 gap-3 sm:grid-cols-3 lg:h-[210px]">
           <Panel className="flex min-h-0 flex-col overflow-hidden p-3">
             <PanelHeading className="mb-2 shrink-0" kicker="Change control" title="Recent requests" />
             <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
@@ -427,10 +426,11 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
           ) : (
             <ScopedMemoryPanel embedded canWrite={canWrite} canDelete={canDelete} onSessionExpired={onSessionExpired} />
           )}
-        </div>
       </div>
 
-      <div className="corpus-work grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+      {/* The repository takes one of three columns rather than a fixed 260px,
+          so the row above and this one share the same vertical seams. */}
+      <div className="corpus-work grid min-h-0 flex-1 gap-3 lg:grid-cols-3">
         <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3">
           {/* `node?.writable`, like every other write on this screen: it means
               the node advertised the corpus capability and is neither REVOKED
@@ -473,7 +473,7 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
           </div>
         </Panel>
 
-        <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3">
+        <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3 lg:col-span-2">
           {selected ? (
             <>
               <PanelHeading className="mb-2 shrink-0" kicker={selected.kind.replaceAll("_", " ")} title={selected.path}

@@ -54,7 +54,6 @@ function profileInput(overrides: Partial<CreateAgentProfile> = {}): CreateAgentP
     purpose: "Help operators reason about their controlled environment.",
     instructions: "Answer precisely and state uncertainty.",
     soulMd: "You are a careful operations assistant.",
-    skills: [],
     modelAlias: "hermes-agent",
     maxTurns: 1,
     timeoutSeconds: 120,

@@ -19,32 +19,31 @@ import {
   updateGuardrailPolicy,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
-import { slugAsTyped, slugify } from "./slug.js";
 import {
-  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  Panel, Select, StatusText, Textarea, WorkspaceDock, WorkspaceIntro, cn, toneFor,
+  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen,
+  Select, StatusText, WorkspaceDock, WorkspaceIntro, cn, toneFor,
 } from "./ui/index.js";
 
 interface GuardrailsViewProps {
   session: AdministratorSession | null;
   onConfigureInference: () => void;
-  onOpenOperations: () => void;
   onSessionExpired: () => void;
 }
 
-type PolicyDraft = CreateGuardrailPolicy;
+/** The enforceable half of a policy: what a control changes one part of. */
+type BoundarySettings = Omit<CreateGuardrailPolicy, "slug" | "displayName" | "description" | "version">;
 
-const initialDraft: PolicyDraft = {
-  slug: "chat-safety",
-  displayName: "Chat safety",
-  description: "Approved input and output controls for internal OrcaSynapse chat.",
-  version: "1.0.0",
-  maxInputCharacters: 12_000,
-  maxOutputCharacters: 200_000,
-  blockControlCharacters: true,
-  blockCredentialPatterns: true,
-  rules: [],
-};
+interface ControlEditor {
+  /** Null while the operator is still choosing what to add. */
+  kind: ControlKind | null;
+  /** Set when editing an existing rule rather than adding one. */
+  ruleId: string | null;
+  amount: number;
+  label: string;
+  pattern: string;
+  action: GuardrailRuleAction;
+  caseSensitive: boolean;
+}
 
 /** What each rule type means, in the words an operator needs to choose between them. */
 const RULE_TYPE_HELP: Readonly<Record<GuardrailRuleType, string>> = {
@@ -70,6 +69,110 @@ const RULE_ACTION_HELP: Readonly<Record<GuardrailRuleAction, string>> = {
  */
 const POLICY_WINDOW = 100;
 
+/**
+ * One control is one row, and one row is one thing an operator decided.
+ *
+ * The four singletons are columns on the policy record; the rule kinds are
+ * entries in its `rules` array. Presenting them as one list is what makes the
+ * boundary readable: the form this replaces asked for a slug, a version, two
+ * ceilings, two detectors and a rule table before it would accept a single
+ * blocked word, which put fifteen fields between an operator and one decision.
+ *
+ * The record underneath is unchanged. Every save is still one immutable
+ * version of the whole boundary -- these rows are how it is composed, not a
+ * claim that each control activates on its own.
+ */
+type ControlKind = "INPUT_CEILING" | "OUTPUT_CEILING" | "CONTROL_CHARACTERS" | "CREDENTIAL_PATTERNS" | GuardrailRuleType;
+
+interface ControlDefinition {
+  label: string;
+  summary: string;
+  /** The boundary has one of these, not a list of them. */
+  singleton: boolean;
+}
+
+const CONTROL_KINDS: Readonly<Record<ControlKind, ControlDefinition>> = {
+  INPUT_CEILING: { label: "Input ceiling", summary: "Longest message accepted before the model sees it.", singleton: true },
+  OUTPUT_CEILING: { label: "Output ceiling", summary: "Longest response the gateway will return.", singleton: true },
+  CONTROL_CHARACTERS: { label: "Control characters", summary: "Refuse unsafe control characters in inspected text.", singleton: true },
+  CREDENTIAL_PATTERNS: { label: "Credential patterns", summary: "Refuse text shaped like a key, token or password.", singleton: true },
+  WORD: { label: "Word filter", summary: RULE_TYPE_HELP.WORD, singleton: false },
+  PHRASE: { label: "Phrase filter", summary: RULE_TYPE_HELP.PHRASE, singleton: false },
+  PREFIX: { label: "Prefix filter", summary: RULE_TYPE_HELP.PREFIX, singleton: false },
+  REGEX: { label: "Pattern filter", summary: RULE_TYPE_HELP.REGEX, singleton: false },
+};
+
+const CONTROL_ORDER: readonly ControlKind[] = [
+  "INPUT_CEILING", "OUTPUT_CEILING", "CONTROL_CHARACTERS", "CREDENTIAL_PATTERNS", ...GUARDRAIL_RULE_TYPES,
+];
+
+function isRuleKind(kind: ControlKind): kind is GuardrailRuleType {
+  return !CONTROL_KINDS[kind].singleton;
+}
+
+/**
+ * The next version string, bumped on its trailing number.
+ *
+ * The server refuses a material change that reuses a version, and this screen
+ * now saves one control at a time. Asking an operator to hand-author a version
+ * for every word they block would turn a governance invariant into a tax, so
+ * the screen keeps the invariant and does the typing.
+ */
+function nextVersion(version: string): string {
+  const match = /^(.*?)(\d+)(\D*)$/.exec(version.trim());
+  if (!match) return `${version.trim() || "1.0.0"}.1`;
+  return `${match[1]}${Number(match[2]) + 1}${match[3]}`;
+}
+
+/** Slugs are unique per record, so each version gets one derived from itself. */
+function versionSlug(version: string): string {
+  const suffix = version.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `chat-boundary-${suffix || "1"}`.slice(0, 64);
+}
+
+interface ControlRow {
+  key: string;
+  kind: ControlKind;
+  detail: string;
+  action: GuardrailRuleAction;
+  enabled: boolean;
+  /** Present when the row is an entry in `rules` rather than a column. */
+  ruleId?: string;
+  /** Ceilings always apply once a policy exists, so they cannot be removed. */
+  removable: boolean;
+}
+
+function controlRows(policy: GuardrailPolicy | null): ControlRow[] {
+  if (!policy) return [];
+  const rows: ControlRow[] = [
+    {
+      key: "input-ceiling", kind: "INPUT_CEILING", removable: false, action: "BLOCK", enabled: true,
+      detail: `${policy.maxInputCharacters.toLocaleString("en-US")} characters`,
+    },
+    {
+      key: "output-ceiling", kind: "OUTPUT_CEILING", removable: false, action: "BLOCK", enabled: true,
+      detail: `${policy.maxOutputCharacters.toLocaleString("en-US")} characters`,
+    },
+  ];
+  if (policy.blockControlCharacters) {
+    rows.push({ key: "control-characters", kind: "CONTROL_CHARACTERS", removable: true, action: "BLOCK", enabled: true, detail: "Built-in detector" });
+  }
+  if (policy.blockCredentialPatterns) {
+    rows.push({ key: "credential-patterns", kind: "CREDENTIAL_PATTERNS", removable: true, action: "BLOCK", enabled: true, detail: "Built-in detector" });
+  }
+  for (const rule of policy.rules) {
+    rows.push({
+      key: rule.id, kind: rule.type, ruleId: rule.id, removable: true, action: rule.action, enabled: rule.enabled,
+      detail: `${rule.label} — ${rule.pattern}${rule.caseSensitive ? "" : " (any case)"}`,
+    });
+  }
+  return rows;
+}
+
+/* Audit-trail row grids: a header row and data rows sharing one template. */
+const CONTROL_ROW = "grid min-w-[820px] grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_96px_80px_152px] items-center gap-3";
+const POLICY_ROW = "grid min-w-[880px] grid-cols-[minmax(0,1.5fr)_64px_120px_minmax(0,1.3fr)_128px_168px] items-center gap-3";
+
 function tone(policy: GuardrailPolicy): string {
   if (policy.status === "ACTIVE") return "healthy";
   if (policy.status === "SUSPENDED") return "degraded";
@@ -83,13 +186,10 @@ function when(value: string): string {
 export function GuardrailsView({
   session,
   onConfigureInference,
-  onOpenOperations,
   onSessionExpired,
 }: GuardrailsViewProps) {
   const [policies, setPolicies] = useState<GuardrailPolicy[]>([]);
-  const [draft, setDraft] = useState<PolicyDraft>(initialDraft);
-  const [editing, setEditing] = useState<GuardrailPolicy | null>(null);
-  const [showEditor, setShowEditor] = useState(false);
+  const [control, setControl] = useState<ControlEditor | null>(null);
   const [decision, setDecision] = useState<{ id: string; action: "activate" | "suspend"; reason: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,115 +215,148 @@ export function GuardrailsView({
 
   /**
    * A 409 means another operator saved first, so the revision this screen is
-   * holding can never succeed again. Refetch, and re-point the open editor at
-   * what was actually saved: this screen has no Refresh control and load() runs
-   * only on [session], so without this every retry resends the revision that
-   * already lost and the only way out is to navigate away and back.
+   * holding can never succeed again. Refetch: this screen has no Refresh
+   * control and load() runs only on [session], so without this every retry
+   * resends the revision that already lost and the only way out is to navigate
+   * away and back. `commit` reads the revision from state at call time, so a
+   * refetch is all a retry needs.
    */
   const resyncAfterConflict = async (cause: unknown) => {
     if (!(cause instanceof OrcaSynapseApiError) || cause.status !== 409) return;
-    const items = await load();
-    setEditing((current) => (current ? items.find(({ id }) => id === current.id) ?? current : null));
+    await load();
   };
 
   /*
-   * Rule identity is generated here rather than server-side because a rule is a
-   * member of a jsonb array, not a row — there is no insert to return an id
-   * from. `createClientMessageId` rather than `crypto.randomUUID` because this
-   * product is routinely served over plain HTTP, where `randomUUID` is absent.
+   * The draft is the only editable record: the server refuses to change an
+   * ACTIVE policy, and suspending one to edit it makes chat fail closed. So a
+   * control lands on the open draft when there is one, and otherwise starts a
+   * new draft seeded from whatever is enforcing -- the live boundary is never
+   * touched, and no edit can open an outage window.
    */
-  const addRule = () => setDraft((current) => ({
-    ...current,
-    rules: [...current.rules, {
-      id: createClientMessageId(),
-      label: "",
-      type: "WORD",
-      pattern: "",
-      action: "BLOCK",
-      caseSensitive: false,
-      enabled: true,
-    }],
-  }));
+  const draftPolicy = policies.find(({ status }) => status === "DRAFT") ?? null;
+  const enforcedPolicy = policies.find(({ status }) => status === "ACTIVE") ?? null;
+  const workingPolicy = draftPolicy ?? enforcedPolicy;
 
-  const updateRule = (index: number, changes: Partial<GuardrailRule>) => setDraft((current) => ({
-    ...current,
-    rules: current.rules.map((rule, position) => (position === index ? { ...rule, ...changes } : rule)),
-  }));
-
-  const removeRule = (index: number) => setDraft((current) => ({
-    ...current,
-    rules: current.rules.filter((_, position) => position !== index),
-  }));
-
-  const startCreate = () => {
-    setEditing(null);
-    setDraft(initialDraft);
-    setShowEditor(true);
-    setError(null);
-    setMessage(null);
-  };
-
-  const startEdit = (policy: GuardrailPolicy) => {
-    setEditing(policy);
-    setDraft({
-      slug: policy.slug,
-      displayName: policy.displayName,
-      description: policy.description,
-      version: policy.version,
-      maxInputCharacters: policy.maxInputCharacters,
-      maxOutputCharacters: policy.maxOutputCharacters,
-      blockControlCharacters: policy.blockControlCharacters,
-      blockCredentialPatterns: policy.blockCredentialPatterns,
-      rules: policy.rules,
-    });
-    setShowEditor(true);
-    setError(null);
-    setMessage(null);
-  };
-
-  const save = async (event: FormEvent) => {
-    event.preventDefault();
+  const commit = async (settings: BoundarySettings, note: string) => {
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      if (editing) {
-        await updateGuardrailPolicy(editing.id, {
-          displayName: draft.displayName,
-          description: draft.description,
-          version: draft.version,
-          maxInputCharacters: draft.maxInputCharacters,
-          maxOutputCharacters: draft.maxOutputCharacters,
-          blockControlCharacters: draft.blockControlCharacters,
-          blockCredentialPatterns: draft.blockCredentialPatterns,
-          rules: draft.rules,
-          expectedRevision: editing.revision,
+      /*
+       * Read from state at call time rather than from a snapshot taken when
+       * the dialog opened. A 409 refetches, so the retry then carries the
+       * revision that actually won instead of resending the one that lost.
+       */
+      const target = policies.find(({ status }) => status === "DRAFT") ?? null;
+      if (target) {
+        await updateGuardrailPolicy(target.id, {
+          ...settings,
+          version: nextVersion(target.version),
+          expectedRevision: target.revision,
         });
-        // What the server actually does with a material change: it demands a
-        // new version number and resets the policy to DRAFT. There is no
-        // evidence check in `DrizzleGuardrailManager` and there has not been
-        // one since the evaluation subsystem was removed, so the old wording
-        // promised operators a gate that would never appear.
-        // Rules count as a material change, so the sentence has to name them:
-        // an operator who edited only a rule and got a Draft reset would
-        // otherwise read it as a bug rather than as the versioning working.
-        setMessage("Policy updated. Changing a limit, a detector or a rule resets it to Draft under its new version, so activate that version to enforce it.");
       } else {
-        await createGuardrailPolicy({ ...draft, slug: slugify(draft.slug) });
-        setMessage("Draft guardrail policy created.");
+        const seed = policies.find(({ status }) => status === "ACTIVE") ?? null;
+        const version = seed ? nextVersion(seed.version) : "1.0.0";
+        await createGuardrailPolicy({
+          ...settings,
+          slug: versionSlug(version),
+          displayName: "Chat boundary",
+          description: seed?.description ?? "Controls enforced on everything sent to the model.",
+          version,
+        });
       }
-      setEditing(null);
-      setShowEditor(false);
+      setMessage(note);
+      setControl(null);
       await load();
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else {
         await resyncAfterConflict(cause);
-        setError(cause instanceof Error ? cause.message : "Unable to save the guardrail policy.");
+        setError(cause instanceof Error ? cause.message : "Unable to save the control.");
       }
     } finally {
       setBusy(false);
     }
+  };
+
+  /** The boundary as it stands, which each control then changes one part of. */
+  const currentSettings = (): BoundarySettings => ({
+    maxInputCharacters: workingPolicy?.maxInputCharacters ?? 12_000,
+    maxOutputCharacters: workingPolicy?.maxOutputCharacters ?? 200_000,
+    blockControlCharacters: workingPolicy?.blockControlCharacters ?? false,
+    blockCredentialPatterns: workingPolicy?.blockCredentialPatterns ?? false,
+    rules: workingPolicy ? [...workingPolicy.rules] : [],
+  });
+
+  const saveControl = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!control?.kind) return;
+    const settings = currentSettings();
+    if (control.kind === "INPUT_CEILING") settings.maxInputCharacters = control.amount;
+    else if (control.kind === "OUTPUT_CEILING") settings.maxOutputCharacters = control.amount;
+    else if (control.kind === "CONTROL_CHARACTERS") settings.blockControlCharacters = true;
+    else if (control.kind === "CREDENTIAL_PATTERNS") settings.blockCredentialPatterns = true;
+    else {
+      const rule: GuardrailRule = {
+        /*
+         * Generated here because a rule is a member of a jsonb array, not a
+         * row -- there is no insert to return an id from. `createClientMessageId`
+         * rather than `crypto.randomUUID` because this product is routinely
+         * served over plain HTTP, where `randomUUID` is absent.
+         */
+        id: control.ruleId ?? createClientMessageId(),
+        label: control.label.trim(),
+        type: control.kind,
+        pattern: control.pattern.trim(),
+        action: control.action,
+        caseSensitive: control.caseSensitive,
+        enabled: true,
+      };
+      const at = settings.rules.findIndex(({ id }) => id === rule.id);
+      if (at >= 0) settings.rules[at] = rule;
+      else settings.rules.push(rule);
+    }
+    await commit(settings, `${CONTROL_KINDS[control.kind].label} saved to the draft boundary. Activate the draft to enforce it.`);
+  };
+
+  const removeControl = async (row: ControlRow) => {
+    const settings = currentSettings();
+    if (row.kind === "CONTROL_CHARACTERS") settings.blockControlCharacters = false;
+    else if (row.kind === "CREDENTIAL_PATTERNS") settings.blockCredentialPatterns = false;
+    else if (row.ruleId) settings.rules = settings.rules.filter(({ id }) => id !== row.ruleId);
+    else return;
+    await commit(settings, `${CONTROL_KINDS[row.kind].label} removed from the draft boundary.`);
+  };
+
+  const startControl = (kind: ControlKind | null) => {
+    setControl({
+      kind,
+      ruleId: null,
+      amount: kind === "OUTPUT_CEILING" ? (workingPolicy?.maxOutputCharacters ?? 200_000) : (workingPolicy?.maxInputCharacters ?? 12_000),
+      label: "",
+      pattern: "",
+      action: "BLOCK",
+      caseSensitive: false,
+    });
+    setError(null);
+    setMessage(null);
+  };
+
+  const editControl = (row: ControlRow) => {
+    const rule = row.ruleId ? workingPolicy?.rules.find(({ id }) => id === row.ruleId) ?? null : null;
+    setControl({
+      kind: row.kind,
+      ruleId: row.ruleId ?? null,
+      amount: row.kind === "OUTPUT_CEILING"
+        ? (workingPolicy?.maxOutputCharacters ?? 200_000)
+        : (workingPolicy?.maxInputCharacters ?? 12_000),
+      label: rule?.label ?? "",
+      pattern: rule?.pattern ?? "",
+      action: rule?.action ?? "BLOCK",
+      caseSensitive: rule?.caseSensitive ?? false,
+    });
+    setError(null);
+    setMessage(null);
   };
 
   const applyDecision = async (event: FormEvent) => {
@@ -278,281 +411,288 @@ export function GuardrailsView({
     ? Number(active.blockControlCharacters) + Number(active.blockCredentialPatterns) + enabledRules
     : 0;
 
+
   return <div className="workspace-stack guardrails-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
     <WorkspaceIntro
       icon={<Shield className="size-4" aria-hidden="true" />}
       title="Guardrails"
-      actions={<>
-        <Button onClick={onOpenOperations}>Open Operations</Button>
-        {canManage && <Button variant="primary" onClick={startCreate}>New policy</Button>}
-      </>}
-    >
-      <section className="flex items-center gap-4">
-        <div className="min-w-0 flex-1">
-          <MicroLabel className="block">Runtime boundary</MicroLabel>
-          <strong className="mt-1.5 block text-label font-semibold text-text">
-            {active
-              ? `${active.displayName} v${active.version} is enforcing chat.`
-              : activatedBefore
-                ? "Chat policy enforcement is paused and fails closed."
-                : "Drafts do not change current chat behavior."}
-          </strong>
-          {/*
-            * The scope claim, stated rather than implied.
-            *
-            * Guardrails inspect what is *sent*. Nothing examines what comes
-            * back beyond the response-size ceiling, and a screen that left that
-            * ambiguous would be read as promising output filtering it does not
-            * have — which is the failure this codebase keeps recording about
-            * surfaces that imply a control nothing behind them implements.
-            */}
-          <p className="mb-0 mt-1 text-caption leading-relaxed text-muted">
-            OrcaSynapse checks <strong className="font-semibold text-text">what is sent to the model</strong> — chat
-            messages, agent run inputs and runtime gateway requests — against the size limits, the two built-in
-            detectors, and your rules. Responses are capped in length but their content is not inspected.
-          </p>
-        </div>
-        <Button className="shrink-0" onClick={onConfigureInference}>Manage AI Inference</Button>
-      </section>
-    </WorkspaceIntro>
+      actions={canManage ? <Button variant="primary" onClick={() => startControl(null)}>Add control</Button> : undefined}
+    />
 
-    <WorkspaceDock>
-      <MetricRow className="border-b-0 pb-0 lg:grid-cols-4" aria-label="Guardrail policy summary">
-        <Metric
-          label="Policy records"
-          value={policies.length >= POLICY_WINDOW ? `${POLICY_WINDOW}+` : policies.length}
-          caption={policies.length >= POLICY_WINDOW ? `Newest ${POLICY_WINDOW} loaded` : "Version controlled"}
-        />
-        <Metric
-          label="Active boundary"
-          value={active ? "1" : "0"}
-          tone={active ? "good" : activatedBefore ? "bad" : "neutral"}
-          caption={active ? active.displayName : activatedBefore ? "Fail closed" : "Legacy mode"}
-        />
-        <Metric
-          label="Active checks"
-          value={enabledControls}
-          caption={active ? `${enabledControls - enabledRules} built-in · ${enabledRules} rule${enabledRules === 1 ? "" : "s"}` : "No active policy"}
-        />
-        <Metric
-          label="Input ceiling"
-          value={active ? new Intl.NumberFormat("en", { notation: "compact" }).format(active.maxInputCharacters) : "—"}
-          caption="Characters per message"
-        />
-      </MetricRow>
+    {/*
+      * One strip, one line. This was two stacked cards -- a four-column metric
+      * board and a status bar -- roughly 140px of chrome above a table that
+      * restated most of it: "Active boundary 0 / Legacy mode" is what "nothing
+      * enforcing" already says, and "Input ceiling" is a row in the table three
+      * lines below. Figures sit beside their labels rather than under them, so
+      * the whole summary costs one line instead of three.
+      */}
+    <WorkspaceDock className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-3 py-2">
+      <span className="flex shrink-0 items-center gap-2">
+        <StatusText dot tone={active ? "good" : activatedBefore ? "bad" : "neutral"}>
+          {active ? `Enforcing ${active.version}` : activatedBefore ? "Fail closed" : "Nothing enforcing"}
+        </StatusText>
+        {draftPolicy && <StatusText dot tone="warn">{`Draft ${draftPolicy.version}`}</StatusText>}
+      </span>
+
+      <dl aria-label="Guardrail policy summary" className="m-0 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+        {[
+          {
+            label: "Records",
+            value: policies.length >= POLICY_WINDOW ? `${POLICY_WINDOW}+` : String(policies.length),
+            caption: policies.length >= POLICY_WINDOW ? `Newest ${POLICY_WINDOW} loaded` : "Version controlled",
+          },
+          {
+            label: "Checks",
+            value: String(enabledControls),
+            caption: active ? `${enabledControls - enabledRules} built-in · ${enabledRules} rule${enabledRules === 1 ? "" : "s"}` : "No active policy",
+          },
+        ].map((fact) => (
+          <div className="flex min-w-0 items-baseline gap-1.5" key={fact.label}>
+            <dt className="text-micro font-semibold uppercase tracking-[0.08em] text-faint">{fact.label}</dt>
+            <dd className="m-0 font-mono text-caption tabular-nums text-text">{fact.value}</dd>
+            <dd className="m-0 truncate text-micro text-faint">{fact.caption}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {/* No second "Add control" here: that is the page's action and lives in
+          the title row. What belongs on the strip is what depends on the state
+          the strip is reporting. */}
+      {canManage && <span className="ml-auto flex shrink-0 gap-1.5 empty:hidden">
+        {draftPolicy && !enforcedPolicy && (
+          <Button size="sm" variant="primary" onClick={() => setDecision({ id: draftPolicy.id, action: "activate", reason: "" })}>
+            Activate draft
+          </Button>
+        )}
+        {enforcedPolicy && (
+          <Button size="sm" variant="danger" onClick={() => setDecision({ id: enforcedPolicy.id, action: "suspend", reason: "" })}>
+            Suspend
+          </Button>
+        )}
+      </span>}
     </WorkspaceDock>
 
     {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
     {message && <Alert className="shrink-0" tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
 
     {/*
-      * A flex column with a scrolling body, not a `shrink-0` block.
-      *
-      * At >=761px `.workspace-page` is `height: 100dvh; overflow: hidden` and
-      * `.workspace-stack` inherits `overflow: hidden`, so nothing in this
-      * column may exceed the viewport. This panel was `shrink-0` with no
-      * overflow of its own, which was survivable only while the form was six
-      * fields tall: the rules editor made it taller than the space available,
-      * and the bottom of the form -- including Save -- became unreachable with
-      * no way to scroll to it.
-      *
-      * Same shape the overlay chrome was given at v8.8.8 for the same reason:
-      * the body scrolls and the actions stay on screen. `min-h-0` is the part
-      * that does the work -- a flex item will not shrink below its content
-      * without it, so the inner `overflow-y-auto` would never engage.
+      * One control per visit. The dialog asks what kind first and then only
+      * that kind's fields -- the form it replaces demanded slug, version,
+      * description, both ceilings, both detectors and a rule table before it
+      * would accept a single blocked word.
       */}
-    {showEditor && <Panel className="flex min-h-0 flex-col">
-      <form className="flex min-h-0 flex-col" onSubmit={(event) => void save(event)}>
-        <header className="mb-4 flex shrink-0 items-start justify-between gap-6">
-          <div className="min-w-0">
-            <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
-              {editing ? `Edit ${editing.displayName}` : "New chat policy"}
-            </h2>
-            <p className="mb-0 mt-1.5 text-body text-muted">
-              These controls run locally in OrcaSynapse and are pinned to an immutable policy version.
-              Changing a limit, a detector or a rule requires a new version number and returns the policy to Draft.
-            </p>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
-        </header>
-        {/* The one scrolling region. Everything that grows with the policy --
-            the fields and the rule rows -- lives inside it. */}
-        <div className="min-h-0 flex-1 overflow-y-auto" data-testid="policy-editor-body">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
-          <Field label="Policy slug"><Input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })} onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))} /></Field>
-          <Field label="Immutable version"><Input value={draft.version} maxLength={120} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></Field>
-          <Field label="Maximum input characters"><Input type="number" min={256} max={32000} value={draft.maxInputCharacters} required onChange={(event) => setDraft({ ...draft, maxInputCharacters: Number(event.target.value) })} /></Field>
-          <Field label="Maximum output characters"><Input type="number" min={1024} max={1000000} value={draft.maxOutputCharacters} required onChange={(event) => setDraft({ ...draft, maxOutputCharacters: Number(event.target.value) })} /></Field>
-          <Field label="Purpose and coverage" className="sm:col-span-2">
-            <Textarea value={draft.description} minLength={3} maxLength={500} rows={3} required onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
-          </Field>
-          <label className="flex cursor-pointer items-center gap-2.5 rounded border border-border bg-raised p-2.5">
-            <Switch checked={draft.blockControlCharacters} onCheckedChange={(checked) => setDraft({ ...draft, blockControlCharacters: checked })} />
-            <span className="text-body text-text">Block unsafe control characters</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2.5 rounded border border-border bg-raised p-2.5">
-            <Switch checked={draft.blockCredentialPatterns} onCheckedChange={(checked) => setDraft({ ...draft, blockCredentialPatterns: checked })} />
-            <span className="text-body text-text">Block recognizable credential patterns</span>
-          </label>
-        </div>
-
-        <section className="mt-5 border-t border-border pt-4" aria-label="Guardrail rules">
-          <header className="mb-3 flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <h3 className="m-0 font-display text-[14px] font-semibold tracking-[-0.01em] text-text">Rules</h3>
-              <p className="mb-0 mt-1 text-caption leading-relaxed text-muted">
-                Words, phrases and patterns this deployment refuses, redacts or records. Checked against
-                what is sent to the model — chat messages, agent run inputs and runtime gateway requests.
-              </p>
-            </div>
-            <Button size="sm" type="button" onClick={addRule}>Add rule</Button>
-          </header>
-
-          {draft.rules.length === 0 ? (
-            <p className="mb-0 text-caption text-muted">
-              No rules. The two checks above still apply.
-            </p>
-          ) : (
-            <div className="grid gap-2">
-              {draft.rules.map((rule, index) => (
-                <div className="grid gap-2 rounded border border-border bg-raised p-3 sm:grid-cols-2" key={rule.id}>
-                  <Field label="Name"><Input value={rule.label} maxLength={120} required onChange={(event) => updateRule(index, { label: event.target.value })} /></Field>
-                  <Field label="Match" hint={RULE_TYPE_HELP[rule.type]}>
-                    <Select value={rule.type} onChange={(event) => updateRule(index, { type: event.target.value as GuardrailRuleType })}>
-                      {GUARDRAIL_RULE_TYPES.map((type) => <option key={type} value={type}>{type.toLowerCase()}</option>)}
-                    </Select>
-                  </Field>
-                  <Field label={rule.type === "REGEX" ? "Pattern" : "Text"} className="sm:col-span-2">
-                    <Input value={rule.pattern} maxLength={200} required onChange={(event) => updateRule(index, { pattern: event.target.value })} />
-                  </Field>
-                  <Field label="Then" hint={RULE_ACTION_HELP[rule.action]}>
-                    <Select value={rule.action} onChange={(event) => updateRule(index, { action: event.target.value as GuardrailRuleAction })}>
-                      {GUARDRAIL_RULE_ACTIONS.map((action) => <option key={action} value={action}>{action.toLowerCase()}</option>)}
-                    </Select>
-                  </Field>
-                  <div className="flex items-end justify-between gap-2">
-                    <label className="flex cursor-pointer items-center gap-2 text-body text-text">
-                      <Switch checked={rule.caseSensitive} onCheckedChange={(checked) => updateRule(index, { caseSensitive: checked })} />
-                      Match case
-                    </label>
-                    <label className="flex cursor-pointer items-center gap-2 text-body text-text">
-                      <Switch checked={rule.enabled} onCheckedChange={(checked) => updateRule(index, { enabled: checked })} />
-                      Enabled
-                    </label>
-                    <Button size="sm" variant="ghost" type="button" onClick={() => removeRule(index)}>Remove</Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-        </div>
-
-        {/* Outside the scroll container on purpose: the action an operator is
-            reaching for must not be the thing they have to scroll to find. */}
-        <Button variant="primary" type="submit" className="mt-4 shrink-0" disabled={busy || editing?.status === "ACTIVE"}>
-          {busy ? "Saving…" : editing ? "Save policy revision" : "Create draft policy"}
+    <Dialog
+      open={control !== null && canManage}
+      onClose={() => setControl(null)}
+      className="max-w-[560px]"
+      icon={Shield}
+      title={control?.kind ? (control.ruleId ? `Edit ${CONTROL_KINDS[control.kind].label.toLowerCase()}` : `Add ${CONTROL_KINDS[control.kind].label.toLowerCase()}`) : "Add a control"}
+      description={control?.kind
+        ? CONTROL_KINDS[control.kind].summary
+        : "Each control is one decision, saved into the draft boundary; the enforced boundary is untouched until that draft is activated. Every control here checks what is sent to the model — responses are capped in length, but their content is not inspected."}
+      footer={control?.kind ? <>
+        <Button onClick={() => (control.ruleId ? setControl(null) : startControl(null))}>
+          {control.ruleId ? "Cancel" : "Back"}
         </Button>
-      </form>
-    </Panel>}
-
-    <section className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-y-auto lg:grid-cols-2" aria-label="Configured guardrail policies">
-      {policies.length === 0 && (
-        <EmptyState
-          className="lg:col-span-2"
-          title="No policy records yet"
-          action={canManage ? <Button onClick={startCreate}>Create the first policy</Button> : undefined}
-        >
-          Chat continues using its existing schema, identity, and rate boundaries until the first policy is
-          activated.
-        </EmptyState>
+        <Button variant="primary" type="submit" form="guardrail-control-editor" disabled={busy}>
+          {busy ? "Saving…" : "Save control"}
+        </Button>
+      </> : <Button onClick={() => setControl(null)}>Cancel</Button>}
+    >
+      {control && !control.kind && (
+        <ul aria-label="Control types" className="m-0 grid list-none gap-1.5 p-0">
+          {CONTROL_ORDER.map((kind) => {
+            /* A singleton already on the boundary is edited from its row, not
+               added twice -- offering "Add" for it would promise a second one. */
+            const present = !CONTROL_KINDS[kind].singleton
+              ? false
+              : controlRows(workingPolicy).some((row) => row.kind === kind);
+            return (
+              <li key={kind}>
+                <Button
+                  size="auto"
+                  className="grid w-full grid-cols-1 gap-0.5 px-3 py-2.5 text-left"
+                  disabled={present}
+                  onClick={() => setControl((open) => (open ? { ...open, kind } : open))}
+                >
+                  <span className="flex items-center justify-between gap-3">
+                    <span className="text-label font-medium text-text">{CONTROL_KINDS[kind].label}</span>
+                    {present && <StatusText>already set</StatusText>}
+                  </span>
+                  <span className="text-caption font-normal text-muted">{CONTROL_KINDS[kind].summary}</span>
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
       )}
-      {policies.map((policy) => <Panel className="grid min-w-0 gap-4" key={policy.id}>
-        <header className="flex items-center gap-3">
-          <MicroLabel className="font-mono">v{policy.version}</MicroLabel>
-          <StatusText dot tone={toneFor(tone(policy))} className="ml-auto">{policy.status.toLowerCase()}</StatusText>
-        </header>
-        <div className="flex items-center gap-3">
-          <span
-            aria-hidden="true"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded border border-border-strong bg-raised font-mono text-[10px] font-bold text-accent"
-          >
-            {policy.displayName.slice(0, 2).toUpperCase()}
-          </span>
-          <div className="min-w-0">
-            <h2 className="m-0 truncate font-display text-[14px] font-semibold tracking-[-0.01em] text-text">{policy.displayName}</h2>
-            <p className="mb-0 mt-0.5 truncate text-caption text-muted">{policy.description}</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {["OrcaSynapse native",
-            ...(policy.blockControlCharacters ? ["control chars"] : []),
-            ...(policy.blockCredentialPatterns ? ["credentials"] : []),
-          ].map((label) => (
-            <code className="rounded border border-border bg-raised px-2 py-1 font-mono text-micro text-muted" key={label}>
-              {label}
-            </code>
-          ))}
-        </div>
-        <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border">
-          {[
-            { label: "Input ceiling", value: `${policy.maxInputCharacters.toLocaleString("en-US")} chars` },
-            { label: "Output ceiling", value: `${policy.maxOutputCharacters.toLocaleString("en-US")} chars` },
-            { label: "Activation", value: policy.firstActivatedAt ? "Started" : "Never active" },
-            { label: "Last updated", value: when(policy.updatedAt) },
-          ].map((fact) => (
-            <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
-              <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
-              <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
-            </div>
-          ))}
-        </dl>
-        <footer className="flex items-center justify-between gap-2.5">
-          <StatusText>Revision {policy.revision}</StatusText>
-          {canManage && <div className="flex gap-1.5">
-            {policy.status !== "ACTIVE" && <Button size="sm" onClick={() => startEdit(policy)}>Edit</Button>}
-            <Button
-              size="sm"
-              variant={policy.status === "ACTIVE" ? "danger" : "secondary"}
-              onClick={() => setDecision({ id: policy.id, action: policy.status === "ACTIVE" ? "suspend" : "activate", reason: "" })}
-            >
-              {policy.status === "ACTIVE" ? "Suspend" : "Activate"}
-            </Button>
-          </div>}
-        </footer>
-        {decision?.id === policy.id && <form
-          className={cn(
-            "grid gap-3 rounded border p-3",
-            decision.action === "suspend" ? "border-bad/40 bg-bad/10" : "border-border-strong bg-raised",
+
+      {control?.kind && (
+        <form className="grid content-start gap-3" id="guardrail-control-editor" onSubmit={(event) => void saveControl(event)}>
+          {(control.kind === "INPUT_CEILING" || control.kind === "OUTPUT_CEILING") && (
+            <Field label="Characters" hint={control.kind === "INPUT_CEILING" ? "Between 256 and 32,000." : "Between 1,024 and 1,000,000."}>
+              <Input
+                type="number"
+                required
+                min={control.kind === "INPUT_CEILING" ? 256 : 1_024}
+                max={control.kind === "INPUT_CEILING" ? 32_000 : 1_000_000}
+                value={control.amount}
+                onChange={(event) => setControl({ ...control, amount: Number(event.target.value) })}
+              />
+            </Field>
           )}
-          onSubmit={(event) => void applyDecision(event)}
-        >
-          <div>
-            <strong className="block text-label font-semibold text-text">
-              {decision.action === "activate" ? "Activate policy" : "Suspend active policy"}
-            </strong>
-            <span className="mt-1 block text-body text-muted">
-              {decision.action === "activate"
-                ? `Makes policy:${policy.slug}, version ${policy.version}, the single enforced chat boundary.`
-                : "Because this policy has previously enforced chat, suspension deliberately makes chat fail closed."}
-            </span>
-          </div>
-          <Field label="Operator reason">
-            <Input value={decision.reason} minLength={3} maxLength={500} required onChange={(event) => setDecision({ ...decision, reason: event.target.value })} />
-          </Field>
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => setDecision(null)}>Cancel</Button>
-            <Button
-              variant={decision.action === "suspend" ? "danger" : "primary"}
-              type="submit"
-              disabled={busy || decision.reason.trim().length < 3}
-            >
-              {busy ? "Applying…" : "Confirm"}
-            </Button>
-          </div>
-        </form>}
-      </Panel>)}
-    </section>
+
+          {(control.kind === "CONTROL_CHARACTERS" || control.kind === "CREDENTIAL_PATTERNS") && (
+            <p className="m-0 rounded border border-border bg-raised px-3 py-2.5 text-caption leading-relaxed text-muted">
+              This detector runs inside OrcaSynapse and takes no configuration. Saving adds it to the draft boundary;
+              removing it from the table turns it off under a new version.
+            </p>
+          )}
+
+          {isRuleKind(control.kind) && <>
+            <Field label="Label" hint="What an operator sees in a refusal. The pattern itself is never shown to a user.">
+              <Input value={control.label} minLength={1} maxLength={120} required onChange={(event) => setControl({ ...control, label: event.target.value })} />
+            </Field>
+            <Field label={control.kind === "REGEX" ? "Regular expression" : "Text to match"}>
+              <Input value={control.pattern} minLength={1} maxLength={200} required onChange={(event) => setControl({ ...control, pattern: event.target.value })} />
+            </Field>
+            <Field label="When it matches">
+              <Select value={control.action} onChange={(event) => setControl({ ...control, action: event.target.value as GuardrailRuleAction })}>
+                {GUARDRAIL_RULE_ACTIONS.map((action) => <option key={action} value={action}>{action.toLowerCase()}</option>)}
+              </Select>
+              <span className="mt-1 block text-caption text-muted">{RULE_ACTION_HELP[control.action]}</span>
+            </Field>
+            <label className="flex items-center justify-between gap-3 rounded border border-border bg-raised px-3 py-2.5">
+              <span className="text-caption text-muted">Case sensitive</span>
+              <Switch checked={control.caseSensitive} onCheckedChange={(checked) => setControl({ ...control, caseSensitive: checked })} />
+            </label>
+          </>}
+        </form>
+      )}
+    </Dialog>
+
+    {/*
+      * One table, in the Audit trail's shape: a sticky header over a body that
+      * scrolls inside itself. This was three stacked panels -- an "enforced
+      * boundary" card, a controls table and a records table -- which divided
+      * one subject across three boxes and made the page a column of headings.
+      *
+      * The boundary card went entirely rather than being folded in: the
+      * ceilings and detectors it printed are rows in this table already, so it
+      * was the same four facts stated twice. Its remaining job -- which version
+      * is enforcing and what to do about it -- is what the dock above carries.
+      */}
+
+
+    {decision && (() => {
+      const policy = policies.find(({ id }) => id === decision.id);
+      if (!policy) return null;
+      return <form
+        className={cn(
+          "grid shrink-0 gap-3 rounded border p-3",
+          decision.action === "suspend" ? "border-bad/40 bg-bad/10" : "border-border-strong bg-raised",
+        )}
+        onSubmit={(event) => void applyDecision(event)}
+      >
+        <div>
+          <strong className="block text-label font-semibold text-text">
+            {decision.action === "activate" ? "Activate policy" : "Suspend active policy"}
+          </strong>
+          <span className="mt-1 block text-body text-muted">
+            {decision.action === "activate"
+              ? `Makes policy:${policy.slug}, version ${policy.version}, the single enforced chat boundary.`
+              : "Because this policy has previously enforced chat, suspension deliberately makes chat fail closed."}
+          </span>
+        </div>
+        <Field label="Operator reason">
+          <Input value={decision.reason} minLength={3} maxLength={500} required onChange={(event) => setDecision({ ...decision, reason: event.target.value })} />
+        </Field>
+        <div className="flex justify-end gap-2">
+          <Button onClick={() => setDecision(null)}>Cancel</Button>
+          <Button
+            variant={decision.action === "suspend" ? "danger" : "primary"}
+            type="submit"
+            disabled={busy || decision.reason.trim().length < 3}
+          >
+            {busy ? "Applying…" : "Confirm"}
+          </Button>
+        </div>
+      </form>;
+    })()}
+
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-border" aria-label="Boundary controls">
+      <div className={cn(CONTROL_ROW, "shrink-0 border-b border-border bg-raised px-3 py-2")}>
+        {["Control", "Configuration", "When it matches", "State", ""].map((head, index) => (
+          <span className="text-micro font-semibold uppercase tabular-nums text-faint" key={head || index}>{head}</span>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {controlRows(workingPolicy).length === 0 ? (
+          <EmptyState
+            className="m-3"
+            title="No controls yet"
+            action={canManage ? <Button onClick={() => startControl(null)}>Add the first control</Button> : undefined}
+          >
+            Add a ceiling, a detector or a filter. Each is one row here, and together they are the boundary this
+            deployment enforces.
+          </EmptyState>
+        ) : (
+          <ul aria-label="Boundary control rows" className="m-0 list-none p-0">
+            {controlRows(workingPolicy).map((row) => (
+              <li className={cn(CONTROL_ROW, "border-b border-border/60 px-3 py-2 last:border-b-0")} key={row.key}>
+                <span className="min-w-0">
+                  <span className="block truncate text-label font-medium text-text">{CONTROL_KINDS[row.kind].label}</span>
+                  <span className="block truncate text-micro text-faint">{CONTROL_KINDS[row.kind].summary}</span>
+                </span>
+                <span className="min-w-0 truncate font-mono text-caption text-muted">{row.detail}</span>
+                <StatusText tone={row.action === "BLOCK" ? "bad" : row.action === "REDACT" ? "warn" : "neutral"}>
+                  {row.action.toLowerCase()}
+                </StatusText>
+                <StatusText tone={row.enabled ? "good" : "neutral"}>{row.enabled ? "on" : "off"}</StatusText>
+                {canManage ? (
+                  <span className="flex justify-end gap-1.5">
+                    {/* A ceiling has no "off": the schema carries a number for
+                        it on every record, so it is edited, never removed. */}
+                    <Button size="sm" onClick={() => editControl(row)}>Edit</Button>
+                    {row.removable && (
+                      <Button size="sm" variant="danger" disabled={busy} onClick={() => void removeControl(row)}>Remove</Button>
+                    )}
+                  </span>
+                ) : <span />}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Folded, because it is the one thing on this screen an operator reads
+          rarely: every version ever drafted, under the table it produced. */}
+      <details className="shrink-0 border-t border-border">
+        <summary className="cursor-pointer list-none px-3 py-2 text-caption text-muted select-none hover:text-text [&::-webkit-details-marker]:hidden">
+          Version history — {policies.length} record{policies.length === 1 ? "" : "s"}
+          {policies.length >= POLICY_WINDOW ? " (newest 100)" : ""}
+        </summary>
+        <ul aria-label="Configured guardrail policies" className="m-0 max-h-[220px] list-none overflow-auto p-0">
+          {policies.length === 0 && <li className="px-3 py-2 text-caption text-faint">No policy has been drafted yet.</li>}
+          {policies.map((policy) => (
+            <li className={cn(POLICY_ROW, "border-t border-border/60 px-3 py-2")} key={policy.id}>
+              <h3 className="m-0 truncate text-label font-medium text-text">{policy.displayName}</h3>
+              <span className="font-mono text-caption tabular-nums text-muted">v{policy.version}</span>
+              <StatusText dot tone={toneFor(tone(policy))}>{policy.status.toLowerCase()}</StatusText>
+              <span className="min-w-0 truncate font-mono text-micro tabular-nums text-muted">
+                {policy.maxInputCharacters.toLocaleString("en-US")} in · {policy.rules.length} rule{policy.rules.length === 1 ? "" : "s"}
+              </span>
+              <span className="font-mono text-micro tabular-nums text-faint">{when(policy.updatedAt)}</span>
+              {canManage && policy.status !== "ACTIVE" && policy.status !== "DRAFT" ? (
+                <span className="flex justify-end">
+                  <Button size="sm" onClick={() => setDecision({ id: policy.id, action: "activate", reason: "" })}>Activate</Button>
+                </span>
+              ) : <span />}
+            </li>
+          ))}
+        </ul>
+      </details>
+    </div>
   </div>;
 }

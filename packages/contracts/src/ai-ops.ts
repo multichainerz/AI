@@ -25,6 +25,20 @@ export const aiOpsComponentSchema = z.object({
   status: aiOpsComponentStatusSchema,
   summary: z.string().min(1).max(500),
   source: z.enum(["LIVE", "LAST_VERIFIED", "CONFIGURATION"]),
+  /**
+   * Whether this capability has to be configured for the platform to work.
+   *
+   * `NOT_CONFIGURED` alone cannot answer that, and reading it as a fault is
+   * how the health badge became permanently DEGRADED: a deployment that never
+   * schedules an unattended turn was told it was degraded for declining to use
+   * a feature. Optional capabilities still report NOT_CONFIGURED rather than
+   * HEALTHY -- nobody should be told their schedules are fine when there are
+   * none -- they simply do not count against the plane.
+   *
+   * Defaulted so a component built before this field existed reads as
+   * required, which is the conservative answer.
+   */
+  required: z.boolean().default(true),
   observedAt: z.iso.datetime().nullable(),
   latencyMs: z.number().int().nonnegative().nullable(),
   affectedWorkflows: z.array(aiOpsWorkflowSchema),

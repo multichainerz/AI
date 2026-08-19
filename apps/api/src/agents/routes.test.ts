@@ -25,7 +25,7 @@ const profile: AgentProfile = {
   version: {
     id: "b41d3534-658b-4cf0-a046-2b20b15f44e5", version: 1, displayName: "Hermes Analyst",
     purpose: "Internal analysis", instructions: "Answer only the authorized request.", modelAlias: "hermes-agent",
-    soulMd: "You are a careful internal analyst who follows the approved evidence.", skills: [],
+    soulMd: "You are a careful internal analyst who follows the approved evidence.",
     maxTurns: 1, timeoutSeconds: 600, maxConcurrentRuns: 2, safeMode: true,
     createdAt: "2026-07-30T00:00:00.000Z", createdBy: session.id,
     distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

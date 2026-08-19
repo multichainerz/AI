@@ -18,7 +18,6 @@ const configuration = {
   purpose: "Analyze private operational state.",
   instructions: "Answer using authorized evidence and state uncertainty.",
   soulMd: "You are a careful analyst who is precise and candid about uncertainty.",
-  skills: [],
   modelAlias: "hermes-agent",
   maxTurns: 1,
   timeoutSeconds: 600,

@@ -1,12 +1,19 @@
 import type {
   AgentMetrics,
+  AgentRun,
   ChatMetrics,
   ConnectionMonitoringControl,
+  HermesRuntimeNode,
+  OperationalIncident,
   ToolMetrics,
+  UsageBucket,
+  UsageReport,
+  UsageWindow,
 } from "@orcasynapse/contracts";
-import { useEffect, useState, type ReactNode } from "react";
-import { ArrowRight, Layers as LayersIcon, MessageSquareText as TerminalIcon, Monitor as MonitorIcon, RefreshCw as SyncIcon, Settings as GearIcon, ThumbsUp as ThumbsUpIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowRight, CheckCircle2, MessageSquareText as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { HomeLayer, HomeReadinessCheck } from "./home-view.js";
 import type { SetupStepKey } from "./setup-steps.js";
@@ -15,18 +22,16 @@ import type { ActiveView } from "./workspace-navigation.js";
 /**
  * The Dashboard's command panel.
  *
- * Every other screen in this product is a page of cards. This is the one
- * surface that is meant to be looked at rather than read: a full-bleed themed
- * field carrying what the deployment is, what it has done, and whether the
- * governed path from a question to an answer is intact end to end.
+ * Four questions, in the order an operator actually asks them: is anything
+ * waiting on me (Needs attention), what is happening right now (the live strip
+ * and Recent sessions), is usage normal (Activity), and is the machinery sound
+ * (System). Bring-up is not a separate mode — an unready capability is simply
+ * an attention item, so the same screen carries a deployment from first boot
+ * to steady operation without changing shape.
  *
- * It draws only what the runtime reports. There is no map here because there is
- * no geography in an on-premise control plane -- the equivalent "territory" is
- * the four hops a message actually takes, which is what the topology draws, with
- * each hop's real state rather than a decorative one.
- *
- * It uses the workspace's black/white canvas and keeps violet for actions and
- * emphasis, so the same operational hierarchy survives either theme.
+ * It draws only what the runtime reports, in the workspace's own palette:
+ * violet stays an accent, and the failed slice is the one red thing on the
+ * screen when something is wrong.
  */
 
 interface DashboardHeroProps {
@@ -41,39 +46,16 @@ interface DashboardHeroProps {
   agentMetrics: AgentMetrics | null;
   toolMetrics: ToolMetrics | null;
   monitoring: ConnectionMonitoringControl | null;
+  runtimeNodes: HermesRuntimeNode[];
   layers: HomeLayer[];
   readiness: HomeReadinessCheck[];
+  usage: UsageReport | null;
+  period: UsageWindow;
+  onPeriod: (period: UsageWindow) => void;
+  runs: AgentRun[] | null;
+  incidents: OperationalIncident[] | null;
   onSelect: (view: ActiveView, setupStep?: SetupStepKey) => void;
 }
-
-interface DashboardMetric {
-  label: string;
-  /**
-   * The period the figure covers, stated beside its name.
-   *
-   * Not decoration: this strip draws chat figures from a trailing 24-hour
-   * window next to tool figures that are every call since the install, and
-   * with neither labelled "Responses 12" read as the same day's work as
-   * "Tool calls 8,431". `operations-view.tsx` has always said "/ 24h" on the
-   * same data; this is that treatment, applied to all six cells.
-   */
-  window: "24h" | "all time";
-  icon: ReactNode;
-  value: string;
-  detail: string;
-  fill?: number | undefined;
-  failing?: boolean;
-}
-
-/**
- * Ratings needed before a satisfaction score is allowed to read as a verdict.
- *
- * `helpfulShare < 0.5` with no floor turns one not-helpful click into a
- * warn-coloured 0% for the whole deployment. Nothing in the product writes chat
- * feedback today — there is no surface for it — so this tile is structurally
- * 0 of 0, and the two honest states are "nothing rated" and "too few to judge".
- */
-const RATINGS_BEFORE_A_VERDICT = 20;
 
 /** A figure the deployment has not produced yet is absent, never zero. */
 function count(value: number | null | undefined, unlocked: boolean): string {
@@ -104,15 +86,9 @@ function share(part: number | undefined, whole: number | undefined): number | un
 /**
  * The moment a usage window opened, said in words.
  *
- * "342 sessions" is not a fact until you know over what -- an hour and a quarter
- * reads very differently from a quarter. The runtime reports `windowStartedAt`,
- * so the caption states it rather than the panel implying a period it does not
- * know.
- *
  * With the clock time, not only the date: the window is a trailing 24 hours, so
- * one that opened at 09:00 yesterday used to read "since 14 August" -- which
- * claims the whole of a day the figure covers a quarter of, and says nothing
- * about the three quarters of today that it also covers.
+ * one that opened at 09:00 yesterday used to read "since 14 August" — which
+ * claims the whole of a day the figure covers a quarter of.
  */
 function since(startedAt: string | undefined, unlocked: boolean): string {
   if (!unlocked) return "sign in to view";
@@ -140,11 +116,29 @@ function protectedDetail(unlocked: boolean, value: string | undefined, fallback:
   return value ?? fallback;
 }
 
+/** How long ago, in the coarsest unit that is still honest. */
+function ago(iso: string | null): string {
+  if (!iso) return "—";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "—";
+  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1_000));
+  if (seconds < 60) return "just now";
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3_600)}h ago`;
+  return `${Math.floor(seconds / 86_400)}d ago`;
+}
+
+function bucketLabel(at: string, bucket: UsageReport["bucket"]): string {
+  return new Intl.DateTimeFormat("en", bucket === "hour"
+    ? { month: "short", day: "numeric", hour: "numeric" }
+    : { month: "short", day: "numeric" }).format(new Date(at));
+}
+
 /**
  * Wall clock, seconds included.
  *
  * An operations console states the time it is describing. Seconds are the point
- * -- a clock that only shows minutes reads as decoration, and this one is here
+ * — a clock that only shows minutes reads as decoration, and this one is here
  * to say the panel is live.
  */
 function Clock() {
@@ -174,7 +168,7 @@ function Clock() {
   );
 }
 
-/** The four hops a governed answer passes through, each with its real state. */
+/** The three hops a governed answer passes through, each with its real state. */
 function topology(props: DashboardHeroProps) {
   const layerState = (key: HomeLayer["key"]) => props.layers.find((layer) => layer.key === key)?.state;
   const inference = layerState("inference");
@@ -190,20 +184,13 @@ function topology(props: DashboardHeroProps) {
       // anything but reachable would be a claim contradicted by its own arrival.
       state: "Serving",
       live: true,
-      notes: [],
+      notes: [] as Array<{ name: string; label: string; tone: string }>,
     },
     {
       name: "Hermes",
       role: "Isolated agent session",
       state: agentic?.label ?? "Unknown",
       live: agentic?.tone === "ready",
-      /*
-       * Why the hop is in the state it is in.
-       *
-       * `HomeLayer.components` has always carried this — "Hermes: Needs
-       * Profile or policy" — and no surface drew it, so the panel could say
-       * "Degraded" and leave the operator to go and find out what that meant.
-       */
       notes: layerNotes("agentic"),
     },
     {
@@ -216,15 +203,10 @@ function topology(props: DashboardHeroProps) {
   ];
 }
 
-
 /**
- * Bring-up progress as a ring rather than a fraction in a chip.
- *
- * The number is still written in the middle — the ring is what makes "two of
- * three" legible from across a room, which is the distance an operations
- * screen is actually read from. Geometry comes through SVG attributes and
- * colour through utility classes, because `style-src 'self'` refuses the
- * inline style a percentage-driven bar would normally want.
+ * Bring-up progress as a ring rather than a fraction in a chip. Geometry comes
+ * through SVG attributes and colour through utility classes, because
+ * `style-src 'self'` refuses the inline style a percentage bar would want.
  */
 function ReadinessRing({ ready, total, unlocked }: { ready: number; total: number; unlocked: boolean }) {
   const radius = 22;
@@ -253,90 +235,6 @@ function ReadinessRing({ ready, total, unlocked }: { ready: number; total: numbe
   );
 }
 
-/**
- * One stage of the run pipeline: a count, and the share of the pipeline it is.
- *
- * `<progress>` rather than a div with a width, for the same CSP reason as the
- * ring — and it carries the semantics for free, so a screen reader reports the
- * proportion instead of an unlabelled decoration.
- */
-function PipelineRow({
-  label,
-  value,
-  fraction,
-  tone,
-  unlocked,
-}: {
-  label: string;
-  value: number | undefined;
-  fraction: number | undefined;
-  tone: "good" | "warn" | "bad" | "accent";
-  unlocked: boolean;
-}) {
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1">
-      <span className="truncate text-caption text-muted">{label}</span>
-      <strong className="font-mono text-label font-semibold tabular-nums text-text">
-        {count(value, unlocked)}
-      </strong>
-      {/*
-        No bar at all rather than an empty one, for the reason the metric strip
-        already gives: a zero-width track under a dash reads as "nothing is
-        ready" when the truth is "nobody has looked yet", or "no run has been
-        attempted". Both are absences, and only one of them is about the runs.
-      */}
-      {fraction === undefined ? null : (
-        <progress
-          className={cn(
-            "metric-progress col-span-2 block h-1 w-full",
-            tone === "good" && "is-good",
-            tone === "warn" && "is-warn",
-            tone === "bad" && "is-bad",
-          )}
-          max={100}
-          value={Math.round(fraction * 100)}
-          /*
-            "Share of all runs" was a claim the contract cannot support:
-            `AGENT_RUN_STATUSES` also carries CANCELLED, TIMED_OUT and DENIED,
-            and `AgentMetrics` reports none of the three, so a cancelled run is
-            in no bucket here and the denominator is these four stages alone.
-          */
-          aria-label={`${label}: share of the runs in these four stages`}
-        />
-      )}
-    </div>
-  );
-}
-
-/**
- * Response outcomes as one bar, because they are parts of one total.
- *
- * Three separate figures make a reader do the division; a single divided bar
- * shows the failure sliver at a glance. Widths are SVG attributes, and the
- * whole thing collapses to an empty track before anything has run rather than
- * to a full green one — the same distinction the completed-share bar draws.
- */
-function OutcomeBar({ completed, failed, cancelled }: { completed: number; failed: number; cancelled: number }) {
-  const total = completed + failed + cancelled;
-  const width = (part: number) => (total > 0 ? (part / total) * 100 : 0);
-  const completedWidth = width(completed);
-  const failedWidth = width(failed);
-
-  return (
-    <svg
-      className="h-1.5 w-full overflow-hidden rounded-pill"
-      viewBox="0 0 100 6"
-      preserveAspectRatio="none"
-      aria-hidden="true"
-    >
-      <rect x="0" y="0" width="100" height="6" className="fill-border" />
-      <rect x="0" y="0" width={completedWidth} height="6" className="fill-good" />
-      <rect x={completedWidth} y="0" width={failedWidth} height="6" className="fill-bad" />
-      <rect x={completedWidth + failedWidth} y="0" width={width(cancelled)} height="6" className="fill-warn" />
-    </svg>
-  );
-}
-
 /** A dense label/figure pair, for the groups that are read rather than scanned. */
 function MiniStat({ label, value, tone }: { label: string; value: string; tone?: "bad" | "warn" }) {
   return (
@@ -354,129 +252,269 @@ function MiniStat({ label, value, tone }: { label: string; value: string; tone?:
   );
 }
 
+/**
+ * One cell of the KPI strip. No icon: six 14px glyphs beside six labels said
+ * nothing the labels did not, and the strip reads cleaner as type alone.
+ */
+function StripCell({
+  label,
+  value,
+  detail,
+  fill,
+  failing,
+  warn,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  fill?: number | undefined;
+  failing?: boolean;
+  warn?: boolean;
+}) {
+  return (
+    <div className="min-w-0 bg-surface px-3 py-2.5">
+      <dt className="truncate text-micro uppercase tracking-[0.13em] text-faint">{label}</dt>
+      <dd
+        className={cn(
+          "m-0 mt-1 truncate font-display text-[21px] font-semibold leading-none tabular-nums",
+          warn ? "text-warn" : "text-text",
+        )}
+      >
+        {value}
+      </dd>
+      <dd className="m-0 mt-1 truncate text-micro text-muted">{detail}</dd>
+      {fill === undefined ? null : (
+        <dd className="m-0">
+          <progress
+            className={cn("metric-progress mt-1.5 block h-0.5 w-full", failing ? "is-warn" : "is-good")}
+            max={100}
+            value={Math.round(fill * 100)}
+            aria-label={`${label}: proportion of the total`}
+          />
+        </dd>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Runs per bucket, in the exact grammar `UsageTrend` draws tokens with on the
+ * Usage screen: violet bars, red failure ticks at the baseline, a hairline
+ * base, edge timestamps. Same product, same chart language — this one answers
+ * "is activity normal" and leaves token mass to Usage.
+ *
+ * Every dimension is an SVG presentation attribute because the container
+ * serves `style-src 'self'`; `preserveAspectRatio="none"` lets one bar per
+ * bucket stretch to whatever width the panel has, so the same markup renders
+ * 24 buckets and 168.
+ */
+function ActivityTrend({ series, bucket }: { series: UsageBucket[]; bucket: UsageReport["bucket"] }) {
+  const ceiling = Math.max(1, ...series.map((point) => point.runs));
+  const span = Math.max(1, series.length);
+  const width = 0.78;
+
+  return (
+    <figure className="m-0 grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-2">
+      <svg
+        className="h-full min-h-[88px] w-full"
+        viewBox={`0 0 ${span} 100`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={`Runs per ${bucket} across ${series.length} ${bucket === "hour" ? "hours" : "days"}.`}
+      >
+        <rect x="0" y="99.6" width={span} height="0.4" className="fill-border" />
+        {series.map((point, index) => {
+          // A bucket that ran nothing draws nothing — absence, not a sliver.
+          if (point.runs === 0 && point.failed === 0) return null;
+          const height = Math.max(0.8, (point.runs / ceiling) * 96);
+          return (
+            <g key={point.at}>
+              <title>
+                {`${bucketLabel(point.at, bucket)} — ${point.runs} ${point.runs === 1 ? "run" : "runs"}${point.failed > 0 ? `, ${point.failed} failed` : ""}`}
+              </title>
+              {point.runs > 0 && (
+                <rect
+                  x={index + (1 - width) / 2}
+                  y={100 - height}
+                  width={width}
+                  height={height}
+                  className="fill-accent"
+                />
+              )}
+              {point.failed > 0 && (
+                <rect
+                  x={index + (1 - width) / 2}
+                  y="96.5"
+                  width={width}
+                  height="3.5"
+                  className="fill-bad"
+                />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      <figcaption className="flex items-center justify-between gap-4 text-micro text-faint">
+        <span>{series.length > 0 ? bucketLabel(series[0]!.at, bucket) : ""}</span>
+        <span className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block size-2 bg-accent" />Runs</span>
+          <span className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block size-2 bg-bad" />Failures</span>
+        </span>
+        <span>{series.length > 0 ? bucketLabel(series[series.length - 1]!.at, bucket) : ""}</span>
+      </figcaption>
+    </figure>
+  );
+}
+
+/**
+ * Everything currently waiting on a person, in one queue.
+ *
+ * Priority is fixed rather than chronological: a decision someone can make now
+ * (approvals) outranks a fault (offline node, failed responses), a fault
+ * outranks bring-up (unready capabilities), and bring-up outranks the
+ * informational tail (open incidents). During installation the queue is
+ * exactly the readiness checklist; afterwards those rows retire themselves
+ * and the same panel carries operations.
+ */
+interface AttentionItem {
+  key: string;
+  tone: "bad" | "warn" | "accent";
+  label: string;
+  detail: string;
+  next?: boolean;
+  action: ActiveView;
+  setupStep?: SetupStepKey;
+}
+
+function attentionItems(props: DashboardHeroProps): AttentionItem[] {
+  if (!props.unlocked) return [];
+  const items: AttentionItem[] = [];
+
+  const pending = props.toolMetrics?.pendingApprovals ?? 0;
+  if (pending > 0) {
+    items.push({
+      key: "approvals",
+      tone: "warn",
+      label: pending === 1 ? "1 approval waiting" : `${pending} approvals waiting`,
+      detail: "Tool calls are paused until someone decides",
+      action: "Integrations",
+    });
+  }
+
+  for (const node of props.runtimeNodes) {
+    if (node.status !== "OFFLINE" && node.status !== "DEGRADED") continue;
+    items.push({
+      key: `node-${node.id}`,
+      tone: "bad",
+      label: `${node.displayName} is ${node.status === "OFFLINE" ? "offline" : "degraded"}`,
+      detail: node.status === "OFFLINE" ? "Unreachable from the control plane" : "Answering, but not cleanly",
+      action: "Deployment",
+    });
+  }
+
+  const failed = props.chatMetrics?.failed ?? 0;
+  if (failed > 0) {
+    items.push({
+      key: "failed-responses",
+      tone: "bad",
+      label: failed === 1 ? "1 failed response" : `${failed} failed responses`,
+      detail: "In the last 24 hours · read the ledger",
+      action: "Agents",
+    });
+  }
+
+  const nextIndex = props.readiness.findIndex((check) => !check.ready);
+  props.readiness.forEach((check, index) => {
+    if (check.ready) return;
+    items.push({
+      key: `readiness-${check.label}`,
+      tone: "accent",
+      label: check.label,
+      detail: check.detail,
+      next: index === nextIndex,
+      action: check.action,
+      ...(check.setupStep ? { setupStep: check.setupStep } : {}),
+    });
+  });
+
+  for (const incident of props.incidents ?? []) {
+    if (incident.status === "RESOLVED") continue;
+    items.push({
+      key: `incident-${incident.id}`,
+      tone: incident.severity === "CRITICAL" ? "bad" : "warn",
+      label: incident.title,
+      detail: `${incident.severity === "CRITICAL" ? "Critical" : "Warning"} incident · ${incident.component}`,
+      action: "Operations",
+    });
+  }
+
+  return items;
+}
+
+/** How many attention rows fit before the panel stops being a glance. */
+const ATTENTION_ROWS = 5;
+
+const RUN_TONE: Record<AgentRun["status"], string> = {
+  QUEUED: "bg-faint",
+  RUNNING: "bg-node",
+  WAITING_FOR_APPROVAL: "bg-warn",
+  CANCEL_REQUESTED: "bg-warn",
+  COMPLETED: "bg-good",
+  FAILED: "bg-bad",
+  CANCELLED: "bg-warn",
+  TIMED_OUT: "bg-bad",
+  DENIED: "bg-bad",
+};
+
+function runStatusLabel(status: AgentRun["status"]): string {
+  const words = status.replaceAll("_", " ").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** The moment a session row should be dated by: done > started > asked. */
+function runMoment(run: AgentRun): string | null {
+  return run.completedAt ?? run.startedAt ?? run.queuedAt;
+}
+
 export function DashboardHero(props: DashboardHeroProps) {
   const hops = topology(props);
   const intact = hops.every((hop) => hop.live);
   const readyCount = props.readiness.filter(({ ready }) => ready).length;
-  const nextIndex = props.unlocked ? props.readiness.findIndex(({ ready }) => !ready) : -1;
   const workspaceReady = props.unlocked && props.readiness.length > 0 && readyCount === props.readiness.length;
 
   const access = props.layers.find((layer) => layer.key === "access");
   const completedShare = props.unlocked
     ? share(props.chatMetrics?.completed, props.chatMetrics?.responses)
     : undefined;
-  const feedback = props.chatMetrics?.feedback;
-  const rated = (feedback?.helpful ?? 0) + (feedback?.notHelpful ?? 0);
-  const helpfulShare = props.unlocked ? share(feedback?.helpful, rated) : undefined;
 
-  /*
-   * The run pipeline, as four stages of one total.
-   *
-   * These four figures arrive on every poll and nothing drew them: the panel
-   * reported how many Profiles exist while saying nothing about what those
-   * Profiles are currently doing, which is the question an operations screen
-   * exists to answer.
-   */
-  const runs = props.agentMetrics;
-  const runTotal = (runs?.queuedRuns ?? 0) + (runs?.runningRuns ?? 0) + (runs?.completedRuns ?? 0) + (runs?.failedRuns ?? 0);
-  const stages = [
-    { label: "Queued", value: runs?.queuedRuns, tone: "accent" as const },
-    { label: "Running", value: runs?.runningRuns, tone: "accent" as const },
-    { label: "Completed", value: runs?.completedRuns, tone: "good" as const },
-    { label: "Failed", value: runs?.failedRuns, tone: "bad" as const },
-  ];
+  const attention = attentionItems(props);
+  const shownAttention = attention.slice(0, ATTENTION_ROWS);
+  const hiddenAttention = attention.length - shownAttention.length;
 
-  /*
-   * Every tool call the ledger holds an outcome for.
-   *
-   * The headline used to be `completedCalls` alone, sitting beside a Denied
-   * figure that was never part of it — so the obvious subtraction gave the
-   * wrong answer, and `failedCalls` arrived on every poll and reached no pixel.
-   * Executing calls are deliberately out: they have not finished, so they
-   * belong to no outcome yet, and including them would break the subtraction
-   * again in the other direction.
-   */
   const tools = props.toolMetrics;
-  const recordedCalls = tools ? tools.completedCalls + tools.deniedCalls + tools.failedCalls : undefined;
+  const pendingApprovals = tools?.pendingApprovals ?? 0;
+  const queuedRuns = props.agentMetrics?.queuedRuns ?? 0;
 
-  const metrics: DashboardMetric[] = [
-    {
-      label: "Sessions",
-      window: "24h",
-      icon: <TerminalIcon size={14} />,
-      value: count(props.chatMetrics?.conversations, props.unlocked),
-      detail: since(props.chatMetrics?.windowStartedAt, props.unlocked),
-    },
-    {
-      label: "Responses",
-      window: "24h",
-      icon: <SyncIcon size={14} />,
-      value: count(props.chatMetrics?.responses, props.unlocked),
-      /*
-       * The completed *share*, not the completed count. The count is stated
-       * once, under the outcome bar that divides it — saying "1,249 completed"
-       * in both places spends two of the screen's six headline slots on one
-       * fact, and the percentage is the thing this tile's bar is drawing.
-       */
-      detail: protectedDetail(
-        props.unlocked,
-        completedShare === undefined ? "none yet" : `${Math.round(completedShare * 100)}% completed`,
-        "none yet",
-      ),
-      fill: completedShare,
-      failing: (props.chatMetrics?.failureRate ?? 0) > 0.1,
-    },
-    {
-      label: "Avg response",
-      window: "24h",
-      icon: <MonitorIcon size={14} />,
-      value: latency(props.chatMetrics?.averageLatencyMs, props.unlocked),
-      detail: props.unlocked ? "end to end" : "sign in to view",
-    },
-    {
-      label: "Tokens",
-      window: "24h",
-      icon: <LayersIcon size={14} />,
-      value: compact(props.chatMetrics?.totalTokens, props.unlocked),
-      detail: props.unlocked ? "prompt and completion" : "sign in to view",
-    },
-    {
-      label: "Tool calls",
-      // The one cell here the runtime reports without a window: every call
-      // since the install, not the last day's.
-      window: "all time",
-      icon: <GearIcon size={14} />,
-      value: count(recordedCalls, props.unlocked),
-      detail: protectedDetail(
-        props.unlocked,
-        tools ? `${tools.activeGrants.toLocaleString()} grants` : undefined,
-        "default deny",
-      ),
-    },
-    {
-      label: "Rated helpful",
-      window: "24h",
-      icon: <ThumbsUpIcon size={14} />,
-      value: helpfulShare === undefined ? "—" : `${Math.round(helpfulShare * 100)}%`,
-      detail: protectedDetail(
-        props.unlocked,
-        rated > 0 ? `${rated.toLocaleString()} rated` : "no ratings yet",
-        "no ratings yet",
-      ),
-      fill: helpfulShare,
-      // A verdict needs a sample. Below the floor the tile still states the
-      // share and the count it came from; it just does not paint one click as
-      // a deployment-wide failure.
-      failing: helpfulShare !== undefined && rated >= RATINGS_BEFORE_A_VERDICT && helpfulShare < 0.5,
-    },
-  ];
-  const openReadiness = (check: HomeReadinessCheck) => {
+  /*
+   * Newest first, decided here rather than assumed: the API orders the ledger
+   * for its own screen, and a dashboard that inherits an ordering it never
+   * asked for breaks the day the other screen changes its mind.
+   */
+  const recentRuns = (props.runs ?? [])
+    .slice()
+    .sort((a, b) => (runMoment(b) ?? "").localeCompare(runMoment(a) ?? ""))
+    .slice(0, 6);
+
+  const totals = props.usage?.totals ?? null;
+  const nodesOnline = props.runtimeNodes.filter((node) => node.status === "ONLINE").length;
+
+  const openItem = (item: { action: ActiveView; setupStep?: SetupStepKey }) => {
     if (!props.unlocked) {
       props.onUnlock();
-    } else if (check.setupStep) {
-      props.onSelect(check.action, check.setupStep);
+    } else if (item.setupStep) {
+      props.onSelect(item.action, item.setupStep);
     } else {
-      props.onSelect(check.action);
+      props.onSelect(item.action);
     }
   };
 
@@ -487,33 +525,15 @@ export function DashboardHero(props: DashboardHeroProps) {
 
         <div className="grid gap-4">
         {/*
-          A fixed title, not a status sentence.
-
-          The heading used to change with readiness — "Finish your private AI
-          workspace", "Your agentic workspace is ready" — above a line reading
-          "0 of 3 required capabilities are ready. Next: Connect and verify
-          model serving." Both restated the Required capabilities panel forty
-          pixels below, which already shows the fraction and marks that exact
-          step NEXT. The panel keeps that job; this is just the page's name,
-          and the `<h1>` the Dashboard needs as its landmark.
+          The page's name over the dot-grid field every other title row
+          carries, so the Dashboard's header speaks the same texture as the
+          workspaces'. The field fades before the readouts start — texture
+          behind a name, never behind working controls.
         */}
-        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="workspace-intro-field flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-1 py-1.5">
           <h1 className="m-0 min-w-0 font-display text-[25px] font-semibold leading-[1.12] tracking-[-0.025em] text-text sm:text-[29px]">
             OrcaSynapse control center
           </h1>
-          {/*
-            Two groups, not three competing chips.
-
-            The status used to be a `h-9` bordered pill sitting between the
-            clock and the primary button — the same height, the same radius and
-            the same weight as the one control on the row, so the first thing
-            an operator tried to do with it was click it. It is a readout, and
-            the clock beside it is a readout, so they share one quiet module and
-            the button is left as the only thing on the row shaped like a
-            control. The dot also stopped being cyan inside a green chip:
-            `bg-node` is the live-node accent, and pairing it with success text
-            put two unrelated semantics in one 90px space.
-          */}
           <div className="flex shrink-0 flex-wrap items-center gap-2.5">
             <div className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2">
               <Clock />
@@ -555,177 +575,360 @@ export function DashboardHero(props: DashboardHeroProps) {
           </Button>
         )}
 
-        <dl
-          aria-label="Operational activity"
-          className="m-0 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3 xl:grid-cols-6"
-        >
-          {metrics.map((metric) => (
-            <div className="min-w-0 bg-surface px-3 py-2.5" key={metric.label}>
-              <dt className="flex items-center gap-1.5 text-micro uppercase tracking-[0.13em] text-faint">
-                <span aria-hidden="true" className="flex shrink-0">
-                  {metric.icon}
-                </span>
-                {/*
-                  The window is `shrink-0` and the name is what truncates. Six
-                  cells across a desktop column leave about 120px of label, and
-                  the period is the half a reader cannot infer: "SESSIONS" is
-                  legible from its own figure, "/ 24h" is not recoverable from
-                  anything else on the tile.
-                */}
-                <span className="truncate">{metric.label}</span>
-                <span className="shrink-0">/ {metric.window}</span>
-              </dt>
-              <dd className="m-0 mt-1 truncate font-display text-[21px] font-semibold leading-none tabular-nums text-text">
-                {metric.value}
-              </dd>
-              <dd className="m-0 mt-1 truncate text-micro text-muted">{metric.detail}</dd>
-              {metric.fill === undefined ? null : (
-                <dd className="m-0">
-                  <progress
-                    className={cn("metric-progress mt-1.5 block h-0.5 w-full", metric.failing ? "is-warn" : "is-good")}
-                    max={100}
-                    value={Math.round(metric.fill * 100)}
-                    aria-label={`${metric.label}: proportion of the total`}
-                  />
-                </dd>
-              )}
-            </div>
-          ))}
-        </dl>
+        {/*
+          Two strips, two kinds of fact. The left one is a trailing day, said
+          once for all four cells instead of as four "/ 24h" suffixes; the
+          right one is the current instant, which needs no window at all. The
+          old strip mixed an all-time cell into a 24-hour row and patched the
+          confusion with labels — the fix is to not mix.
+        */}
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <section aria-label="Activity over the last 24 hours">
+            <span className="block px-0.5 text-micro font-semibold uppercase tracking-[0.16em] text-faint">
+              Last 24 hours
+            </span>
+            <dl className="m-0 mt-1.5 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-4">
+              <StripCell
+                label="Sessions"
+                value={count(props.chatMetrics?.conversations, props.unlocked)}
+                detail={since(props.chatMetrics?.windowStartedAt, props.unlocked)}
+              />
+              <StripCell
+                label="Responses"
+                value={count(props.chatMetrics?.responses, props.unlocked)}
+                detail={protectedDetail(
+                  props.unlocked,
+                  completedShare === undefined ? "none yet" : `${Math.round(completedShare * 100)}% completed`,
+                  "none yet",
+                )}
+                fill={completedShare}
+                failing={(props.chatMetrics?.failureRate ?? 0) > 0.1}
+              />
+              <StripCell
+                label="Tokens"
+                value={compact(props.chatMetrics?.totalTokens, props.unlocked)}
+                detail={props.unlocked ? "prompt and completion" : "sign in to view"}
+              />
+              <StripCell
+                label="Avg response"
+                value={latency(props.chatMetrics?.averageLatencyMs, props.unlocked)}
+                detail={props.unlocked ? "end to end" : "sign in to view"}
+              />
+            </dl>
+          </section>
+          <section aria-label="Live right now">
+            <span className="block px-0.5 text-micro font-semibold uppercase tracking-[0.16em] text-faint">
+              Live
+            </span>
+            <dl className="m-0 mt-1.5 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border">
+              <StripCell
+                label="Running now"
+                value={count(props.agentMetrics?.runningRuns, props.unlocked)}
+                detail={protectedDetail(
+                  props.unlocked,
+                  queuedRuns === 1 ? "1 queued" : `${queuedRuns.toLocaleString()} queued`,
+                  "0 queued",
+                )}
+              />
+              <StripCell
+                label="Awaiting approval"
+                value={count(tools?.pendingApprovals, props.unlocked)}
+                detail={protectedDetail(
+                  props.unlocked,
+                  pendingApprovals > 0 ? "decide in Tools" : "none waiting",
+                  "none waiting",
+                )}
+                warn={props.unlocked && pendingApprovals > 0}
+              />
+            </dl>
+          </section>
+        </div>
         </div>
 
-        <div className="dashboard-hero__operations grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)_minmax(0,0.92fr)]">
-          <section className="flex min-h-0 flex-col rounded-lg border border-border bg-surface p-4 shadow-card" aria-labelledby="dashboard-readiness-title">
+        <div className="dashboard-hero__operations grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] xl:grid-rows-[minmax(0,1.12fr)_minmax(0,1fr)]">
+          {/*
+            The trend the poll always carried and no dashboard pixel drew: what
+            the deployment actually did, bucket by bucket. The window control
+            scopes this panel alone.
+          */}
+          <section
+            className="flex min-h-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-card"
+            aria-label="Activity"
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <span className="block text-micro uppercase tracking-[0.18em] text-faint">Workspace readiness</span>
-                <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text" id="dashboard-readiness-title">
-                  Required capabilities
+                <span className="block text-micro uppercase tracking-[0.18em] text-faint">Activity</span>
+                <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text">
+                  Governed runs
                 </h2>
-                <strong className="mt-1.5 inline-block font-mono text-micro font-semibold tabular-nums text-muted">
-                  {props.unlocked ? `${readyCount}/${props.readiness.length} ready` : "Locked"}
-                </strong>
+                <span className="mt-1 block text-micro text-muted">
+                  {`Per ${props.usage?.bucket ?? "hour"} · last ${props.period === "24h" ? "24 hours" : "7 days"}`}
+                </span>
               </div>
-              <ReadinessRing ready={readyCount} total={props.readiness.length} unlocked={props.unlocked} />
+              <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Trend window">
+                {(["24h", "7d"] as const).map((window) => (
+                  <Button
+                    key={window}
+                    variant="ghost"
+                    size="sm"
+                    aria-pressed={props.period === window}
+                    className={cn(
+                      "h-7 px-2.5 font-mono text-micro tabular-nums",
+                      props.period === window ? "bg-soft text-accent" : "text-muted",
+                    )}
+                    onClick={() => props.onPeriod(window)}
+                  >
+                    {window}
+                  </Button>
+                ))}
+              </div>
             </div>
 
+            {!props.unlocked ? (
+              <div className="grid min-h-0 flex-1 place-items-center rounded border border-border bg-bg px-4 py-6">
+                <span className="text-caption text-muted">Sign in to see what the deployment has done.</span>
+              </div>
+            ) : props.usage === null ? (
+              <div className="grid min-h-0 flex-1 content-end gap-2">
+                <Skeleton className="h-full min-h-[88px] w-full" />
+                <Skeleton className="h-3 w-40" />
+              </div>
+            ) : totals !== null && totals.runs === 0 ? (
+              <div className="grid min-h-0 flex-1 content-end">
+                <div className="grid place-items-center pb-6">
+                  <span className="text-caption text-muted">No runs in this window yet.</span>
+                </div>
+                <div aria-hidden="true" className="h-px w-full bg-border" />
+              </div>
+            ) : (
+              <ActivityTrend series={props.usage.series} bucket={props.usage.bucket} />
+            )}
+
             {/*
-              `auto-rows-fr` rather than `content-start`: at the desktop
-              baseline this column has ~300px more height than three 56px rows
-              need, and a checklist that hugs the top under a third of a screen
-              of nothing reads as a panel that failed to load. Equal rows make
-              the space deliberate and the targets easier to hit.
+              The window's honest totals. "Tokens · partial" when some runs
+              consumed tokens nobody counted; failure rate only once there is a
+              denominator; cost only what the upstream actually said.
             */}
-            <div className="mt-3 grid min-h-0 flex-1 auto-rows-fr gap-2">
-              {props.readiness.map((check, index) => {
-                const isNext = index === nextIndex;
-                return (
+            <dl className="mt-auto grid grid-cols-2 gap-x-3 gap-y-2.5 border-t border-border pt-3 sm:grid-cols-4">
+              <MiniStat
+                label={totals !== null && totals.tokensUnreported > 0 ? "Tokens · partial" : "Tokens"}
+                value={compact(totals?.totalTokens, props.unlocked)}
+              />
+              <MiniStat
+                label="Failure rate"
+                value={
+                  !props.unlocked || totals === null || totals.runs === 0
+                    ? "—"
+                    : `${(totals.failureRate * 100).toFixed(1)}%`
+                }
+                {...(props.unlocked && totals !== null && totals.runs > 0 && totals.failureRate > 0.1
+                  ? { tone: "warn" as const }
+                  : {})}
+              />
+              <MiniStat label="p95 latency" value={latency(totals?.p95LatencyMs, props.unlocked)} />
+              <MiniStat
+                label="Cost"
+                value={
+                  !props.unlocked || totals === null || totals.costUsd === null
+                    ? "—"
+                    : `$${totals.costUsd.toFixed(2)}`
+                }
+              />
+            </dl>
+          </section>
+
+          {/*
+            One queue for everything waiting on a person. During bring-up these
+            rows are the readiness checklist; in steady operation they are
+            approvals, faults and incidents — and when there is nothing, the
+            panel says so instead of stretching three placeholders.
+          */}
+          <section
+            className="flex min-h-0 flex-col rounded-lg border border-border bg-surface p-4 shadow-card"
+            aria-label="Needs attention"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <span className="block text-micro uppercase tracking-[0.18em] text-faint">Needs attention</span>
+                <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text">
+                  {!props.unlocked
+                    ? "Locked"
+                    : attention.length === 0
+                      ? "All clear"
+                      : attention.length === 1
+                        ? "1 item waiting"
+                        : `${attention.length} items waiting`}
+                </h2>
+              </div>
+              {props.unlocked && !workspaceReady && (
+                <ReadinessRing ready={readyCount} total={props.readiness.length} unlocked={props.unlocked} />
+              )}
+            </div>
+
+            {!props.unlocked ? (
+              <Button
+                variant="ghost"
+                size="auto"
+                className="mt-3 grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2.5 whitespace-normal rounded border border-border bg-bg px-3 py-2.5 text-left font-normal hover:border-border-strong hover:bg-raised"
+                onClick={props.onUnlock}
+              >
+                <span className="min-w-0">
+                  <strong className="block truncate text-caption font-semibold text-text">Sign in</strong>
+                  <small className="mt-0.5 block text-micro font-medium leading-snug text-muted">
+                    Approvals, faults and setup steps are inspected by an administrator.
+                  </small>
+                </span>
+                <ArrowRight aria-hidden="true" className="size-4 text-faint" />
+              </Button>
+            ) : attention.length === 0 ? (
+              <div className="mt-3 grid min-h-0 flex-1 place-items-center rounded border border-border bg-bg px-4 py-6">
+                <div className="grid justify-items-center gap-1.5 text-center">
+                  <CheckCircle2 aria-hidden="true" className="size-5 text-good" />
+                  <strong className="text-caption font-semibold text-text">Nothing is waiting on you</strong>
+                  <small className="text-micro leading-snug text-muted">
+                    Approvals, faults, incidents and setup steps surface here.
+                  </small>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 grid min-h-0 flex-1 content-start gap-2 overflow-hidden">
+                {shownAttention.map((item) => (
                   <Button
                     variant="ghost"
                     size="auto"
                     className={cn(
-                      "grid min-h-12 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 whitespace-normal rounded border px-3 py-2.5 text-left font-normal",
-                      isNext
+                      "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 whitespace-normal rounded border px-3 py-2.5 text-left font-normal",
+                      item.next
                         ? "border-node/35 bg-node/[0.07] hover:border-node/60 hover:bg-node/[0.1]"
                         : "border-border bg-bg hover:border-border-strong hover:bg-raised",
                     )}
-                    key={check.label}
-                    onClick={() => openReadiness(check)}
+                    key={item.key}
+                    onClick={() => openItem(item)}
                   >
                     <span
                       aria-hidden="true"
                       className={cn(
                         "h-1.5 w-1.5 rounded-full",
-                        !props.unlocked ? "bg-faint" : check.ready ? "bg-node" : "bg-faint",
+                        item.tone === "bad" ? "bg-bad" : item.tone === "warn" ? "bg-warn" : "bg-node",
                       )}
                     />
                     <span className="min-w-0">
                       <span className="flex items-center gap-2">
-                        <strong className="truncate text-caption font-semibold text-text">{check.label}</strong>
-                        {isNext && <span className="text-micro uppercase tracking-[0.12em] text-node">Next</span>}
+                        <strong className="truncate text-caption font-semibold text-text">{item.label}</strong>
+                        {item.next && <span className="text-micro uppercase tracking-[0.12em] text-node">Next</span>}
                       </span>
-                      <small className="mt-0.5 block text-micro font-medium leading-snug text-muted">
-                        {props.unlocked ? check.detail : "Sign in to inspect readiness"}
-                      </small>
+                      <small className="mt-0.5 block text-micro font-medium leading-snug text-muted">{item.detail}</small>
                     </span>
                     <ArrowRight aria-hidden="true" className="size-4 text-faint" />
                   </Button>
-                );
-              })}
-            </div>
-
-            {/*
-              Only the layer the governed path does not already carry.
-
-              The first draft listed all three, which put "AI Inference —
-              Ready" and "Agentic System — Degraded" on the screen twice: the
-              path column derives its two middle hops from exactly those two
-              layer states. Enterprise access is the one that appears nowhere
-              else, and it is a real deployment question, so it is the one that
-              stays. It is text rather than a button on purpose — "AI
-              Inference" already names a capability button above, and two
-              controls with one name is ambiguous to a pointer and a screen
-              reader alike.
-            */}
-            {access && (
-              <dl className="mt-auto grid gap-1 border-t border-border pt-3">
-                <dt className="text-micro uppercase tracking-[0.18em] text-faint">Identity</dt>
-                <dd className="m-0 flex items-center justify-between gap-3">
-                  <span className="min-w-0 truncate text-caption text-muted">{access.name}</span>
-                  <span
-                    className={cn(
-                      "shrink-0 text-micro font-semibold",
-                      access.state.tone === "ready" ? "text-good" : access.state.tone === "degraded" ? "text-warn" : "text-faint",
-                    )}
-                  >
-                    {access.state.label}
+                ))}
+                {hiddenAttention > 0 && (
+                  <span className="px-1 text-micro text-faint">
+                    {`+${hiddenAttention} more in their own workspaces`}
                   </span>
-                </dd>
-              </dl>
+                )}
+              </div>
             )}
           </section>
 
-          <section className="flex min-h-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-card" aria-labelledby="dashboard-path-title">
+          {/*
+            What just happened, by name. The strip counts the day; this names
+            the most recent sessions so "something failed" has a face before
+            anyone opens the ledger.
+          */}
+          <section
+            className="flex min-h-0 flex-col rounded-lg border border-border bg-surface p-4 shadow-card"
+            aria-label="Recent sessions"
+          >
             <div className="min-w-0">
-              <span className="block text-micro uppercase tracking-[0.18em] text-faint">Governed path</span>
-              <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text" id="dashboard-path-title">
+              <span className="block text-micro uppercase tracking-[0.18em] text-faint">Execution</span>
+              <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text">
+                Recent sessions
+              </h2>
+            </div>
+
+            {!props.unlocked ? (
+              <div className="mt-3 grid min-h-0 flex-1 place-items-center rounded border border-border bg-bg px-4 py-6">
+                <span className="text-caption text-muted">Sign in to read the ledger.</span>
+              </div>
+            ) : props.runs === null ? (
+              <div className="mt-3 grid content-start gap-2">
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+              </div>
+            ) : recentRuns.length === 0 ? (
+              <div className="mt-3 grid min-h-0 flex-1 place-items-center rounded border border-border bg-bg px-4 py-6">
+                <span className="text-caption text-muted">Sessions will appear here as they execute.</span>
+              </div>
+            ) : (
+              <div className="mt-3 grid min-h-0 flex-1 content-start gap-1.5 overflow-hidden">
+                {recentRuns.map((run) => (
+                  <Button
+                    variant="ghost"
+                    size="auto"
+                    key={run.id}
+                    onClick={() => props.onSelect("Agents")}
+                    className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-3 whitespace-nowrap rounded border border-transparent px-2.5 py-2 text-left font-normal hover:border-border hover:bg-raised"
+                  >
+                    <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", RUN_TONE[run.status])} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-caption font-medium text-text">{run.profileName}</span>
+                      <span className="block truncate text-micro text-faint">{runStatusLabel(run.status)}</span>
+                    </span>
+                    <span className="font-mono text-micro tabular-nums text-muted">
+                      {run.totalTokens === null ? "" : `${compact(run.totalTokens, true)} tk`}
+                    </span>
+                    <span className="font-mono text-micro tabular-nums text-faint">{ago(runMoment(run))}</span>
+                  </Button>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/*
+            The machinery, at rest-state density: the three hops a governed
+            answer passes through, the nodes it runs on, and who is allowed in.
+            The full-height topology column this used to be said the same
+            things in five times the space.
+          */}
+          <section
+            className="flex min-h-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-card"
+            aria-label="System"
+          >
+            <div className="min-w-0">
+              <span className="block text-micro uppercase tracking-[0.18em] text-faint">System</span>
+              <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text">
                 {intact ? "Every hop is answering" : "The path is not complete"}
               </h2>
             </div>
 
-            {/*
-              The hops read top to bottom, as a chain rather than three tiles.
-
-              Side by side they were three cards of equal weight with a 10px
-              rule between them, which says "these are related" and nothing
-              about direction. A message travels through these in order, and a
-              spine drawn between the markers is what makes that order the
-              first thing the panel says. It also gives the column something to
-              fill its height with, which the row never did.
-            */}
-            <ol className="m-0 grid min-h-0 flex-1 list-none auto-rows-fr content-stretch p-0">
+            <ol className="m-0 grid min-h-0 list-none content-start p-0">
               {hops.map((hop, index) => (
-                <li className="relative grid grid-cols-[auto_minmax(0,1fr)] content-start gap-x-3 pb-4 last:pb-0" key={hop.name}>
+                <li className="relative grid grid-cols-[auto_minmax(0,1fr)] content-start gap-x-3 pb-3 last:pb-0" key={hop.name}>
                   {index < hops.length - 1 && (
-                    <span aria-hidden="true" className="absolute bottom-1 left-[7px] top-5 w-px bg-border-strong" />
+                    <span aria-hidden="true" className="absolute bottom-0 left-[6px] top-4 w-px bg-border-strong" />
                   )}
                   <span
                     aria-hidden="true"
                     className={cn(
-                      "relative z-[1] mt-1 size-[15px] shrink-0 rounded-full border-2 bg-surface",
+                      "relative z-[1] mt-1 size-[13px] shrink-0 rounded-full border-2 bg-surface",
                       hop.live ? "border-node" : "border-border-strong",
                     )}
                   />
-                  <div className="min-w-0 pb-0.5">
+                  <div className="min-w-0">
                     <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                       <strong className="min-w-0 truncate text-caption font-semibold text-text">{hop.name}</strong>
                       <span className={cn("shrink-0 text-micro font-semibold", hop.live ? "text-node" : "text-muted")}>
                         {hop.state}
                       </span>
                     </div>
-                    <span className="mt-0.5 block text-micro leading-relaxed text-muted">{hop.role}</span>
-                    {hop.notes.length > 0 && (
-                      <ul className="m-0 mt-1.5 grid list-none gap-1 p-0">
+                    {/*
+                      Why, but only when something is wrong: a healthy hop's
+                      component list restates "Ready" under "Ready".
+                    */}
+                    {!hop.live && hop.notes.length > 0 && (
+                      <ul className="m-0 mt-1 grid list-none gap-1 p-0">
                         {hop.notes.map((note) => (
                           <li className="flex items-baseline gap-1.5 text-micro leading-snug" key={note.name}>
                             <span
@@ -747,6 +950,35 @@ export function DashboardHero(props: DashboardHeroProps) {
               ))}
             </ol>
 
+            <dl className="m-0 grid gap-2 border-t border-border pt-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-micro uppercase tracking-[0.13em] text-faint">VM2 nodes</dt>
+                <dd className="m-0 font-mono text-micro font-semibold tabular-nums text-muted">
+                  {!props.unlocked
+                    ? "—"
+                    : props.runtimeNodes.length === 0
+                      ? "none enrolled"
+                      : `${nodesOnline}/${props.runtimeNodes.length} online`}
+                </dd>
+              </div>
+              {access && (
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-micro uppercase tracking-[0.13em] text-faint">Identity</dt>
+                  <dd className="m-0 flex min-w-0 items-baseline gap-2">
+                    <span className="min-w-0 truncate text-micro text-muted">{access.name}</span>
+                    <span
+                      className={cn(
+                        "shrink-0 text-micro font-semibold",
+                        access.state.tone === "ready" ? "text-good" : access.state.tone === "degraded" ? "text-warn" : "text-faint",
+                      )}
+                    >
+                      {access.state.label}
+                    </span>
+                  </dd>
+                </div>
+              )}
+            </dl>
+
             <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border pt-3 text-micro text-faint">
               <span>
                 <strong className="font-semibold tabular-nums text-muted">
@@ -755,115 +987,8 @@ export function DashboardHero(props: DashboardHeroProps) {
                 services answering
               </span>
               {props.monitoring?.enabled && <span>{cadence(props.monitoring.intervalSeconds)}</span>}
-              <span>Owner-scoped retrieval</span>
-              <span>Default-deny tool policy</span>
               <span>Every run written to the ledger</span>
             </div>
-          </section>
-
-          {/*
-            What the deployment is doing right now.
-
-            Every figure in this column already arrived on each poll and none
-            of them were drawn: run stages, the cancelled and failed shares of
-            a response total, and the approvals a tool call is waiting on. The
-            panel could say how many Profiles existed but not whether any of
-            them were running, which is the first thing anyone opens an
-            operations screen to find out.
-          */}
-          <section
-            className="flex min-h-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-card"
-            aria-labelledby="dashboard-execution-title"
-          >
-            <div className="min-w-0">
-              <span className="block text-micro uppercase tracking-[0.18em] text-faint">Execution</span>
-              <h2
-                className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text"
-                id="dashboard-execution-title"
-              >
-                Run pipeline
-              </h2>
-              {/*
-                Stated because this column mixes two periods too: the run
-                stages are every run since the install, and the response
-                outcomes below them are the same trailing day as the strip
-                above. `AgentMetrics` carries no window at all, so a caption is
-                the only place this can be said.
-              */}
-              <span className="mt-1 block text-micro text-muted">All time</span>
-            </div>
-
-            <div className="grid content-start gap-2.5">
-              {stages.map((stage) => (
-                <PipelineRow
-                  key={stage.label}
-                  label={stage.label}
-                  value={stage.value}
-                  fraction={props.unlocked ? share(stage.value, runTotal) : undefined}
-                  tone={stage.tone}
-                  unlocked={props.unlocked}
-                />
-              ))}
-            </div>
-
-            <div className="border-t border-border pt-3">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-micro uppercase tracking-[0.13em] text-faint">Response outcomes / 24h</span>
-                <span className="font-mono text-micro tabular-nums text-muted">
-                  {count(props.chatMetrics?.responses, props.unlocked)}
-                </span>
-              </div>
-              <div className="mt-2">
-                <OutcomeBar
-                  completed={props.unlocked ? props.chatMetrics?.completed ?? 0 : 0}
-                  failed={props.unlocked ? props.chatMetrics?.failed ?? 0 : 0}
-                  cancelled={props.unlocked ? props.chatMetrics?.cancelled ?? 0 : 0}
-                />
-              </div>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-micro text-muted">
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="size-1.5 rounded-full bg-good" />
-                  {count(props.chatMetrics?.completed, props.unlocked)} completed
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="size-1.5 rounded-full bg-bad" />
-                  {count(props.chatMetrics?.failed, props.unlocked)} failed
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="size-1.5 rounded-full bg-warn" />
-                  {count(props.chatMetrics?.cancelled, props.unlocked)} cancelled
-                </span>
-              </div>
-            </div>
-
-            {/*
-              Two columns rather than three, because there are four figures now.
-
-              `failedCalls` arrived on every poll and was drawn nowhere, which
-              is also what made the headline Tool calls figure unreadable —
-              there was no way to see what the total was missing. Both call
-              outcomes name the noun: "Failed" alone would sit in the same
-              column as the failed *run* count above it, meaning something
-              else entirely.
-            */}
-            <dl className="mt-auto grid grid-cols-2 gap-x-3 gap-y-2.5 border-t border-border pt-3">
-              <MiniStat label="Tools live" value={count(tools?.activeTools, props.unlocked)} />
-              <MiniStat
-                label="Awaiting approval"
-                value={count(tools?.pendingApprovals, props.unlocked)}
-                {...((tools?.pendingApprovals ?? 0) > 0 && props.unlocked ? { tone: "warn" as const } : {})}
-              />
-              <MiniStat
-                label="Denied calls"
-                value={count(tools?.deniedCalls, props.unlocked)}
-                {...((tools?.deniedCalls ?? 0) > 0 && props.unlocked ? { tone: "bad" as const } : {})}
-              />
-              <MiniStat
-                label="Failed calls"
-                value={count(tools?.failedCalls, props.unlocked)}
-                {...((tools?.failedCalls ?? 0) > 0 && props.unlocked ? { tone: "bad" as const } : {})}
-              />
-            </dl>
           </section>
         </div>
         </div>

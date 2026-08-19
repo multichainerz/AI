@@ -16,8 +16,18 @@ export function defaultAgentProfileDigest(): string {
     purpose: profile.purpose,
     instructions: profile.instructions,
     soulMd: profile.soulMd,
-    skills: [...profile.skills].sort((left, right) =>
-      `${left.name}:${left.version}:${left.digest}`.localeCompare(`${right.name}:${right.version}:${right.digest}`)),
+    /*
+     * An empty list, kept in the canonical object deliberately.
+     *
+     * Approved Skills are gone from the Profile version -- recorded there and
+     * delivered to nothing. The key stays because this hash is the seeded
+     * default profile's `distributionDigest`, written into every deployment;
+     * dropping it would change that digest and make an existing installation's
+     * stored value disagree with the one this function derives. It sorted an
+     * array that `DEFAULT_AGENT_PROFILE` always declared empty, so the hashed
+     * bytes are identical either way.
+     */
+    skills: [] as never[],
     modelAlias: profile.modelAlias,
     maxTurns: profile.maxTurns,
     timeoutSeconds: profile.timeoutSeconds,
@@ -44,9 +54,9 @@ async function seedDefaultAgentProfile(pool: Pool): Promise<void> {
   await pool.query(
     `INSERT INTO "AgentProfileVersion" (
        "profileId", "version", "displayName", "purpose", "instructions", "soulMd",
-       "skills", "distributionDigest", "modelAlias", "maxTurns", "timeoutSeconds",
+       "distributionDigest", "modelAlias", "maxTurns", "timeoutSeconds",
        "maxConcurrentRuns", "safeMode"
-     ) VALUES ($1, 1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
+     ) VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT ("profileId", "version") DO NOTHING`,
     [
       profileId,
@@ -54,7 +64,6 @@ async function seedDefaultAgentProfile(pool: Pool): Promise<void> {
       profile.purpose,
       profile.instructions,
       profile.soulMd,
-      JSON.stringify(profile.skills),
       defaultAgentProfileDigest(),
       profile.modelAlias,
       profile.maxTurns,
@@ -109,13 +118,13 @@ async function upgradeDefaultAgentProfile(pool: Pool): Promise<void> {
   await pool.query(
     `INSERT INTO "AgentProfileVersion" (
        "profileId", "version", "displayName", "purpose", "instructions", "soulMd",
-       "skills", "distributionDigest", "modelAlias", "maxTurns", "timeoutSeconds",
+       "distributionDigest", "modelAlias", "maxTurns", "timeoutSeconds",
        "maxConcurrentRuns", "safeMode"
-     ) VALUES ($1, 2, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
+     ) VALUES ($1, 2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT ("profileId", "version") DO NOTHING`,
     [
       existing.id, profile.displayName, profile.purpose, profile.instructions, profile.soulMd,
-      JSON.stringify(profile.skills), defaultAgentProfileDigest(), profile.modelAlias,
+      defaultAgentProfileDigest(), profile.modelAlias,
       profile.maxTurns, profile.timeoutSeconds, profile.maxConcurrentRuns, profile.safeMode,
     ],
   );

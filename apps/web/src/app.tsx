@@ -27,6 +27,7 @@ import {
   LogOut,
   FolderDown,
   MessageSquareText,
+  ShieldCheck,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
@@ -78,7 +79,6 @@ import { persistRailCollapsed, storedRailCollapsed } from "./shell-preferences.j
 import {
   pathForView,
   primaryNavigationGroups,
-  primaryNavigationItems,
   productAreaForView,
   setupStepFromHash,
   viewFromHash,
@@ -132,6 +132,7 @@ function Glyph({ name }: { name: string }) {
     overview: <LayoutDashboard size={20} strokeWidth={1.8} />,
     chat: <MessageSquareText size={20} strokeWidth={1.8} />,
     files: <FolderDown size={20} strokeWidth={1.8} />,
+    admin: <ShieldCheck size={20} strokeWidth={1.8} />,
     agents: <Bot size={20} strokeWidth={1.8} />,
     settings: <Settings size={20} strokeWidth={1.8} />,
     gateway: <Waypoints size={20} strokeWidth={1.8} />,
@@ -450,6 +451,12 @@ function App() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ConnectionTestResult | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>(() => viewFromHash(window.location.hash));
+  /*
+   * `null` is "nobody has said", which follows the active area; a boolean is
+   * the operator's own choice and outlives navigation. Defaulting to `false`
+   * would hide the group you just navigated into.
+   */
+  const [adminNavOpen, setAdminNavOpen] = useState<boolean | null>(null);
   // Setup's open step is part of the address, not component state. It used to
   // be `deploymentInitialTab` here, which is why Back from the nodes panel left
   // Settings and a reload mid-enrolment returned to the overview.
@@ -1361,12 +1368,79 @@ function App() {
         </div>
         <nav aria-label="Primary navigation">
           {/*
-            * One flat list of primary work areas, not two labelled groups: the
-            * design draws them as a single run. The grouping still lives in
-            * `workspace-navigation.tsx` because that is where the product
-            * split is described — this only declines to draw a heading for it.
+            * The daily areas as a flat run, then the administration areas
+            * behind one heading that folds. The grouping was already described
+            * in `workspace-navigation.tsx`; the rail used to flatten it away,
+            * which left seven equal rows and no way to tell the two rows a
+            * person opens every day from the four they configure once.
+            *
+            * A group containing the current area opens on mount, so following
+            * a link into Settings never lands on a rail that hides where you
+            * are. `aria-expanded` and `aria-controls` carry the relationship;
+            * the rows are unmounted rather than hidden so a folded group is
+            * skipped by tab order and by a screen reader alike.
             */}
-          <div className="nav-group">{primaryNavigationItems("top").map(renderNavigationRow)}</div>
+          {primaryNavigationGroups
+            .filter((group) => group.placement === "top")
+            .map((group) => {
+              if (!group.collapsible) {
+                return <div className="nav-group" key={group.label}>{group.items.map(renderNavigationRow)}</div>;
+              }
+              const holdsActive = group.items.some((item) => item.area === activeArea);
+              const open = adminNavOpen ?? holdsActive;
+              const panelId = `nav-group-${group.label.toLowerCase()}`;
+              return (
+                <div className="nav-group" key={group.label}>
+                  {/*
+                    * Built from the same parts as a navigation row -- icon
+                    * span, label span, one trailing span -- so it reads as a
+                    * peer of the rows above rather than a control bolted on
+                    * top of them. That shape is also what the collapsed rail
+                    * depends on: `span + span` is hidden at 80px, which leaves
+                    * the icon and hides the label and the chevron, exactly as
+                    * it does for every other row.
+                    *
+                    * Dimmed while it holds the current area rather than marked
+                    * `aria-current`: the page is the child row, and two rows
+                    * claiming to be the current page is a lie a screen reader
+                    * reads aloud.
+                    */}
+                  <Button
+                    variant="ghost"
+                    className={cn(
+                      "h-10 w-full justify-start gap-3 border-transparent px-3 text-left font-sans text-[14.5px]",
+                      "font-medium text-white/85 hover:bg-white/[0.06] hover:text-white",
+                    )}
+                    aria-expanded={open}
+                    aria-controls={panelId}
+                    type="button"
+                    title={`${group.label} areas`}
+                    onClick={() => setAdminNavOpen(!open)}
+                  >
+                    <span className="nav-app-icon flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current text-white/45">
+                      <Glyph name="admin" />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                    <span aria-hidden="true" className="flex shrink-0 text-white/45">
+                      <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", open ? "" : "-rotate-90")} />
+                    </span>
+                  </Button>
+                  {/*
+                    * The guide runs under the heading's own icon -- 12px of row
+                    * padding plus half a 20px glyph -- so the children hang off
+                    * the thing they belong to instead of floating at an
+                    * arbitrary indent. Neutralised on the 80px rail, where
+                    * there is no label to indent under and a hairline beside a
+                    * centred icon would just be a smudge.
+                    */}
+                  {open && (
+                    <div className="nav-subgroup ml-[22px] border-l border-white/[0.14] pl-1.5" id={panelId}>
+                      {group.items.map(renderNavigationRow)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
         </nav>
         <div className="sidebar-bottom">
           {/*
@@ -1470,7 +1544,6 @@ function App() {
               // refused by every admin route, so the two are not the same test.
               administrator={unlocked}
               activationReady={unlocked ? readiness.agenticInfrastructureReady && readiness.inferenceReady : null}
-              activationMessage={readiness.nextChatStep?.detail ?? null}
               onConfigure={() => openConnectionSettings("HERMES")}
               onOpenChat={() => {
                 void refreshWorkspaceState().catch(() => undefined);
@@ -1522,7 +1595,6 @@ function App() {
             <GuardrailsView
               session={adminSession}
               onConfigureInference={() => openConnectionSettings("INFERENCE")}
-              onOpenOperations={() => selectView("Operations")}
               onSessionExpired={forgetAdminSession}
             />
           ),
@@ -1608,6 +1680,7 @@ function App() {
               chatMetrics={chatMetrics}
               agentMetrics={agentMetrics}
               toolMetrics={toolMetrics}
+              runtimeNodes={runtimeNodes}
               layers={platformLayers}
               readiness={readinessChecks}
               onSelect={selectView}

@@ -89,7 +89,7 @@ const overview: AiOpsOverview = {
   generatedAt: timestamp,
   status: "DEGRADED",
   components: [{
-    id: "postgresql", label: "PostgreSQL", status: "HEALTHY", summary: "Live query succeeded.",
+    id: "postgresql", label: "PostgreSQL", status: "HEALTHY", summary: "Live query succeeded.", required: true,
     source: "LIVE", observedAt: timestamp, latencyMs: null, affectedWorkflows: ["CHAT"],
   }],
   runtime: null,

@@ -113,7 +113,7 @@ async function view(over: Setup = {}) {
    * synchronously, so waiting on it would let every assertion below run against
    * pre-load defaults — the exact vacuous pass the sibling suites warn about.
    */
-  await waitFor(() => expect(screen.getByLabelText("Runtime tools").dataset.loaded).toBe("true"));
+  await waitFor(() => expect(screen.getByLabelText("Session tools").dataset.loaded).toBe("true"));
   const out = process.env.VIEW_PREVIEW_OUT;
   if (out) writeFileSync(out.replace("VIEW", "tooling"), document.body.innerHTML, "utf8");
 }
@@ -177,7 +177,7 @@ describe("browsing what exists", () => {
 
   it("explains an empty catalogue rather than leaving a bare gap", async () => {
     await view();
-    const list = screen.getByLabelText("Runtime tools");
+    const list = screen.getByLabelText("Session tools");
     expect(within(list).getByText(/reports no tools beyond built-in memory/i)).toBeTruthy();
   });
 
@@ -194,11 +194,13 @@ describe("browsing what exists", () => {
     render(<main><ToolingView {...props} session={session} /></main>);
     await waitFor(() => expect(api.getRuntimeCatalogue).toHaveBeenCalled());
 
-    const list = screen.getByLabelText("Runtime tools");
+    const list = screen.getByLabelText("Session tools");
     // The list is on screen, so the absence below is a judgement about its copy.
     expect(within(list).getByLabelText("memory")).toBeTruthy();
     expect(within(list).queryByText(/reports no tools beyond built-in memory/i)).toBeNull();
-    expect(screen.getByText(/asking the runtime which tools it offers/i)).toBeTruthy();
+    // The remedy is the indicator's tooltip now, not a paragraph under the
+    // title -- the headline is what is on screen, the detail one hover away.
+    expect(screen.getByTitle(/asking the runtime which tools it offers/i)).toBeTruthy();
 
     answer({ toolsets: [], skills: [], enabledToolsets: 0 });
     expect(await screen.findByText(/reports no tools beyond built-in memory/i)).toBeTruthy();
@@ -349,7 +351,7 @@ describe("what the headline counts", () => {
     expect(screen.getByText(/Agents can use built-in memory only\./)).toBeTruthy();
     // ...and says where the two allowed-but-idle tools went, so the headline
     // does not read as a contradiction of the rows beneath it.
-    expect(screen.getByText(/2 tools allowed here \(clarify, web_search\)/)).toBeTruthy();
+    expect(screen.getByTitle(/2 tools allowed here \(clarify, web_search\)/)).toBeTruthy();
     // The decision counter still counts decisions. That is what "allowed"
     // means, and redefining it in place would be a different bug.
     expect(screen.getByText(/2 of 2 allowed/)).toBeTruthy();
@@ -397,7 +399,7 @@ describe("the removed MCP plane", () => {
      */
     await view();
     // Assert the screen rendered before asserting what it lacks.
-    expect(screen.getByLabelText("Runtime tools")).toBeTruthy();
+    expect(screen.getByLabelText("Session tools")).toBeTruthy();
     expect(screen.queryByText(/gateway/i)).toBeNull();
     expect(screen.queryByText(/exact-version grant/i)).toBeNull();
     expect(screen.queryByText(/credential/i)).toBeNull();
@@ -407,9 +409,11 @@ describe("the removed MCP plane", () => {
   it("still says so if a release ever registers an MCP tool", async () => {
     // The one tripwire kept: `GovernedTool` is the first link in that plane's
     // chain, so a non-empty registry is the only way it can come back to life.
+    // Still reported, as a count beside the runtime state rather than a
+    // paragraph of its own; the reason it matters is the indicator's tooltip.
     await view({ tools: [governedTool] });
-    expect(await screen.findByText(/1 OrcaSynapse-executed MCP tool is registered/i)).toBeTruthy();
-    expect(screen.getByText(/cannot execute them/i)).toBeTruthy();
+    expect(await screen.findByText("1 MCP unexecutable")).toBeTruthy();
+    expect(screen.getByTitle(/cannot execute them/i)).toBeTruthy();
   });
 });
 
@@ -420,7 +424,7 @@ describe("a tool the runtime has not reported", () => {
     // not the thing an administrator came here to do.
     const user = userEvent.setup();
     await view();
-    const list = screen.getByLabelText("Runtime tools");
+    const list = screen.getByLabelText("Session tools");
     await user.type(within(list).getByLabelText(/tool name/i), "clarify");
     await user.type(within(list).getByLabelText(/why/i), "Asks a question; touches no data.");
     await user.click(within(list).getByRole("button", { name: /Record decision/i }));

@@ -93,6 +93,31 @@ describe("DrizzleAiOpsManager overview", () => {
     expect(overview.incidents).toMatchObject({ open: 0, critical: 0, items: [] });
   });
 
+  it("separates a capability nobody configured from one that is faulted", async () => {
+    /*
+     * The badge could never go green. Any non-HEALTHY component degraded the
+     * plane, and `scheduled-turns` reports NOT_CONFIGURED whenever nothing is
+     * scheduled -- which is most deployments, permanently. An operator had no
+     * action available to clear it except adopting a feature they had decided
+     * against, and a status that cannot go green stops being read.
+     *
+     * The row still says NOT_CONFIGURED rather than HEALTHY: nobody should be
+     * told their schedules are fine when there are none. It simply does not
+     * count against the plane, which is what `required` now says out loud.
+     */
+    const overview = await manager().overview();
+    const byId = new Map(overview.components.map((component) => [component.id, component]));
+
+    expect(byId.get("scheduled-turns")).toMatchObject({ status: "NOT_CONFIGURED", required: false });
+    // A serving connection is not optional, and its placeholder is what keeps
+    // a fresh install honestly out of HEALTHY.
+    expect(byId.get("service:inference")).toMatchObject({ status: "NOT_CONFIGURED", required: true });
+
+    const faulted = overview.components.filter((component) =>
+      component.status !== "HEALTHY" && (component.required || component.status !== "NOT_CONFIGURED"));
+    expect(faulted.map(({ id }) => id)).not.toContain("scheduled-turns");
+  });
+
   it("opens an automated incident for a degraded component and resolves it when it recovers", async () => {
     const degraded = manager({
       runtime: { snapshot: vi.fn(async () => ({ status: "DEGRADED", statusReasons: ["Reconciler is behind."], capturedAt: new Date().toISOString() })) } as never,

@@ -14,7 +14,7 @@ import type {
   UpdateAgentProfile,
   UpdateAgentRuntimeControl,
 } from "@orcasynapse/contracts";
-import { ADMIN_ROLES, agentSkillReferenceSchema, LOCAL_PEOPLE_GROUP } from "@orcasynapse/contracts";
+import { ADMIN_ROLES, LOCAL_PEOPLE_GROUP } from "@orcasynapse/contracts";
 import {
   agentProfile,
   agentProfileVersion,
@@ -58,7 +58,6 @@ interface StoredVersion {
   purpose: string;
   instructions: string;
   soulMd: string;
-  skills: unknown;
   distributionDigest: string | null;
   modelAlias: string;
   maxTurns: number;
@@ -165,21 +164,11 @@ function storedRun(loaded: LoadedRun): StoredRun {
   return { ...run, profile, version };
 }
 
-function parseSkills(value: unknown) {
-  if (!Array.isArray(value)) throw new AgentConflictError("The Profile Distribution Skill manifest is invalid.");
-  return value.map((skill) => {
-    const parsed = agentSkillReferenceSchema.safeParse(skill);
-    if (!parsed.success) throw new AgentConflictError("The Profile Distribution Skill manifest is invalid.");
-    return parsed.data;
-  });
-}
-
 function distributionDigest(configuration: {
   displayName: string;
   purpose: string;
   instructions: string;
   soulMd: string;
-  skills: Array<{ name: string; version: string; digest: string }>;
   modelAlias: string;
   maxTurns: number;
   timeoutSeconds: number;
@@ -191,8 +180,19 @@ function distributionDigest(configuration: {
     purpose: configuration.purpose,
     instructions: configuration.instructions,
     soulMd: configuration.soulMd,
-    skills: [...configuration.skills].sort((left, right) =>
-      `${left.name}:${left.version}:${left.digest}`.localeCompare(`${right.name}:${right.version}:${right.digest}`)),
+    /*
+     * An empty list, kept in the canonical object on purpose.
+     *
+     * Approved Skills are gone -- they were recorded on a version and
+     * delivered to nothing, which the field's own label had to admit. The key
+     * stays because this shape is hashed: a version row written before the
+     * column existed carries `distributionDigest: null` and has its digest
+     * recomputed here on read, so dropping the key would change that
+     * recomputation and break the correspondence between a legacy version and
+     * the digest a run of it recorded. Every stored digest is untouched either
+     * way; this is only about the ones still derived.
+     */
+    skills: [] as never[],
     modelAlias: configuration.modelAlias,
     maxTurns: configuration.maxTurns,
     timeoutSeconds: configuration.timeoutSeconds,
@@ -206,11 +206,10 @@ function versionDto(version: StoredVersion) {
   if (version.maxTurns !== 1 || version.safeMode !== true) {
     throw new AgentConflictError("The agent version does not satisfy the enforced safe-mode boundary.");
   }
-  const skills = parseSkills(version.skills);
   const soulMd = version.soulMd.trim().length >= 10 ? version.soulMd : version.instructions;
   const digest = version.distributionDigest ?? distributionDigest({
     displayName: version.displayName, purpose: version.purpose, instructions: version.instructions,
-    soulMd, skills, modelAlias: version.modelAlias, maxTurns: version.maxTurns,
+    soulMd, modelAlias: version.modelAlias, maxTurns: version.maxTurns,
     timeoutSeconds: version.timeoutSeconds, maxConcurrentRuns: version.maxConcurrentRuns,
     safeMode: version.safeMode,
   });
@@ -221,7 +220,6 @@ function versionDto(version: StoredVersion) {
     purpose: version.purpose,
     instructions: version.instructions,
     soulMd,
-    skills,
     modelAlias: version.modelAlias,
     maxTurns: 1 as const,
     timeoutSeconds: version.timeoutSeconds,
@@ -447,7 +445,6 @@ export class DrizzleAgentManager implements AgentManager {
             purpose: input.purpose,
             instructions: input.instructions,
             soulMd: input.soulMd,
-            skills: input.skills,
             distributionDigest: digest,
             modelAlias: input.modelAlias,
             maxTurns: input.maxTurns,
@@ -493,14 +490,12 @@ export class DrizzleAgentManager implements AgentManager {
         .limit(1);
       if (!current) throw new AgentConflictError("The current agent configuration is missing.");
       const nextVersion = profile.currentVersion + 1;
-      const skills = input.skills ?? parseSkills(current.skills);
       const soulMd = input.soulMd ?? (current.soulMd.trim().length >= 10 ? current.soulMd : current.instructions);
       const nextConfiguration = {
         displayName: input.displayName ?? current.displayName,
         purpose: input.purpose ?? current.purpose,
         instructions: input.instructions ?? current.instructions,
         soulMd,
-        skills,
         modelAlias: input.modelAlias ?? current.modelAlias,
         maxTurns: input.maxTurns ?? current.maxTurns,
         timeoutSeconds: input.timeoutSeconds ?? current.timeoutSeconds,

@@ -20,7 +20,7 @@ describe("default Hermes profile seed", () => {
   it("contains only the Hermes-native profile contract", () => {
     expect(Object.keys(DEFAULT_AGENT_PROFILE).sort()).toEqual([
       "displayName", "instructions", "maxConcurrentRuns", "maxTurns", "modelAlias",
-      "purpose", "safeMode", "skills", "slug", "soulMd", "timeoutSeconds",
+      "purpose", "safeMode", "slug", "soulMd", "timeoutSeconds",
     ]);
   });
 });

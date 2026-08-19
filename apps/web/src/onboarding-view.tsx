@@ -16,8 +16,7 @@ import {
   getOnboardingSnapshot,
   runOnboardingValidation,
 } from "./api.js";
-import { connectionReadiness } from "./connection-readiness.js";
-import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
+import { deriveWorkspaceReadiness } from "./platform-readiness.js";
 import {
   DEFAULT_HERMES_COMMIT,
   RuntimeNodesPanel,
@@ -25,8 +24,8 @@ import {
 } from "./runtime-nodes-panel.js";
 import { deriveSetupSteps, type SetupStep, type SetupStepKey } from "./setup-steps.js";
 import {
-  Alert, Button, LockedScreen, MicroLabel,
-  Panel, PanelHeading, StatusText, StepList, Tile, WorkspaceIntro, cn,
+  Alert, Button, LockedScreen,
+  Panel, PanelHeading, StatusText, StepList, WorkspaceIntro, cn,
 } from "./ui/index.js";
 
 interface OnboardingViewProps {
@@ -195,7 +194,6 @@ export function OnboardingView({
     />;
   }
 
-  const inference = connectionFor(connections, "INFERENCE");
   const readiness = deriveWorkspaceReadiness({ connections, runtimeNodes, profiles, runtime: agentRuntime });
   const architecture = snapshot?.architecture ?? null;
 
@@ -237,18 +235,24 @@ export function OnboardingView({
       icon={<ListChecks className="size-4" aria-hidden="true" />}
       title="Bring this installation up"
       actions={
-        <div className="min-w-[150px] text-right">
-          <strong className={cn("block text-figure font-semibold tabular-nums", allDone ? "text-good" : "text-warn")}>
+        /*
+          * One line, not a three-line score card. This was a `text-figure`
+          * fraction stacked over a label and a rule, which made the count the
+          * loudest thing on a screen whose subject is the step you are on --
+          * and it pushed the header past the height every other workspace uses.
+          */
+        <div className="flex items-center gap-2.5">
+          <span className={cn("font-mono text-caption tabular-nums", allDone ? "text-good" : "text-warn")}>
             {done} of {steps.length}
-          </strong>
-          <MicroLabel className="block">steps complete</MicroLabel>
+          </span>
+          <span className="text-caption text-muted">steps complete</span>
           {/*
             * `<progress>` rather than a div with a computed width: the fraction
             * is data, and `style-src 'self'` refuses the inline width that
             * would express it.
             */}
           <progress
-            className={cn("metric-progress mt-2 block h-0.5 w-full", allDone ? "is-good" : "is-warn")}
+            className={cn("metric-progress block h-0.5 w-[72px]", allDone ? "is-good" : "is-warn")}
             aria-label={`${done} of ${steps.length} setup steps complete`}
             value={done}
             max={steps.length}
@@ -259,8 +263,16 @@ export function OnboardingView({
 
     {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
 
-    <div className="grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[264px_minmax(0,1fr)]">
-      <Panel className="min-h-0 overflow-y-auto p-3">
+    {/*
+      * `items-start`, so each column is as tall as what is in it.
+      *
+      * Both columns used to stretch to the viewport: three steps sat in a rail
+      * box 600px tall, the step itself in another, and the rest of the screen
+      * was two empty boxes. Setup is the first thing anyone sees on a new
+      * installation, and it was mostly a picture of nothing.
+      */}
+    <div className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-y-auto lg:grid-cols-[264px_minmax(0,1fr)]">
+      <Panel className="p-3">
       <StepList
         label="Setup steps"
         activeKey={active?.key ?? ""}
@@ -281,7 +293,7 @@ export function OnboardingView({
       />
       </Panel>
 
-      <div className="grid min-h-0 content-start gap-3 overflow-y-auto">
+      <div className="grid content-start gap-3">
       {active && <section className="grid gap-4" aria-label={`Step ${active.ordinal}: ${active.title}`}>
         <Panel>
           <PanelHeading
@@ -312,17 +324,6 @@ export function OnboardingView({
           )}
 
           {active.key === "inference" && <div className="mt-4 grid gap-3">
-            <Tile className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <MicroLabel className="block">Endpoint</MicroLabel>
-                <span className="mt-1 block truncate text-body text-text">
-                  {inference?.baseUrl ?? "Choose a local server or a public OpenRouter endpoint."}
-                </span>
-              </div>
-              <StatusText dot tone={connectionReadiness(inference).tone === "ready" ? "good" : inference ? "warn" : "neutral"}>
-                {connectionReadiness(inference).label}
-              </StatusText>
-            </Tile>
             <ConnectionDrawer
               embedded
               open

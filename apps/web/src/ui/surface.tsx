@@ -108,7 +108,13 @@ export function WorkspaceIntro({
   const extras = Children.toArray(children).filter(Boolean);
   return (
     <Card className={cn("shrink-0", className)}>
-      <header className="flex items-center justify-between gap-4 p-4">
+      {/* The field is the title row's, not the card's. On a card that also
+          carries content -- Profiles has the execution boundary and the run
+          counters inside this same Card -- putting it on the Card ran the dots
+          behind a switch and a metric row, which is texture under working
+          controls rather than behind a title. The bordered region below is a
+          different thing and keeps its own plain surface. */}
+      <header className="workspace-intro-field flex items-center justify-between gap-4 p-4">
         <div className="flex min-w-0 items-center gap-3">
           <Mark>{icon}</Mark>
           <h1 className="m-0 font-display text-[22px] font-semibold leading-tight tracking-[-0.03em] text-text">{title}</h1>

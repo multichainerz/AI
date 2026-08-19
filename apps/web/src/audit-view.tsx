@@ -1,5 +1,5 @@
 import type { AdministratorSession, AuditEvent, AuditEventQuery } from "@orcasynapse/contracts";
-import { ScrollText } from "lucide-react";
+import { RefreshCw as SyncIcon, ScrollText } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { OrcaSynapseApiError, getAuditEvents } from "./api.js";
 import { adminAccess } from "./admin-access.js";
@@ -128,7 +128,7 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
       <WorkspaceIntro
         icon={<ScrollText className="size-4" aria-hidden="true" />}
         title="Audit trail"
-        actions={<Button className="shrink-0" size="sm" onClick={() => void load(applied, false)} disabled={busy}>Refresh</Button>}
+        actions={<Button className="shrink-0" size="sm" onClick={() => void load(applied, false)} disabled={busy}><SyncIcon size={14} />Refresh</Button>}
       >
       </WorkspaceIntro>
 

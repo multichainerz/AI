@@ -450,6 +450,18 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   ? diagnostic.status.replaceAll("_", " ")
                   : existing.enabled && existing.status === "HEALTHY" ? "Connected and active" : existing.status.replaceAll("_", " ")}
               </StatusText>
+              {/*
+                * The endpoint sits on the status line rather than in a tile
+                * above it. Setup drew both: a card naming the endpoint with a
+                * readiness dot, and this block naming the same connection's
+                * status with its own dot -- two components reporting one
+                * connection, stacked, each with half the answer. One line now
+                * says which endpoint, whether it is healthy, and what the last
+                * check reported, beside the button that runs the next one.
+                */}
+              {existing.baseUrl ? (
+                <p className="mt-1 truncate font-mono text-micro text-faint">{existing.baseUrl}</p>
+              ) : null}
               <p className="mt-1 text-caption leading-relaxed text-muted">
                 {diagnostic?.message ?? existing.lastHealthcheckMessage ?? "Run a credential-aware health check."}
                 {diagnostic ? ` · ${diagnostic.latencyMs} ms` : ""}

@@ -217,7 +217,7 @@ describe("DrizzleOnboardingManager validation", () => {
       .returning({ id: agentProfile.id });
     await context.database.insert(agentProfileVersion).values({
       profileId: profile!.id, version: 1, displayName: "Support", purpose: "Answer questions.",
-      instructions: "Answer only the authorized request.", soulMd: "Careful assistant.", skills: [],
+      instructions: "Answer only the authorized request.", soulMd: "Careful assistant.",
       modelAlias: "hermes-agent", maxTurns: 1, timeoutSeconds: 120, maxConcurrentRuns: 1,
       distributionDigest: "a".repeat(64),
     });

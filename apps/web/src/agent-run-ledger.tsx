@@ -3,7 +3,7 @@ import { Switch } from "@/components/ui/switch";
 import { failedStatuses, runningStatuses, statusTone } from "./agent-status.js";
 import { groupRuntimeEvents } from "./chat/timeline.js";
 import {
-  Button, EmptyState, Metric, MetricRow, MicroLabel,
+  Button, EmptyState, MicroLabel,
   Panel, PanelHeading, StatusText, Tile, cn, toneFor,
 } from "./ui/index.js";
 
@@ -141,9 +141,9 @@ export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, canC
               * carry the expensive one's consequences.
               */}
             <label className="flex items-center gap-2.5">
-              <span className="text-caption text-muted">Learn from runs</span>
+              <span className="text-caption text-muted">Learn from sessions</span>
               <Switch
-                aria-label={extracting ? "Stop learning from runs" : "Learn from runs"}
+                aria-label={extracting ? "Stop learning from sessions" : "Learn from sessions"}
                 checked={extracting}
                 disabled={busy !== null}
                 onCheckedChange={(next) => onToggle(enabled, EXECUTION_REASON, next)}
@@ -159,10 +159,28 @@ export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, canC
         * Profile and no runs at all. The ledger beside this strip already says
         * nothing has run, so an empty boundary stays a title and the switches.
         */}
+      {/*
+        * One line, not four stacked blocks. Each figure had a label above it,
+        * a 19px numeral, and a caption beneath -- roughly 90px of card for four
+        * counts that are mostly zero on a healthy deployment, sitting between
+        * the execution switch and the work below it. The captions went with the
+        * height: "awaiting worker" under a figure labelled Queued is the label
+        * again in a longer form.
+        */}
       {totals.some(({ value }) => value > 0) ? (
-        <MetricRow className="border-b-0 border-t pb-0 pt-3 lg:grid-cols-4" aria-label="Hermes run summary">
-          {totals.map((total) => <Metric key={total.label} {...total} />)}
-        </MetricRow>
+        <dl className="m-0 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-border pt-2.5" aria-label="Hermes run summary">
+          {totals.map((total) => (
+            <div className="flex items-baseline gap-1.5" key={total.label}>
+              <dt className="text-micro font-semibold uppercase tracking-[0.08em] text-faint">{total.label}</dt>
+              <dd className={cn(
+                "m-0 font-mono text-caption tabular-nums",
+                total.tone === "accent" && total.value > 0 ? "text-accent" : "text-text",
+              )}>
+                {total.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
       ) : null}
     </section>
   );
@@ -238,21 +256,24 @@ export function RunLedger({ runs, total, profileName, scoped, administrator, sel
    */
   const windowed = total >= RUN_WINDOW;
 
-  const description = windowed
-    ? administrator
+  /*
+   * Only the windowed sentences survive. The other half said "Produced by X,
+   * newest first" -- which the panel's own rows show, ordered, with the Profile
+   * selected beside them. The caveat above is different: at the cap this is the
+   * only thing on the screen that says the list is a window, and without it
+   * "nothing has run under X" reads as fact rather than as the far side of a
+   * boundary. So the line appears exactly when it is carrying information and
+   * is absent when it was decoration.
+   */
+  const description = !windowed
+    ? undefined
+    : administrator
       ? named
         ? `Produced by ${profileName}, within the newest ${RUN_WINDOW} runs.`
         : `The newest ${RUN_WINDOW} runs, across every Profile.`
       : named
         ? `Your runs produced by ${profileName}, within the newest ${RUN_WINDOW} loaded.`
-        : `The newest ${RUN_WINDOW} of your runs, across every Profile.`
-    : administrator
-      ? named
-        ? `Produced by ${profileName}, newest first.`
-        : "Across every Profile, newest first."
-      : named
-        ? `Your runs produced by ${profileName}, newest first.`
-        : "Your runs across every Profile, newest first.";
+        : `The newest ${RUN_WINDOW} of your runs, across every Profile.`;
 
   /*
    * Only the scoped-and-named case can be empty while the window is full, so
@@ -285,8 +306,19 @@ export function RunLedger({ runs, total, profileName, scoped, administrator, sel
         className="mb-2 shrink-0"
         kicker="Execution ledger"
         title="Recent runs"
-        description={description}
-        actions={<StatusText>{runs.length} shown</StatusText>}
+        {...(description ? { description } : {})}
+        /*
+          * Whose runs, as a label rather than a sentence. `GET /admin/agents/runs`
+          * returns every run in the window while `GET /agents/runs` filters to the
+          * caller, and both render this component -- so without saying which, a
+          * personal ledger reads as a claim about the deployment. That distinction
+          * was the load-bearing half of the description line; it belongs here,
+          * beside the count, at the size of a label.
+          */
+        actions={<>
+          <StatusText>{administrator ? "All runs" : "Your runs"}</StatusText>
+          <StatusText>{runs.length} shown</StatusText>
+        </>}
       />
       <div className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto">
         {runs.length === 0 && <EmptyState title={emptyTitle}>{emptyBody}</EmptyState>}
@@ -369,12 +401,19 @@ export function RunDetail({ run, events, busy, canCancel, onCancel }: RunDetailP
         className="mb-2 shrink-0"
         kicker="Run detail"
         title={run.profileName}
-        description={`${run.profileSlug} · version ${run.profileVersion}`}
         actions={<StatusText dot tone={toneFor(statusTone(run.status))}>{runLabel(run.status)}</StatusText>}
       />
       <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto">
-      <dl className="m-0 grid grid-cols-3 gap-px rounded border border-border bg-border">
+      {/*
+        * Four facts, not three. Which immutable Profile version produced a run
+        * used to sit in the panel's description line; that line was prose
+        * everywhere else on this screen and went with the rest of it, but this
+        * is the one thing on the panel that makes the run attributable, so it
+        * moved into the grid instead of leaving with the sentence.
+        */}
+      <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border sm:grid-cols-4">
         {[
+          { label: "Profile", value: `${run.profileSlug} v${run.profileVersion}` },
           { label: "Queued", value: friendlyTime(run.queuedAt) },
           { label: "Started", value: friendlyTime(run.startedAt) },
           { label: "Completed", value: friendlyTime(run.completedAt) },

@@ -111,7 +111,14 @@ const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWork
    * capability the deployment no longer has.
    */
   OIDC: { label: "Enterprise identity", workflows: [] },
-  SIEM: { label: "SIEM forwarding", workflows: [] },
+  /*
+   * Retired, exactly like OIDC above and for the same reason: audit forwarding
+   * was removed at v9.0.0 along with `AuditForwardingState`, and the enum value
+   * survives only so a stored row still parses. Labelled as retired rather than
+   * as "SIEM forwarding", which named a capability this product no longer has
+   * and put it on the health page as though it were a service to fix.
+   */
+  SIEM: { label: "Audit forwarding (retired)", workflows: [] },
   NOTIFICATION: { label: "Operator notifications", workflows: [] },
   OTHER: { label: "Other service", workflows: [] },
 };
@@ -185,7 +192,7 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     label: "Data egress",
     status: "PARTIAL",
     summary: "OrcaSynapse uses configured internal endpoints, while infrastructure-level egress enforcement remains an on-prem acceptance gate.",
-    evidence: "Application credentials are isolated; network policy and SIEM forwarding have not been proven locally.",
+    evidence: "Application credentials are isolated; infrastructure-level network policy has not been proven locally.",
   },
   ];
 }
@@ -250,7 +257,7 @@ function configuredComponent(
   connection: ServiceConnectionSummary,
   now: Date,
   monitoring: ConnectionMonitoringControl | null,
-): AiOpsComponent {
+): ComponentDraft {
   const metadata = serviceMetadata[connection.kind];
   const observedAt = connection.lastHealthcheckAt;
   const continuous = monitoring?.enabled === true;
@@ -324,7 +331,24 @@ function configuredComponent(
   };
 }
 
-function placeholderComponent(kind: ServiceKind): AiOpsComponent {
+/**
+ * A component as its collector builds it. `required` is the one property that
+ * is a policy decision rather than an observation, so it is stamped once at
+ * assembly from the list below instead of being restated at every site.
+ */
+type ComponentDraft = Omit<AiOpsComponent, "required">;
+
+/**
+ * Capabilities a deployment may decline without being unhealthy.
+ *
+ * Everything else is required: an installation with no serving connection is
+ * genuinely not ready, and its `service:` placeholder has always kept the
+ * plane out of HEALTHY. Unattended turns are a feature to adopt, not a
+ * dependency to satisfy, so leaving them unscheduled must not be a fault.
+ */
+const OPTIONAL_COMPONENTS: ReadonlySet<string> = new Set(["scheduled-turns"]);
+
+function placeholderComponent(kind: ServiceKind): ComponentDraft {
   const metadata = serviceMetadata[kind];
   return {
     id: `service:${kind.toLowerCase()}`,
@@ -338,7 +362,7 @@ function placeholderComponent(kind: ServiceKind): AiOpsComponent {
   };
 }
 
-function modelComponent(model: ModelDeployment): AiOpsComponent {
+function modelComponent(model: ModelDeployment): ComponentDraft {
   const affectedWorkflows: AiOpsWorkflow[] = model.workload === "CHAT"
     ? ["CHAT"]
     : ["AGENTS"];
@@ -414,7 +438,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         .then(([row]) => row ?? null)),
     ]);
 
-    const components: AiOpsComponent[] = [
+    const components: ComponentDraft[] = [
       {
         id: "postgresql",
         label: "PostgreSQL",
@@ -468,7 +492,12 @@ export class DrizzleAiOpsManager implements AiOpsManager {
       });
     }
 
-    await this.reconcileAutomatedIncidents(components, generatedAt);
+    const stamped: AiOpsComponent[] = components.map((component) => ({
+      ...component,
+      required: !OPTIONAL_COMPONENTS.has(component.id),
+    }));
+
+    await this.reconcileAutomatedIncidents(stamped, generatedAt);
     const [incidentItems, openIncidentCount, criticalIncidentCount] = await Promise.all([
       this.database
         .select().from(operationalIncident).where(this.openIncident)
@@ -485,16 +514,31 @@ export class DrizzleAiOpsManager implements AiOpsManager {
       if (left.severity !== right.severity) return left.severity === "CRITICAL" ? -1 : 1;
       return right.detectedAt.localeCompare(left.detectedAt);
     });
-    const status = components.some(({ status }) => status === "UNAVAILABLE")
+    /*
+     * A capability nobody configured is not a fault. This read "any component
+     * that is not HEALTHY", which meant an optional feature left unused --
+     * scheduled turns, on most deployments -- pinned the whole plane to
+     * DEGRADED forever, with no action an operator could take to clear it
+     * except adopting a feature they had decided against. A badge that can
+     * never go green stops being read.
+     *
+     * Required capabilities still count while unconfigured: an installation
+     * with no serving connection is genuinely not ready, which is the
+     * behaviour `overview` has always had for the `service:` placeholders.
+     */
+    const faulted = stamped.filter((component) =>
+      component.status !== "HEALTHY"
+      && (component.required || component.status !== "NOT_CONFIGURED"));
+    const status = stamped.some(({ status }) => status === "UNAVAILABLE")
       ? "CRITICAL"
-      : components.some(({ status }) => status !== "HEALTHY")
+      : faulted.length > 0
         ? "DEGRADED"
         : "HEALTHY";
 
     return {
       generatedAt: generatedAt.toISOString(),
       status,
-      components,
+      components: stamped,
       runtime,
       metrics: { chat, agents, tools },
       guardrails: guardrailPosture(activeGuardrail),
@@ -744,7 +788,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
    * NOT_CONFIGURED when nothing is scheduled, rather than HEALTHY: a deployment
    * that does not use the feature should not be told its schedules are fine.
    */
-  private async scheduledTurnComponent(generatedAt: Date): Promise<AiOpsComponent> {
+  private async scheduledTurnComponent(generatedAt: Date): Promise<ComponentDraft> {
     const [totals] = await this.database
       .select({
         total: count(),

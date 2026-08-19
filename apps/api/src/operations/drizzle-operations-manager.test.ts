@@ -78,7 +78,10 @@ describe("DrizzleOperationsManager", () => {
     const snapshot = await new DrizzleOperationsManager(context.database).snapshot();
 
     expect(snapshot.status).toBe("DEGRADED");
-    expect(snapshot.statusReasons[0]).toContain("No online PostgreSQL runtime executor");
+    // Names the missing executor rather than the database, which the health
+    // screen renders directly above a PostgreSQL row reporting HEALTHY.
+    expect(snapshot.statusReasons[0]).toContain("No runtime executor has posted an online heartbeat");
+    expect(snapshot.statusReasons[0]).toContain("database itself is reachable");
     expect(snapshot.workloads[0]).toMatchObject({ name: "hermes-runs", totalCount: 0 });
   });
 

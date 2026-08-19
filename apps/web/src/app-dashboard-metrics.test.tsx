@@ -40,6 +40,9 @@ const api = vi.hoisted(() => ({
   getAgentRuntime: vi.fn(),
   getAgentProfiles: vi.fn(),
   getHermesRuntimeNodes: vi.fn(),
+  getGatewayUsage: vi.fn(),
+  getAgentRuns: vi.fn(),
+  getOperationalIncidents: vi.fn(),
   createLocalAdministratorSession: vi.fn(),
   createLocalPersonSession: vi.fn(),
   revokeAdministratorSession: vi.fn(),
@@ -76,9 +79,14 @@ const agentMetrics = (completedRuns: number) => ({
   profiles: 2, activeProfiles: 1, queuedRuns: 0, runningRuns: 0, completedRuns, failedRuns: 0,
 }) as AgentMetrics;
 
-const toolMetrics = (completedCalls: number) => ({
-  activeTools: 6, activeGrants: 3, pendingApprovals: 0,
-  executingCalls: 0, completedCalls, deniedCalls: 0, failedCalls: 0,
+/*
+ * The sentinel figure is `pendingApprovals`: it is the one tool metric the
+ * Dashboard still draws as a number (the Awaiting approval cell), so it is the
+ * one that can prove a fetched answer reached a pixel.
+ */
+const toolMetrics = (pendingApprovals: number) => ({
+  activeTools: 6, activeGrants: 3, pendingApprovals,
+  executingCalls: 0, completedCalls: 940, deniedCalls: 0, failedCalls: 0,
 }) as ToolMetrics;
 
 /**
@@ -110,6 +118,11 @@ beforeEach(() => {
   api.getAgentRuntime.mockResolvedValue({ enabled: false } as AgentRuntimeControl);
   api.getAgentProfiles.mockResolvedValue({ items: [] });
   api.getHermesRuntimeNodes.mockResolvedValue({ items: [] });
+  // The Dashboard's own reads, pending on purpose: these cases are about the
+  // three metric scalars the shell wires, not the panels HomeView fetches.
+  api.getGatewayUsage.mockReturnValue(new Promise(() => undefined));
+  api.getAgentRuns.mockReturnValue(new Promise(() => undefined));
+  api.getOperationalIncidents.mockReturnValue(new Promise(() => undefined));
   api.revokeAdministratorSession.mockResolvedValue(undefined);
   api.revokeEnterpriseSession.mockResolvedValue(undefined);
   /*

@@ -282,7 +282,13 @@ export class DrizzleOperationsManager implements OperationsManager {
     ];
 
     const hasOnlineExecutor = executors.some(({ status }) => status === "ONLINE");
-    const statusReasons = hasOnlineExecutor ? [] : ["No online PostgreSQL runtime executor heartbeat is available."];
+    /*
+     * Names the executor, not the database. "No online PostgreSQL runtime
+     * executor heartbeat" sat directly above a PostgreSQL row reporting
+     * HEALTHY, so the two read as contradicting each other -- the database is
+     * reachable; what is missing is a worker posting a heartbeat into it.
+     */
+    const statusReasons = hasOnlineExecutor ? [] : ["No runtime executor has posted an online heartbeat; the database itself is reachable."];
 
     return {
       engine: "postgresql-state",

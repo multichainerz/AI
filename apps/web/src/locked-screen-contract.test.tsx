@@ -49,7 +49,6 @@ const cases: LockedCase[] = [
       render(<GuardrailsView
         session={signedOut}
         onConfigureInference={elevate}
-        onOpenOperations={navigate}
         onSessionExpired={vi.fn()}
       />);
     },

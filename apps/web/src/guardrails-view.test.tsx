@@ -44,6 +44,7 @@ let catalogue: GuardrailPolicy[] = [];
 
 const updateGuardrailPolicy = vi.fn();
 const changeGuardrailPolicyState = vi.fn();
+const createGuardrailPolicy = vi.fn();
 
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
@@ -51,23 +52,13 @@ vi.mock("./api.js", async () => {
     ...actual,
     getGuardrailPolicies: vi.fn(async () => ({ items: catalogue })),
     updateGuardrailPolicy: (...args: unknown[]) => updateGuardrailPolicy(...args as []),
+    createGuardrailPolicy: (...args: unknown[]) => createGuardrailPolicy(...args as []),
     changeGuardrailPolicyState: (...args: unknown[]) => changeGuardrailPolicyState(...args as []),
   };
 });
 
 const { GuardrailsView } = await import("./guardrails-view.js");
 const { OrcaSynapseApiError } = await import("./api.js");
-
-/**
- * Types one character at a time, which is the only way a keystroke-by-keystroke
- * rewrite can be observed. Setting the whole string at once hides it.
- */
-function typeInto(input: HTMLElement, text: string) {
-  const control = input as HTMLInputElement;
-  for (const character of text) {
-    fireEvent.change(control, { target: { value: control.value + character } });
-  }
-}
 
 /**
  * Renders, and waits for the load to land rather than for the shell.
@@ -85,20 +76,20 @@ async function view() {
   render(<main><GuardrailsView
     session={session}
     onConfigureInference={vi.fn()}
-    onOpenOperations={vi.fn()}
     onSessionExpired={vi.fn()}
   /></main>);
-  await screen.findByRole("button", { name: "New policy" });
+  await screen.findAllByRole("button", { name: "Add control" });
   for (const { displayName } of catalogue) await screen.findByRole("heading", { name: displayName });
 }
 
-async function editor(): Promise<HTMLElement> {
+/** Opens the control dialog on one kind and returns its form. */
+async function controlForm(kind: string): Promise<HTMLElement> {
   await view();
-  fireEvent.click(screen.getByRole("button", { name: "New policy" }));
-  const slug = screen.getByLabelText(/^Policy slug/);
-  fireEvent.change(slug, { target: { value: "" } });
-  return slug;
+  fireEvent.click(screen.getAllByRole("button", { name: "Add control" })[0]!);
+  fireEvent.click(within(screen.getByLabelText("Control types")).getByText(kind));
+  return document.getElementById("guardrail-control-editor")!;
 }
+
 
 afterEach(() => {
   cleanup();
@@ -106,6 +97,7 @@ afterEach(() => {
   catalogue = [];
   updateGuardrailPolicy.mockReset();
   changeGuardrailPolicyState.mockReset();
+  createGuardrailPolicy.mockReset();
 });
 
 describe("counting the records", () => {
@@ -122,7 +114,6 @@ describe("counting the records", () => {
     render(<main><GuardrailsView
       session={session}
       onConfigureInference={vi.fn()}
-      onOpenOperations={vi.fn()}
       onSessionExpired={vi.fn()}
     /></main>);
     const summary = await screen.findByLabelText("Guardrail policy summary");
@@ -155,7 +146,7 @@ describe("a policy another operator moved first", () => {
     changeGuardrailPolicyState.mockImplementation(conflictOnce());
     await view();
 
-    fireEvent.click(screen.getByRole("button", { name: "Activate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Activate draft" }));
     fireEvent.change(screen.getByLabelText(/^Operator reason/), {
       target: { value: "Safety evidence promoted for v1.0.0." },
     });
@@ -174,30 +165,63 @@ describe("a policy another operator moved first", () => {
     updateGuardrailPolicy.mockImplementation(conflictOnce());
     await view();
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save policy revision" }));
+    // Editing a control saves the whole draft, so the conflict path is the
+    // same one a record edit used to take -- but the revision now comes from
+    // state at save time rather than from a snapshot the dialog captured.
+    const rows = within(screen.getByLabelText("Boundary control rows"));
+    fireEvent.click(within(rows.getByText("Input ceiling").closest("li")!).getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save control" }));
     await waitFor(() => screen.getByText(/changed since it was loaded/));
 
-    fireEvent.click(screen.getByRole("button", { name: "Save policy revision" }));
-    await waitFor(() => screen.getByText(/Policy updated/));
+    fireEvent.click(screen.getByRole("button", { name: "Save control" }));
+    await waitFor(() => screen.getByText(/Input ceiling saved/));
     expect(updateGuardrailPolicy.mock.calls[1]![1]).toMatchObject({ expectedRevision: 2 });
   });
 });
 
-describe("naming a new policy", () => {
-  it("lets a hyphen be typed into the slug, because every seeded slug has one", async () => {
-    // Trimming the trailing hyphen on each keystroke deletes the separator
-    // before the next character arrives, so 'chat-safety' would be unreachable
-    // by typing.
-    const slug = await editor();
-    typeInto(slug, "chat-safety");
-    expect(slug).toHaveProperty("value", "chat-safety");
+describe("saving one control", () => {
+  it("writes a whole first boundary from a single word filter", async () => {
+    /*
+     * The operator's decision is one rule; the record still has to be a
+     * complete, versioned boundary because that is what the server enforces
+     * and audits. The screen supplies the rest -- version, slug, ceilings --
+     * so a blocked word costs one dialog rather than a fifteen-field form.
+     */
+    catalogue = [];
+    createGuardrailPolicy.mockResolvedValue(draftPolicy);
+    const form = await controlForm("Word filter");
+
+    fireEvent.change(within(form).getByLabelText(/^Label/), { target: { value: "Internal codename" } });
+    fireEvent.change(within(form).getByLabelText(/^Text to match/), { target: { value: "orcaproject" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save control" }));
+
+    await waitFor(() => expect(createGuardrailPolicy).toHaveBeenCalled());
+    expect(createGuardrailPolicy.mock.calls[0]![0]).toMatchObject({
+      version: "1.0.0",
+      slug: "chat-boundary-1-0-0",
+      rules: [{ type: "WORD", label: "Internal codename", pattern: "orcaproject", action: "BLOCK", enabled: true }],
+    });
   });
 
-  it("trims a half-typed trailing hyphen when the field is left", async () => {
-    const slug = await editor();
-    typeInto(slug, "chat-safety-");
-    fireEvent.blur(slug);
-    expect(slug).toHaveProperty("value", "chat-safety");
+  it("adds to the open draft under a bumped version rather than starting another record", async () => {
+    // The server refuses a material change that reuses a version, and refuses
+    // a second ACTIVE record. One draft that accumulates controls is what
+    // keeps both true without asking the operator to type a version.
+    catalogue = [draftPolicy];
+    updateGuardrailPolicy.mockResolvedValue({ ...draftPolicy, revision: 2 });
+    const form = await controlForm("Phrase filter");
+
+    fireEvent.change(within(form).getByLabelText(/^Label/), { target: { value: "Client name" } });
+    fireEvent.change(within(form).getByLabelText(/^Text to match/), { target: { value: "acme holdings" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save control" }));
+
+    await waitFor(() => expect(updateGuardrailPolicy).toHaveBeenCalled());
+    expect(createGuardrailPolicy).not.toHaveBeenCalled();
+    expect(updateGuardrailPolicy.mock.calls[0]![0]).toBe(draftPolicy.id);
+    expect(updateGuardrailPolicy.mock.calls[0]![1]).toMatchObject({
+      version: "1.0.1",
+      expectedRevision: 1,
+      rules: [{ type: "PHRASE", pattern: "acme holdings" }],
+    });
   });
 });

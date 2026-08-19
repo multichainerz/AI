@@ -162,11 +162,6 @@ const OUT_OF_BAND_POLL_MS = 15_000;
 
 export const STREAM_RECONNECT_LIMIT = 6;
 
-function formatLatency(value: number | null): string {
-  if (value === null) return "—";
-  return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(2)} s`;
-}
-
 function formatRuntimeDuration(value: number | null): string | null {
   if (value === null) return null;
   return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(1)} s`;
@@ -570,8 +565,14 @@ export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[
       label: "Tokens",
       value: `${formatTokenCount(message.inputTokens)} in / ${formatTokenCount(message.outputTokens)} out`,
     },
-    { key: "first-token", label: "TTFT", value: formatLatency(message.firstTokenLatencyMs) },
-    { key: "latency", label: "Latency", value: formatLatency(message.latencyMs) },
+    /*
+      * TTFT and latency are gone. The closing line under every answer already
+      * prints the turn's duration -- "115.9 s · 4 tools" -- so latency was the
+      * same number twice, and time-to-first-token measures an experience the
+      * reader just had rather than telling them anything to act on. What is
+      * left is the pair a person actually compares between turns: how fast it
+      * produced, and how much it cost to.
+      */
   ];
 }
 

@@ -65,6 +65,15 @@ export type NavigationPlacement = "top" | "bottom";
 export const primaryNavigationGroups: ReadonlyArray<{
   label: string;
   placement: NavigationPlacement;
+  /**
+   * Whether the rail draws this group behind one heading that folds.
+   *
+   * Only the administration group sets it. The first group is what a person
+   * uses every day and must never be a click away; the areas that configure
+   * and audit the deployment are visited deliberately, and folding them keeps
+   * the rail short enough that the daily rows stay near the top.
+   */
+  collapsible?: boolean;
   items: ReadonlyArray<PrimaryNavigationItem>;
 }> = [
   {
@@ -80,13 +89,21 @@ export const primaryNavigationGroups: ReadonlyArray<{
        * file the deliverable under the machinery that made it.
        */
       { area: "Files", icon: "files", target: "Files", description: "Documents your agents produced" },
-      { area: "Agents", icon: "agents", target: "Agents", description: "Profiles and runs, skills, memory and tools" },
     ],
   },
   {
-    label: "Administration",
+    label: "Admin",
     placement: "top",
+    collapsible: true,
     items: [
+      /*
+       * Agents moved here from the workspace group. Defining a Profile, its
+       * Skills, its memory and the tools it may reach is administration --
+       * what a person does *with* an agent is Session, and what it produced is
+       * Files. The rail's flat order is unchanged, so no link or bookmark
+       * moved; only the heading above these four is new.
+       */
+      { area: "Agents", icon: "agents", target: "Agents", description: "Profiles and runs, skills, memory and tools" },
       /*
        * Ahead of Operations: you configure the governed inference path, then you
        * watch it. The description must literally contain every tab label in this

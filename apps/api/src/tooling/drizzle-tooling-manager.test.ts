@@ -79,7 +79,7 @@ async function seedRunnableAgent() {
       purpose: "Answer operator questions.",
       instructions: "Answer precisely and state uncertainty.",
       soulMd: "You are a careful operations assistant.",
-      skills: [],
+     
       modelAlias: "hermes-agent",
       maxTurns: 1,
       timeoutSeconds: 120,

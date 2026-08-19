@@ -43,7 +43,7 @@ describe("adminAccess", () => {
 describe("platform governance views", () => {
   const views = [
     ["Models", (s: AdministratorSession) => <ModelsView session={s} connections={[]} onConfigureConnections={vi.fn()} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} />],
-    ["Guardrails", (s: AdministratorSession) => <GuardrailsView session={s} onConfigureInference={vi.fn()} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} />],
+    ["Guardrails", (s: AdministratorSession) => <GuardrailsView session={s} onConfigureInference={vi.fn()} onSessionExpired={vi.fn()} />],
   ] as const;
 
   for (const [name, render] of views) {

@@ -251,8 +251,11 @@ describe("chat transcript", () => {
 
     expect(within(telemetry).getByText("92.7 tok/s")).toBeTruthy();
     expect(within(telemetry).getByText("902 in / 382 out")).toBeTruthy();
-    expect(within(telemetry).getByText("640 ms")).toBeTruthy();
-    expect(within(telemetry).getByText("4.12 s")).toBeTruthy();
+    // TTFT and latency are gone: the closing line under the answer already
+    // prints the turn's duration, and time-to-first-token measured an
+    // experience the reader had just had rather than anything to act on.
+    expect(within(telemetry).queryByText("640 ms")).toBeNull();
+    expect(within(telemetry).queryByText("4.12 s")).toBeNull();
     // Each figure names its own unit, so the four icons that used to sit beside
     // them were decoration standing in for labels the values already carry.
     expect(telemetry.querySelectorAll("svg")).toHaveLength(0);

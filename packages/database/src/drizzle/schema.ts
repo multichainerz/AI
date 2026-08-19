@@ -411,7 +411,6 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	createdBy: uuid(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	soulMd: text().default("").notNull(),
-	skills: jsonb().default([]).notNull(),
 	distributionDigest: varchar({ length: 64 }),
 	/*
 	 * The version's sets, on the *version* rather than the profile: a version is

@@ -5,7 +5,7 @@ import type {
   MutateHermesRuntimeNode,
   OnboardingTargetEnvironment,
 } from "@orcasynapse/contracts";
-import { ChevronDown, Server, Trash2 } from "lucide-react";
+import { ChevronDown, RefreshCw as SyncIcon, Server, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -383,7 +383,7 @@ export function RuntimeNodesPanel({
                   : "This installation holds one Hermes execution boundary. Revoke it before enrolling a replacement."}
         </p>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button disabled={busy !== null} onClick={() => void load()}>Refresh</Button>
+          <Button disabled={busy !== null} onClick={() => void load()}><SyncIcon size={16} />Refresh</Button>
           {!inferenceReady ? (
             <Button variant="primary" onClick={onConfigureInference}>Configure AI Inference</Button>
           ) : (

@@ -260,21 +260,7 @@ export function ModelsView({
         <Button onClick={onOpenOperations}>Open Operations</Button>
         {canManage && <Button variant="primary" onClick={startCreate}>New model route</Button>}
       </>}
-    >
-      <section className="flex items-center gap-4">
-        <div className="min-w-0 flex-1">
-          <MicroLabel className="block">Control boundary</MicroLabel>
-          <strong className="mt-1.5 block text-label font-semibold text-text">
-            OrcaSynapse approves routes; AI Inference remains the serving plane.
-          </strong>
-          <p className="mb-0 mt-1 text-caption leading-relaxed text-muted">
-            Activation never modifies upstream configuration. The alias must already exist at the selected endpoint on an
-            enabled, healthy serving connection.
-          </p>
-        </div>
-        <Button className="shrink-0" onClick={onConfigureConnections}>Manage serving connections</Button>
-      </section>
-    </WorkspaceIntro>
+    />
 
     <WorkspaceDock>
       <MetricRow className="border-b-0 pb-0 lg:grid-cols-4" aria-label="Model catalogue summary">

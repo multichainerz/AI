@@ -4,7 +4,7 @@ import type {
   HermesRuntimeCatalogue,
   ToolsetAdmission,
 } from "@orcasynapse/contracts";
-import { Wrench } from "lucide-react";
+import { RefreshCw as SyncIcon, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -295,55 +295,55 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     <WorkspaceIntro
       icon={<Wrench className="size-4" aria-hidden="true" />}
       title="Tools"
-      actions={
-        /* `.catch(fail)` like every other call site here: without it an idled-out
-           session rejects unhandled, and the screen keeps showing what the
-           runtime offered fifteen minutes ago with no Alert and no re-auth. */
-        <Button className="shrink-0" onClick={() => void load().catch(fail)}>Refresh</Button>
-      }
-    >
-      <section aria-label="What agents can use">
-        <MicroLabel className="block">Right now</MicroLabel>
-        <strong className={cn(
-          "mt-1 block text-label font-semibold",
-          summary.tone === "bad" ? "text-bad" : summary.tone === "warn" ? "text-warn" : "text-text",
-        )}>
+      actions={<>
+        {/*
+          * The runtime's state as an indicator, not a paragraph. This was two
+          * stacked prose blocks under the title -- a headline, a sentence of
+          * remedy, and a second section about MCP registration -- roughly 120px
+          * of explanation above a screen whose own rows say the same thing in
+          * their status column. What an operator needs at a glance is whether
+          * what they are reading is live, and that is one word.
+          *
+          * The detail is not deleted: it is the indicator's `title`, so the
+          * remedy is one hover away rather than permanently in the way.
+          */}
+        <StatusText
+          dot
+          tone={summary.tone === "bad" ? "bad" : summary.tone === "warn" ? "warn" : "good"}
+          className="h-9 items-center border border-border bg-surface px-3"
+          title={summary.detail}
+        >
           {summary.headline}
-        </strong>
-        <p className="mb-0 mt-0.5 max-w-[86ch] text-caption leading-relaxed text-muted">{summary.detail}</p>
-      </section>
-      {/*
-        * The one tripwire kept from the removed plane.
-        *
-        * `GovernedTool` is the first link in its chain — no tool, no grant, no
-        * call, no approval — so a non-empty registry is the only way that plane
-        * can come back to life. If it ever does, this says so instead of leaving
-        * a subsystem running behind a screen that no longer mentions it.
-        */}
-      {mcpTools.length > 0 ? (
-        <section aria-label="OrcaSynapse-executed MCP tools">
-          <strong className="block text-label font-semibold text-warn">
-            {mcpTools.length === 1
-              ? "1 OrcaSynapse-executed MCP tool is registered."
-              : `${mcpTools.length} OrcaSynapse-executed MCP tools are registered.`}
-          </strong>
-          <p className="mb-0 mt-1 max-w-[86ch] text-caption leading-relaxed text-muted">
-            This build cannot execute them: no local executor is registered for any handler, so every such call
-            fails. They are separate from the runtime tools above and are not governed from this screen. Raise it
-            with the platform team before relying on them.
-          </p>
-        </section>
-      ) : null}
-    </WorkspaceIntro>
+        </StatusText>
+        {/* Registered-but-unexecutable MCP tools stay reportable, as a count
+            beside the state rather than a paragraph of their own. */}
+        {mcpTools.length > 0 && (
+          <StatusText
+            dot
+            tone="warn"
+            className="h-9 items-center border border-border bg-surface px-3"
+            title="This build cannot execute them: no local executor is registered for any handler, so every such call fails. They are separate from the runtime tools below and are not governed from this screen."
+          >
+            {`${mcpTools.length} MCP unexecutable`}
+          </StatusText>
+        )}
+        {/* `.catch(fail)` like every other call site here: without it an idled-out
+            session rejects unhandled, and the screen keeps showing what the
+            runtime offered fifteen minutes ago with no Alert and no re-auth. */}
+        <Button className="shrink-0" onClick={() => void load().catch(fail)}>
+          <SyncIcon size={16} />Refresh
+        </Button>
+      </>}
+    />
 
     {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
     {notice && <Alert className="shrink-0" tone="good" onDismiss={() => setNotice(null)}>{notice}</Alert>}
 
     <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.85fr)]">
-    <Panel aria-label="Runtime tools" data-loaded={loaded ? "true" : "false"} className="flex min-h-0 flex-col overflow-hidden p-3">
+    <Panel aria-label="Session tools" data-loaded={loaded ? "true" : "false"} className="flex min-h-0 flex-col overflow-hidden p-3">
       <PanelHeading
         className="mb-2 shrink-0"
-        title="Runtime tools"
+        title="Session tools"
         description="Each row is a group. The switch is this installation's decision; the runtime decides whether it is on."
         /* "0 of 0 allowed" beside a row that reads "Always allowed" is a
            fraction with nothing in it, so it is drawn only once there is

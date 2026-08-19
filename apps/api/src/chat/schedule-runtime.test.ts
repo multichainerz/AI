@@ -61,7 +61,7 @@ async function seedConversation() {
     .returning({ id: agentProfile.id });
   await context.database.insert(agentProfileVersion).values({
     profileId: profile!.id, version: 1, displayName: "Support agent", purpose: "Answer questions.",
-    instructions: "Answer precisely.", soulMd: "Careful assistant.", skills: [],
+    instructions: "Answer precisely.", soulMd: "Careful assistant.",
     modelAlias: "hermes-agent", maxTurns: 1, timeoutSeconds: 120, maxConcurrentRuns: 1,
   });
   const [conversation] = await context.database

@@ -261,16 +261,33 @@ describe("DrizzleUsageManager", () => {
 
     const short = await manager().report({ window: "24h", includeUsers: false });
     expect(short.bucket).toBe("hour");
-    expect(short.series).toHaveLength(2);
+    /*
+     * The whole window, quiet hours included. `GROUP BY` alone returned two
+     * points here, and a chart drawn from those two showed a pair of
+     * full-width bars with no time axis between them. A trailing 24 hours
+     * touches 25 distinct UTC hours.
+     */
+    expect(short.series).toHaveLength(25);
+    expect(short.series.reduce((sum, point) => sum + point.runs, 0)).toBe(2);
+    expect(short.series.filter((point) => point.runs > 0)).toHaveLength(2);
+    // A padded hour is a measured zero with nothing priced — not an invention
+    // of cost or latency the runtime never reported.
+    expect(short.series.find((point) => point.runs === 0)?.costUsd).toBeNull();
     // Every boundary is a real instant, truncated in UTC. A bare `timestamp`
     // would come back parsed as local time and shift the whole chart.
     for (const point of short.series) {
       expect(new Date(point.at).getTime()).not.toBeNaN();
       expect(new Date(point.at).getUTCMinutes()).toBe(0);
     }
+    // And in order, one hour apart, so the axis is the axis.
+    for (let index = 1; index < short.series.length; index += 1) {
+      const step = new Date(short.series[index]!.at).getTime() - new Date(short.series[index - 1]!.at).getTime();
+      expect(step).toBe(3_600_000);
+    }
 
     const long = await manager().report({ window: "30d", includeUsers: false });
     expect(long.bucket).toBe("day");
+    expect(long.series).toHaveLength(31);
     for (const point of long.series) {
       expect(new Date(point.at).getUTCHours()).toBe(0);
     }

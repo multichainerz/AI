@@ -133,7 +133,7 @@ async function seedActiveProfile(modelAlias = "hermes-agent") {
     .returning({ id: agentProfile.id });
   await context.database.insert(agentProfileVersion).values({
     profileId: profile!.id, version: 1, displayName: "Support agent", purpose: "Answer questions.",
-    instructions: "Answer precisely and state uncertainty.", soulMd: "Careful assistant.", skills: [],
+    instructions: "Answer precisely and state uncertainty.", soulMd: "Careful assistant.",
     modelAlias, maxTurns: 1, timeoutSeconds: 120, maxConcurrentRuns: 1,
   });
   return profile!.id;

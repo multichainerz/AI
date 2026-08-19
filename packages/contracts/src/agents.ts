@@ -126,7 +126,6 @@ export const agentVersionConfigurationSchema = z.object({
   purpose: z.string().trim().min(3).max(500),
   instructions: z.string().trim().min(10).max(32_000),
   soulMd: z.string().trim().min(10).max(32_000),
-  skills: z.array(agentSkillReferenceSchema).max(20),
   modelAlias: agentModelAliasSchema,
   // A boundary OrcaSynapse declares about its own profiles, not one it imposes
   // on the runtime: the run submission carries no turn field and Hermes exposes
@@ -467,7 +466,6 @@ export const DEFAULT_AGENT_PROFILE: CreateAgentProfile = {
     "",
     "You write like a well-briefed colleague: direct, free of filler and flattery, and respectful of the reader's time and expertise.",
   ].join("\n"),
-  skills: [],
   modelAlias: "hermes-agent",
   maxTurns: 1,
   timeoutSeconds: 600,

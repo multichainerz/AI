@@ -113,7 +113,6 @@ const props = {
   unlocked: true,
   administrator: true,
   activationReady: true as boolean | null,
-  activationMessage: null as string | null,
   onSignIn: vi.fn(),
   onConfigure: vi.fn(),
   onOpenChat: vi.fn(),
@@ -275,13 +274,11 @@ describe("agents", () => {
     setupApi();
     const user = userEvent.setup();
     await view();
-    expect(within(ledger()).getByText(/Produced by Support analyst/)).toBeTruthy();
     expect(within(ledger()).getByText("What should we check before promoting?")).toBeTruthy();
     expect(within(ledger()).queryByText("Summarise the enrolment runbook.")).toBeNull();
 
     await user.click(screen.getByText("Draft agent"));
-    await waitFor(() => expect(within(ledger()).getByText(/Produced by Draft agent/)).toBeTruthy());
-    expect(within(ledger()).getByText("Summarise the enrolment runbook.")).toBeTruthy();
+    await waitFor(() => expect(within(ledger()).getByText("Summarise the enrolment runbook.")).toBeTruthy());
     expect(within(ledger()).queryByText("What should we check before promoting?")).toBeNull();
   });
 
@@ -297,15 +294,15 @@ describe("agents", () => {
     await view();
     await user.click(within(ledger()).getByRole("button", { name: "Show all runs (2)" }));
 
-    await waitFor(() => expect(within(ledger()).getByText(/Across every Profile/)).toBeTruthy());
-    expect(within(ledger()).getByText("Draft agent")).toBeTruthy();
+    // Widened, proved by the other Profile's run appearing and by the button
+    // offering the way back -- the sentence that used to announce it is gone.
+    await waitFor(() => expect(within(ledger()).getByText("Draft agent")).toBeTruthy());
     expect(within(ledger()).getByRole("button", { name: "Show only Support analyst" })).toBeTruthy();
 
     // Widening is a one-off answer to "where did my run go", not a mode. The
     // next Profile selected re-scopes, or the list would stop meaning anything
     // for whatever the operator did next.
     await user.click(screen.getAllByText("Draft agent")[0]!);
-    await waitFor(() => expect(within(ledger()).getByText(/Produced by Draft agent/)).toBeTruthy());
 
     cleanup();
     setupApi({ profiles: [profiles[0]!], runs: [runs[0]!] });
@@ -440,11 +437,23 @@ describe("agents", () => {
   });
 
   it("keeps drafting possible while telling the operator activation is not", async () => {
+    /*
+     * The banner that used to say this in a sentence is gone, so the primary
+     * action carries it: "Create draft" rather than "Create agent", and the
+     * editor states plainly that saving will not attempt an activation. What
+     * is no longer on this screen is *why* -- that reason lives on the
+     * readiness surfaces the Dashboard and Settings own.
+     */
     setupApi();
-    await view({ activationReady: false, activationMessage: "VM2 is not enrolled yet." });
-    expect(screen.getByText("Profiles can be drafted now")).toBeTruthy();
-    expect(screen.getByText("VM2 is not enrolled yet.")).toBeTruthy();
+    const user = userEvent.setup();
+    await view({ activationReady: false });
     expect(screen.getByRole("button", { name: "Create draft" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create agent" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Create draft" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Draft until infrastructure is ready")).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Save draft" })).toBeTruthy();
   });
 
   it("traps focus in the profile editor, which decides what an agent may do", async () => {
@@ -593,19 +602,21 @@ describe("agents", () => {
     setupApi();
     const user = userEvent.setup();
     await view({ administrator: false });
-    expect(within(ledger()).getByText("Your runs produced by Support analyst, newest first.")).toBeTruthy();
+    // A label beside the count now, not a sentence: the prose said the same
+    // thing three times over, once per scoping combination, while the only
+    // part a reader could not infer from the rows is whose runs these are.
+    expect(within(ledger()).getByText("Your runs")).toBeTruthy();
+    expect(within(ledger()).queryByText("All runs")).toBeNull();
 
     // The widened view is the one that made the deployment-wide claim.
     await user.click(within(ledger()).getByRole("button", { name: "Show all runs (2)" }));
-    await waitFor(() => expect(
-      within(ledger()).getByText("Your runs across every Profile, newest first."),
-    ).toBeTruthy());
+    await waitFor(() => expect(within(ledger()).getByText("Your runs")).toBeTruthy());
 
     // An administrator's ledger really is deployment-wide, and still says so.
     cleanup();
     setupApi();
     await view();
-    expect(within(ledger()).getByText("Produced by Support analyst, newest first.")).toBeTruthy();
+    expect(within(ledger()).getByText("All runs")).toBeTruthy();
   });
 
   it("does not tell a non-administrator that nothing has run under a Profile others use", async () => {
@@ -623,13 +634,13 @@ describe("agents", () => {
     expect(within(panel).getByText(/colleagues started against it are not shown/)).toBeTruthy();
   });
 
-  it("says the Approved Skills field records references nothing delivers", async () => {
+  it("no longer offers a field for Skills the Profile cannot deliver", async () => {
     /*
-     * The triples are stored on the version and folded into
-     * `distributionDigest`, and no run payload carries them: nothing in
-     * `apps/worker` or `packages/runtime-clients` reads `version.skills`.
-     * Keeping the field is a product decision; letting it read as "this
-     * Profile is bound to that Skill" is not.
+     * The field this replaces recorded name@version triples on the version and
+     * folded them into `distributionDigest` -- and nothing in `apps/worker` or
+     * `packages/runtime-clients` ever read them. It was removed rather than
+     * re-labelled: a form that asks an operator to curate a manifest no run
+     * consults is worse than one that does not ask.
      */
     setupApi();
     const user = userEvent.setup();
@@ -637,15 +648,14 @@ describe("agents", () => {
     await user.click(screen.getByRole("button", { name: "Create agent" }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/never sent to Hermes/i)).toBeTruthy();
-    // The wording that implied a runtime consequence, gone. A plain substring
-    // check over the whole dialog, so no element boundary can hide it.
-    expect(dialog.textContent).not.toContain("Runtime installation remains evidence-gated");
+    expect(dialog.textContent).not.toContain("Approved Skills");
+    expect(within(dialog).queryByText(/never sent to Hermes/i)).toBeNull();
   });
 
   it("says the Tool set field records a declaration nothing narrows on", async () => {
     /*
-     * The same correction the Approved Skills field above already carries.
+     * The same correction the Approved Skills field carried before it was
+     * removed outright.
      * `agent-processor.ts` selects every admitted toolset with no profile
      * predicate and hands that array to `hermes.start`; `toolSetId` has no
      * reader in the worker, in `packages/runtime-clients`, or in the tool-call

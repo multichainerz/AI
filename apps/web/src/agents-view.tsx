@@ -1,9 +1,9 @@
 import { DEFAULT_AGENT_PROFILE } from "@orcasynapse/contracts";
 import type {
   AdminScope, AdministratorSession, AgentMetrics, AgentProfile, AgentRun, AgentRunEvent,
-  AgentRuntimeControl, AgentSkillReference, CreateAgentProfile, Division, SkillSet, ToolSet,
+  AgentRuntimeControl, CreateAgentProfile, Division, SkillSet, ToolSet,
 } from "@orcasynapse/contracts";
-import { Bot, ChevronDown } from "lucide-react";
+import { Bot, ChevronDown, RefreshCw as SyncIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { adminAccess } from "./admin-access.js";
 import { ExecutionBoundary, RunDetail, RunLedger } from "./agent-run-ledger.js";
@@ -51,7 +51,6 @@ interface AgentsViewProps {
   session?: AdministratorSession | null;
   administrator: boolean;
   activationReady: boolean | null;
-  activationMessage: string | null;
   onConfigure: () => void;
   onOpenChat: () => void;
   onOpenReadiness: () => void;
@@ -71,17 +70,6 @@ interface AgentsViewProps {
  */
 const blankProfile: CreateAgentProfile = DEFAULT_AGENT_PROFILE;
 
-function skillManifestText(skills: AgentSkillReference[]): string {
-  return skills.map((skill) => `${skill.name}@${skill.version} ${skill.digest}`).join("\n");
-}
-
-function parseSkillManifest(value: string): AgentSkillReference[] | null {
-  const lines = value.split("\n").map((line) => line.trim()).filter(Boolean);
-  const parsed = lines.map((line) => /^([a-z0-9]+(?:-[a-z0-9]+)*)@([A-Za-z0-9][A-Za-z0-9._+-]*)\s+([a-f0-9]{64})$/.exec(line));
-  if (parsed.some((match) => !match)) return null;
-  return parsed.map((match) => ({ name: match![1]!, version: match![2]!, digest: match![3]! }));
-}
-
 function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
   return {
     slug: profile.slug,
@@ -89,7 +77,6 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
     purpose: profile.version.purpose,
     instructions: profile.version.instructions,
     soulMd: profile.version.soulMd,
-    skills: profile.version.skills,
     modelAlias: profile.version.modelAlias,
     maxTurns: 1,
     timeoutSeconds: profile.version.timeoutSeconds,
@@ -100,7 +87,7 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
   };
 }
 
-export function AgentsView({ unlocked, session, administrator, activationReady, activationMessage, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
+export function AgentsView({ unlocked, session, administrator, activationReady, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   /*
    * The named sets and divisions a profile can be pointed at.
@@ -147,7 +134,6 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
   /** False only after the operator asks to see runs the profile scope hides. */
   const [runsScoped, setRunsScoped] = useState(true);
   const [profileDraft, setProfileDraft] = useState<CreateAgentProfile>(blankProfile);
-  const [skillsDraft, setSkillsDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -369,31 +355,24 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     }
     setEditingId(null);
     setProfileDraft({ ...blankProfile, modelAlias });
-    setSkillsDraft("");
     setEditorOpen(true);
   };
 
   const editProfile = (profile: AgentProfile) => {
     setEditingId(profile.id);
     setProfileDraft(draftFromProfile(profile));
-    setSkillsDraft(skillManifestText(profile.version.skills));
     setEditorOpen(true);
   };
 
   const saveProfile = async (event: FormEvent) => {
     event.preventDefault();
-    const skills = parseSkillManifest(skillsDraft);
-    if (!skills) {
-      setError("Each Skill must use 'name@version sha256' with a lowercase slug and a 64-character digest.");
-      return;
-    }
     if (busy) return;
     setBusy("profile-save");
     setError(null);
     setNotice(null);
     setReadinessRequired(false);
     try {
-      const candidate = { ...profileDraft, skills };
+      const candidate = { ...profileDraft };
       if (editingId) {
         const { slug: _slug, ...configuration } = candidate;
         await updateAgentProfile(editingId, configuration);
@@ -402,7 +381,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         const created = await createAgentProfile(candidate);
         // Creation is durable. Close the editor before live verification so a
         // failed readiness check cannot tempt the operator to submit a duplicate.
-        setEditorOpen(false); setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft("");
+        setEditorOpen(false); setEditingId(null); setProfileDraft(blankProfile);
         if (activationReady === false) {
           setNotice(`${created.version.displayName} was saved as a draft. Finish the Agentic System, then use Verify & activate.`);
         } else {
@@ -410,7 +389,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           setNotice(`${created.version.displayName} was created, verified, and activated. Chat is ready.`);
         }
       }
-      setEditorOpen(false); setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft("");
+      setEditorOpen(false); setEditingId(null); setProfileDraft(blankProfile);
       await load();
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.message.includes("Hermes compatibility")) setReadinessRequired(true);
@@ -467,23 +446,10 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           {/* `.catch(fail)` like every other call site here: without it an
               idled-out session rejects unhandled, so neither the Alert nor the
               re-auth path fires and the screen keeps its stale data. */}
-          <Button onClick={() => void load().catch(fail)}>Refresh</Button>
+          <Button onClick={() => void load().catch(fail)}><SyncIcon size={16} />Refresh</Button>
           {canManage && <Button variant="primary" onClick={() => void openNewProfile()}>{activationReady === false ? "Create draft" : "Create agent"}</Button>}
         </>}
       >
-        {/* "Profiles can be drafted now" is a claim about the reader, so it is
-            addressed to the role that can actually draft one. */}
-        {canManage && activationReady === false ? (
-          <section className="flex items-center gap-4" role="status">
-            <div className="min-w-0 flex-1">
-              <strong className="block text-label font-semibold text-text">Profiles can be drafted now</strong>
-              <span className="mt-1 block text-caption text-muted">
-                {activationMessage ?? "Connect AI Inference and finish VM2 enrollment before activating a Profile for Chat."}
-              </span>
-            </div>
-            <Button className="shrink-0" onClick={onOpenReadiness}>Review platform setup</Button>
-          </section>
-        ) : null}
         {/*
           * The screen reads in one direction: what may execute at all, what is
           * defined, and what each definition has actually done. The boundary
@@ -513,18 +479,22 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         {chatAvailable && <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenChat}>Open Session</Button>}
       </Alert>}
 
+      {/*
+        * 2x2, not three columns. Profiles and the ledger it scopes share the
+        * top row -- selecting on the left filters the right, so they read as
+        * one gesture. Run detail takes the whole second row: it is the densest
+        * panel here (timeline, digest, input, output), and at a third of the
+        * viewport each of those was a strip two words wide.
+        */}
       <div className={cn(
-        "grid min-h-0 flex-1 gap-3",
-        runs.length > 0
-          ? "lg:grid-cols-[minmax(300px,0.9fr)_minmax(260px,0.8fr)_minmax(0,1.2fr)]"
-          : "lg:grid-cols-[minmax(300px,0.9fr)_minmax(0,1.1fr)]",
+        "grid min-h-0 flex-1 gap-3 lg:grid-cols-2",
+        runs.length > 0 && "lg:grid-rows-[minmax(0,1fr)_minmax(0,1.1fr)]",
       )}>
       <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3">
         <PanelHeading
           className="mb-2 shrink-0"
           kicker="Immutable configuration"
           title="Profiles"
-          description="Selecting one scopes the execution ledger beside it to the runs it produced."
           actions={<StatusText>{profiles.length} profile{profiles.length === 1 ? "" : "s"}</StatusText>}
         />
         <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
@@ -676,13 +646,15 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           * runs of its own still gets one, because the escape hatch beside it
           * means there is something to select.
           */}
-        {runs.length > 0 && <RunDetail
+        {/* The span is on a wrapper because RunDetail is a Panel that sizes
+            itself; the wrapper owns the grid placement, the panel the chrome. */}
+        {runs.length > 0 && <div className="grid min-h-0 lg:col-span-2"><RunDetail
           run={selectedRun}
           events={runEvents}
           busy={busy}
           canCancel={canCancelRuns}
           onCancel={(run) => void action(`cancel-${run.id}`, () => cancelAgentRun(run.id, administrator))}
-        />}
+        /></div>}
       </div>
 
       {/*
@@ -707,14 +679,19 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           </Button>
         </>}
       >
-        <form className="grid gap-8" id="agent-profile-editor" onSubmit={(event) => void saveProfile(event)}>
+        <form className="grid gap-5" id="agent-profile-editor" onSubmit={(event) => void saveProfile(event)}>
           {error ? <Alert onDismiss={() => { setError(null); setReadinessRequired(false); }}>{error}</Alert> : null}
 
-          <section className="grid gap-4">
-            <div>
-              <MicroLabel className="block">Identity</MicroLabel>
-              <p className="mb-0 mt-1 text-caption text-muted">How this profile is named, and which model it uses.</p>
-            </div>
+          {/*
+            * Section labels as rules rather than headings with a paragraph.
+            * "How this profile is named, and which model it uses." sat above
+            * fields labelled Slug, Display name, Purpose and Inference model --
+            * the same four facts in a sentence. A hairline with a word on it
+            * groups them for a fraction of the height, and the form reads as
+            * three passes instead of one long stack of inputs.
+            */}
+          <section className="grid gap-3">
+            <MicroLabel className="block">Identity</MicroLabel>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Slug">
                 <Input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} />
@@ -731,16 +708,17 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
             </Field>
           </section>
 
-          <section className="grid gap-4">
-            <div>
+          <section className="grid gap-3 border-t border-border pt-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3">
               <MicroLabel className="block">Behaviour</MicroLabel>
-              <p className="mb-0 mt-1 text-caption text-muted">Personality is who it is. Instructions are what it must do. Both become the immutable revision.</p>
+              {/* Only the half the field labels cannot carry: what saving does. */}
+              <span className="text-caption text-muted">Both become the immutable revision.</span>
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
               <Field label="Personality and operating principles">
                 <Textarea
-                  className="min-h-[280px]"
-                  rows={16}
+                  className="min-h-[200px]"
+                  rows={10}
                   required
                   minLength={10}
                   maxLength={32_000}
@@ -750,8 +728,8 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
               </Field>
               <Field label="System instructions">
                 <Textarea
-                  className="min-h-[280px]"
-                  rows={16}
+                  className="min-h-[200px]"
+                  rows={10}
                   required
                   minLength={10}
                   maxLength={32_000}
@@ -762,37 +740,21 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
             </div>
           </section>
 
-          <details className="group border-t border-border pt-4">
+          <details className="group border-t border-border pt-5">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
               <span>
                 <span className="block text-label font-semibold text-foreground">Limits and recorded references</span>
-                <span className="block text-caption font-normal text-muted">Skills, tool sets, and run limits. Recorded on the version, not delivered to a run.</span>
+                <span className="block text-caption font-normal text-muted">Tool sets, skill sets, and run limits. Recorded on the version, not delivered to a run.</span>
               </span>
               <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
             </summary>
             <div className="mt-4 grid gap-3">
-              {/*
-                * The label and hint say what the field does, which is less than it
-                * used to imply. The triples are recorded on the version and folded
-                * into `distributionDigest`; the run payload carries no skills
-                * field, and nothing in `apps/worker` or `packages/runtime-clients`
-                * reads `version.skills`. Whether that stays true is a product
-                * decision and not this file's to make -- reading the field as
-                * "this Profile is bound to that Skill" is the part that has to
-                * stop.
-                */}
-              <Field
-                label="Approved Skills (recorded, not delivered)"
-                hint="A reviewed, secret-free record of the Skills this version expects. It is folded into the distribution digest and never sent to Hermes: OrcaSynapse does not install, pin, or verify a Skill from here, and a run loads whatever the node already holds. Govern the node's own Skills under Agents → Skills."
-              >
-                <Textarea className="font-mono" value={skillsDraft} placeholder="name@version <64-hex digest>" onChange={(event) => setSkillsDraft(event.target.value)} />
-              </Field>
               <div className="grid gap-3 sm:grid-cols-2">
                 {/*
-                  * The same correction the Approved Skills field above carries, and
-                  * for the same kind of reason -- except that here the field is
-                  * about authority rather than behaviour, so reading it wrongly is
-                  * worse. `agent-processor.ts` selects every admitted toolset with
+                  * Recorded on the version, delivered to nothing -- the same
+                  * correction the Approved Skills field carried before it was
+                  * removed outright, except that this field is about authority
+                  * rather than behaviour, so reading it wrongly is worse. `agent-processor.ts` selects every admitted toolset with
                   * no profile predicate and hands that array to `hermes.start`;
                   * `toolSetId` has no reader in the worker, in
                   * `packages/runtime-clients`, or in the tool-call gate, and

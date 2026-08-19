@@ -78,7 +78,7 @@ const dump = (name: string) => {
 };
 
 async function guardrailsView() {
-  render(<main><GuardrailsView session={session} onConfigureInference={vi.fn()} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} /></main>);
+  render(<main><GuardrailsView session={session} onConfigureInference={vi.fn()} onSessionExpired={vi.fn()} /></main>);
   await waitFor(() => screen.getByRole("heading", { name: "Baseline chat boundary" }));
   dump("guardrails");
 }
@@ -88,9 +88,16 @@ afterEach(cleanup);
 describe("guardrails", () => {
   it("names the policy enforcing chat and the checks it turns on", async () => {
     await guardrailsView();
-    expect(screen.getByText("Baseline chat boundary v2.0 is enforcing chat.")).toBeTruthy();
-    expect(screen.getByText("control chars")).toBeTruthy();
-    expect(screen.getByText("credentials")).toBeTruthy();
+    // The enforcing version, on the one-line strip. The sentence this replaces
+    // sat in a prose block above the table; the policy's display name is in the
+    // version history at the table's foot, where the record itself lives.
+    expect(screen.getByText("Enforcing 2.0")).toBeTruthy();
+    // The boundary facts are rows in the one table, stated once -- the chips
+    // these replace repeated them on every policy card, and the summary panel
+    // that briefly replaced those repeated them a second time above the table.
+    const rows = within(screen.getByLabelText("Boundary control rows"));
+    expect(rows.getByText("Control characters")).toBeTruthy();
+    expect(rows.getByText("Credential patterns")).toBeTruthy();
   });
 
   it("counts the detectors and the rules that are actually switched on", async () => {
@@ -105,7 +112,7 @@ describe("guardrails", () => {
      */
     await guardrailsView();
     const summary = screen.getByLabelText("Guardrail policy summary");
-    expect(within(summary).getByText("Active checks")).toBeTruthy();
+    expect(within(summary).getByText("Checks")).toBeTruthy();
     expect(within(summary).getByText("4")).toBeTruthy();
     expect(within(summary).getByText("2 built-in · 2 rules")).toBeTruthy();
   });
@@ -113,7 +120,10 @@ describe("guardrails", () => {
   it("offers Suspend on the active policy, which is the fail-closed decision", async () => {
     await guardrailsView();
     expect(screen.getByRole("button", { name: "Suspend" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    // No record-level Edit: an ACTIVE policy cannot be changed, and controls
+    // are edited row by row into a draft rather than by reopening the record.
+    const records = screen.getByLabelText("Configured guardrail policies");
+    expect(within(records).queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
   it("says that guardrails inspect what is sent, and makes no claim about responses", async () => {
@@ -121,66 +131,81 @@ describe("guardrails", () => {
      * The scope claim, pinned. This screen is the deployment's statement of
      * what it filters, and an operator reading "guardrails" reasonably assumes
      * both directions. Nothing inspects response content — only its length is
-     * capped — so the screen has to say so in words rather than leave it to be
-     * inferred from an absence.
-     */
-    await guardrailsView();
-    expect(screen.getByText(/what is sent to the model/)).toBeTruthy();
-    expect(screen.getByText(/Responses are capped in length but their content is not inspected/)).toBeTruthy();
-  });
-
-  it("warns that editing a rule returns the policy to Draft", async () => {
-    // Rules are a material change like any threshold, so an operator who edits
-    // one and lands back in Draft has to have been told that is the design.
-    await guardrailsView();
-    await userEvent.click(screen.getByRole("button", { name: "New policy" }));
-    expect(screen.getByText(/Changing a limit, a detector or a rule requires a new version number/)).toBeTruthy();
-  });
-
-  it("keeps Save reachable when the form grows past the viewport", async () => {
-    /*
-     * The regression the rules editor caused. At >=761px `.workspace-page` is
-     * `height: 100dvh; overflow: hidden`, so a form taller than the space
-     * available is simply cut off -- and the editor panel was `shrink-0` with
-     * no overflow of its own, which made the bottom of the form, Save
-     * included, unreachable with nothing to scroll.
+     * capped — so it has to be said in words rather than inferred from an
+     * absence.
      *
-     * jsdom has no layout, so this asserts the structure that makes scrolling
-     * possible rather than the scrolling itself: one scroll container holding
-     * everything that grows, and the submit button outside it.
+     * It moved off the page and into the control chooser when the prose block
+     * above the table went: the claim answers "what will this control check?",
+     * which is the question being asked at exactly that moment.
      */
     await guardrailsView();
-    await userEvent.click(screen.getByRole("button", { name: "New policy" }));
-
-    const body = screen.getByTestId("policy-editor-body");
-    expect(body.className).toContain("overflow-y-auto");
-    // Without min-h-0 a flex item refuses to shrink below its content, and the
-    // overflow above never engages.
-    expect(body.className).toContain("min-h-0");
-
-    // The rules live inside the scroll region, because they are what grows.
-    expect(within(body).getByLabelText("Guardrail rules")).toBeTruthy();
-
-    // Save does not, because it is the thing being reached for.
-    const save = screen.getByRole("button", { name: "Create draft policy" });
-    expect(body.contains(save)).toBe(false);
+    await userEvent.click(screen.getAllByRole("button", { name: "Add control" })[0]!);
+    expect(screen.getByText(/what is sent to the model/)).toBeTruthy();
+    expect(screen.getByText(/their content is not inspected/)).toBeTruthy();
   });
 
-  it("adds and removes a rule row", async () => {
+  it("promises the enforced boundary is untouched, where an operator is about to edit it", async () => {
+    /*
+     * Rules are a material change like any threshold, so an operator who edits
+     * one and lands back in Draft has to have been told that is the design.
+     * The sentence lives in the dialog rather than on the page strip: it is
+     * the moment it answers a question, and the strip is one line by intent.
+     */
     await guardrailsView();
-    await userEvent.click(screen.getByRole("button", { name: "New policy" }));
+    await userEvent.click(screen.getAllByRole("button", { name: "Add control" })[0]!);
+    expect(screen.getByText(/enforced boundary is untouched until that draft is activated/)).toBeTruthy();
+  });
 
-    const rules = screen.getByLabelText("Guardrail rules");
-    expect(within(rules).getByText("No rules. The two checks above still apply.")).toBeTruthy();
+  it("asks what kind of control first, then only that control's fields", async () => {
+    /*
+     * The whole point of the redesign. Adding one blocked word used to mean
+     * filling in a slug, a version, a description, two ceilings and two
+     * detectors, because every control shared one record-shaped form.
+     */
+    await guardrailsView();
+    await userEvent.click(screen.getAllByRole("button", { name: "Add control" })[0]!);
 
-    await userEvent.click(within(rules).getByRole("button", { name: "Add rule" }));
-    expect(within(rules).getByLabelText("Name")).toBeTruthy();
-    // The type selector explains what it will do, rather than making an
-    // operator guess whether "word" means substring.
-    expect(within(rules).getByText(/does not match/)).toBeTruthy();
+    const kinds = screen.getByLabelText("Control types");
+    expect(within(kinds).getByText("Word filter")).toBeTruthy();
+    expect(within(kinds).getByText("Input ceiling")).toBeTruthy();
+    // Singletons already on the boundary cannot be added a second time.
+    expect(within(kinds).getAllByText("already set").length).toBeGreaterThan(0);
 
-    await userEvent.click(within(rules).getByRole("button", { name: "Remove" }));
-    expect(within(rules).getByText("No rules. The two checks above still apply.")).toBeTruthy();
+    await userEvent.click(within(kinds).getByText("Word filter"));
+
+    const form = document.getElementById("guardrail-control-editor")!;
+    expect(within(form).getByLabelText(/^Label/)).toBeTruthy();
+    expect(within(form).getByLabelText(/^Text to match/)).toBeTruthy();
+    // None of the record's own fields are asked for.
+    expect(within(form).queryByLabelText(/slug/i)).toBeNull();
+    expect(within(form).queryByLabelText(/version/i)).toBeNull();
+
+    // Save sits in the dialog footer, associated by form id rather than by
+    // containment, so it is never something to scroll to find.
+    const save = screen.getByRole("button", { name: "Save control" });
+    expect(form.contains(save)).toBe(false);
+    expect(save.getAttribute("form")).toBe("guardrail-control-editor");
+  });
+
+  it("lists every control as its own row, ceilings included", async () => {
+    await guardrailsView();
+    const rows = within(screen.getByLabelText("Boundary control rows"));
+
+    // The fixture policy carries both ceilings, both detectors and its rules,
+    // and each is a row rather than a field inside one record card.
+    expect(rows.getByText("Input ceiling")).toBeTruthy();
+    expect(rows.getByText("Output ceiling")).toBeTruthy();
+    expect(rows.getByText("Control characters")).toBeTruthy();
+    expect(rows.getByText("Credential patterns")).toBeTruthy();
+
+    // A ceiling is always enforced once a policy exists, so it is editable but
+    // never removable; a detector and a filter are both.
+    const ceiling = rows.getByText("Input ceiling").closest("li")!;
+    expect(within(ceiling).getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(within(ceiling).queryByRole("button", { name: "Remove" })).toBeNull();
+
+    const detector = rows.getByText("Control characters").closest("li")!;
+    expect(within(detector).getByRole("button", { name: "Remove" })).toBeTruthy();
   });
 
   it("renders no inline style, which the CSP would refuse in the built container", async () => {

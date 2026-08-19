@@ -171,7 +171,7 @@ export class DrizzleUsageManager implements UsageManager {
 
     const [totals, series, byModel, byProfile, byDivision, byUser, gateway, tools] = await Promise.all([
       this.totals(since),
-      this.series(since, bucket),
+      this.series(since, generatedAt, bucket),
       this.breakdown(since, sql`r."modelAlias"`, sql`r."modelAlias"`, "Not reported"),
       this.breakdown(since, sql`p."id"::text`, sql`p."slug"`, "Unknown agent"),
       /*
@@ -266,7 +266,7 @@ export class DrizzleUsageManager implements UsageManager {
     };
   }
 
-  private async series(since: Date, bucket: UsageBucketGranularity): Promise<UsageBucket[]> {
+  private async series(since: Date, until: Date, bucket: UsageBucketGranularity): Promise<UsageBucket[]> {
     /*
      * Bucketed in UTC, deliberately. These timestamps are `withTimezone`, and
      * interpolating a caller's timezone would make the same window return
@@ -290,7 +290,7 @@ export class DrizzleUsageManager implements UsageManager {
       ORDER BY 1 ASC
     `).then((result) => result.rows);
 
-    return rows.map((row) => ({
+    const measured = rows.map((row) => ({
       at: (row.at instanceof Date ? row.at : new Date(String(row.at))).toISOString(),
       runs: integer(row.runs),
       failed: integer(row.failed),
@@ -299,6 +299,43 @@ export class DrizzleUsageManager implements UsageManager {
       totalTokens: integer(row.totalTokens),
       costUsd: nullableCost(row.costUsd),
     }));
+
+    /*
+     * The whole window, not only the buckets that ran something.
+     *
+     * `GROUP BY` yields no row for an hour with no completed run, so a
+     * deployment whose week of activity happened in one hour came back as a
+     * one-point series — and a chart drawn from it showed a single full-width
+     * bar with no time axis left at all. Quiet hours are data on a trend, so
+     * the gaps are filled with measured zeroes here, where the window's
+     * boundaries are known, rather than re-derived by every chart.
+     *
+     * A window with no runs at all still returns an empty series: that is an
+     * absence, and both trend surfaces draw it as "no runs yet" rather than as
+     * a flatline of zeroes that claims something was measured hour by hour.
+     */
+    if (measured.length === 0) return measured;
+    const step = bucket === "hour" ? 3_600_000 : 86_400_000;
+    const byBoundary = new Map(measured.map((point) => [new Date(point.at).getTime(), point]));
+    const first = Math.floor(since.getTime() / step) * step;
+    // A run can complete between `generatedAt` and this query crossing a
+    // boundary; the range follows the data rather than dropping that bucket.
+    const last = Math.max(Math.floor(until.getTime() / step) * step, ...byBoundary.keys());
+    const series: UsageBucket[] = [];
+    for (let boundary = first; boundary <= last; boundary += step) {
+      series.push(
+        byBoundary.get(boundary) ?? {
+          at: new Date(boundary).toISOString(),
+          runs: 0,
+          failed: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          costUsd: null,
+        },
+      );
+    }
+    return series;
   }
 
   /**

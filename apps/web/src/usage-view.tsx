@@ -179,12 +179,13 @@ function Breakdown({
   breakdown,
 }: {
   title: string;
-  description: string;
+  /** Only where a table states a rule its rows cannot show. */
+  description?: string;
   breakdown: UsageBreakdown;
 }) {
   return (
     <Panel className="grid min-w-0 gap-3">
-      <PanelHeading title={title} description={description} className="mb-0" />
+      <PanelHeading title={title} {...(description ? { description } : {})} className="mb-0" />
       {breakdown.rows.length === 0 ? (
         <EmptyState title="Nothing in this window">
           No run finished inside the selected window, so there is nothing to attribute yet.
@@ -278,23 +279,7 @@ export function UsageView({ session, onConfigure, onSessionExpired }: UsageViewP
           </Select>
         </label>
       }
-    >
-      <section className="flex items-center gap-4">
-        <div className="min-w-0 flex-1">
-          <MicroLabel className="block">What this counts</MicroLabel>
-          <strong className="mt-1.5 block text-label font-semibold text-text">
-            {report
-              ? `${exact.format(report.totals.runs)} runs finished in the ${WINDOW_LABELS[report.window].toLowerCase()}.`
-              : loading ? "Reading the window…" : "No window loaded."}
-          </strong>
-          <p className="mb-0 mt-1 text-caption leading-relaxed text-muted">
-            Every governed run that reached a terminal state inside the window, including the chat turns
-            among them. Cost is what the route reported; there is no price book, so an on-premises
-            route that reports none shows a dash rather than a zero.
-          </p>
-        </div>
-      </section>
-    </WorkspaceIntro>
+    />
 
     <WorkspaceDock>
       <MetricRow className="border-b-0 pb-0 lg:grid-cols-5" aria-label="Gateway usage summary">
@@ -340,7 +325,6 @@ export function UsageView({ session, onConfigure, onSessionExpired }: UsageViewP
         <Panel className="grid gap-3">
           <PanelHeading
             title="Consumption over time"
-            description={`One bar per ${report.bucket}, tallest bar scaled to the busiest one. A red foot marks a ${report.bucket} that contained a failed run.`}
             className="mb-0"
           />
           {report.series.length === 0
@@ -355,7 +339,6 @@ export function UsageView({ session, onConfigure, onSessionExpired }: UsageViewP
         <Panel className="grid gap-3">
           <PanelHeading
             title="The governed path itself"
-            description="Requests the enrolled runtime made back through the OrcaSynapse inference gateway, and the governed tool calls made alongside them."
             className="mb-0"
           />
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -400,27 +383,26 @@ export function UsageView({ session, onConfigure, onSessionExpired }: UsageViewP
       {report && <div className="grid gap-3 lg:grid-cols-2">
         <Breakdown
           title="By model route"
-          description="Which approved route the spend actually went to."
           breakdown={report.byModel}
         />
         <Breakdown
           title="By agent"
-          description="Named by profile slug, which is stable across the versions a profile has had."
           breakdown={report.byProfile}
         />
         <Breakdown
           title="By division"
-          description="Runs against a deployment-wide profile belong to no division and are their own row, not a gap."
+          /* Kept where the others went: a reader cannot infer from the table
+             that a division-less run is a row rather than missing data. */
+          description="Runs against a deployment-wide profile are their own row, not a gap."
           breakdown={report.byDivision}
         />
         {report.byUser
           ? <Breakdown
               title="By person"
-              description="Who drove the usage, from the run's own owner."
               breakdown={report.byUser}
             />
           : <Panel className="grid min-w-0 gap-3">
-              <PanelHeading title="By person" description="Who drove the usage." className="mb-0" />
+              <PanelHeading title="By person" className="mb-0" />
               {/*
                 * A refusal, not an empty table. This breakdown names individuals,
                 * so it sits behind `audit:read` rather than the `operations:read`

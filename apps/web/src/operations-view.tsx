@@ -6,7 +6,7 @@ import {
   type OperationalIncident,
   type RuntimeExecutorSnapshot,
 } from "@orcasynapse/contracts";
-import { Activity, Flag, HeartPulse, Timer } from "lucide-react";
+import { Activity, Flag, HeartPulse, RefreshCw as SyncIcon, Timer } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -252,8 +252,15 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   const workloads = overview?.runtime?.workloads ?? [];
   const executors = overview?.runtime?.executors ?? [];
   const pendingWork = workloads.reduce((total, workload) => total + workload.pendingCount, 0);
-  const failedWork = workloads.reduce((total, workload) => total + workload.failedCount, 0);
   const runningWork = workloads.reduce((total, workload) => total + workload.activeCount, 0);
+  /*
+   * The same rule the control plane applies to the overall badge: a fault is
+   * anything not healthy, except an optional capability nobody configured.
+   */
+  const faultedComponents = (overview?.components ?? []).filter((component) =>
+    component.status !== "HEALTHY" && (component.required || component.status !== "NOT_CONFIGURED"));
+  const unconfiguredOptional = (overview?.components ?? []).filter((component) =>
+    !component.required && component.status === "NOT_CONFIGURED").length;
   const sortedComponents = useMemo(() => [...(overview?.components ?? [])].sort((left, right) => {
     const weight = { UNAVAILABLE: 0, DEGRADED: 1, NOT_VERIFIED: 2, NOT_CONFIGURED: 3, HEALTHY: 4 } as const;
     return weight[left.status] - weight[right.status] || left.label.localeCompare(right.label);
@@ -329,11 +336,19 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           >
             {overview ? humanLabel(overview.status) : "Loading"}
           </StatusText>
-          <Button onClick={() => void refresh()} disabled={busy}>{busy ? "Refreshing..." : "Refresh"}</Button>
+          <Button onClick={() => void refresh()} disabled={busy}><SyncIcon size={16} />{busy ? "Refreshing..." : "Refresh"}</Button>
         </>}
       />
 
-      <div className="shrink-0" aria-live="polite">
+      {/*
+        * `empty:hidden`, because this is a flex child of a `gap-3` column and
+        * it is empty whenever there is nothing to announce -- which is almost
+        * always. A zero-height child still takes its gap, so this page sat 24px
+        * under its header while every other workspace sits at 12. The element
+        * itself has to stay mounted: a live region that appears only when it
+        * already has content is not announced.
+        */}
+      <div className="shrink-0 empty:hidden" aria-live="polite">
         {error && <Alert>{error}</Alert>}
         {message && <Alert tone="good">{message}</Alert>}
       </div>
@@ -342,10 +357,19 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
         <HeroBanner
           tone="plain"
           aria-label="AI operations summary"
+          /*
+             A capability nobody configured is not a service needing attention.
+             Counting every non-HEALTHY row put "4 of 5" over a fresh install
+             whose only faults were two, and left the other two -- features the
+             deployment had simply declined -- looking like outstanding work.
+             They are still listed below, and still not called healthy.
+           */
           highlight={{
             label: "Services needing attention",
-            value: overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--",
-            caption: `of ${overview?.components.length ?? 0} checked`,
+            value: overview ? faultedComponents.length : "--",
+            caption: unconfiguredOptional > 0
+              ? `of ${overview?.components.length ?? 0} checked · ${unconfiguredOptional} not in use`
+              : `of ${overview?.components.length ?? 0} checked`,
             icon: <Activity className="size-4" aria-hidden="true" />,
           }}
           metrics={[
@@ -362,7 +386,14 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             {
               label: "Runs waiting to start",
               value: numberFormatter.format(pendingWork),
-              caption: `${runningWork} running now · ${failedWork} failed, all time`,
+              /*
+               * Both figures are "now". `failedWork` is a lifetime total, and
+               * printing it here put an all-time number inside a caption whose
+               * page is stamped with one snapshot time -- so a deployment that
+               * failed twice a year ago read as failing during this window.
+               * The lifetime figure belongs to the ledger, which scopes itself.
+               */
+              caption: `${runningWork} running now · ${overview?.components.length ?? 0} services checked`,
               icon: <Timer className="size-4" aria-hidden="true" />,
             },
             /*
@@ -384,7 +415,15 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             <PanelHeading
               kicker="Infrastructure"
               title="Services"
-              description="Everything OrcaSynapse depends on, worst first. “Live” was checked just now; “Verified” is the last connection test and may be old."
+              /*
+               * All three provenance words, because all three appear. The
+               * sentence named "Live" and "Verified" while `source` is a
+               * three-valued enum -- LIVE, LAST_VERIFIED, CONFIGURATION -- so
+               * a row reading "Configuration" was a word the legend under it
+               * did not admit existed, on the screen an operator reaches for
+               * when they already distrust what they are seeing.
+               */
+              description="Everything OrcaSynapse depends on, worst first. “Live” was checked just now; “Verified” is the last connection test and may be old; “Configuration” means nothing was contacted — the row describes what is set up, not what answered."
               /*
                * Toned, not merely timestamped. Every figure on this screen
                * comes from this one snapshot, so when it is old the whole page
@@ -522,7 +561,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             description={overview?.runtime
               ? `Queued and running agent work, and the workers processing it. Read ${relativeTime(overview.runtime.capturedAt)}.`
               : "No worker has reported, so there is nothing to say about queued work."}
-            actions={<Button size="sm" onClick={() => void refresh()} disabled={busy}>Refresh state</Button>}
+            actions={<Button size="sm" onClick={() => void refresh()} disabled={busy}><SyncIcon size={14} />Refresh state</Button>}
           />
           <div className="overflow-hidden rounded border border-border">
             <Table className="min-w-[560px]">

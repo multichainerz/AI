@@ -110,9 +110,12 @@ describe("CorpusView", () => {
       expect(workspace?.className).toMatch(/\bh-full\b/);
       expect(workspace?.className).toMatch(/\bmin-h-0\b/);
       expect(workspace?.className).not.toMatch(/min-h-\[590px\]/);
-      expect(workspace?.querySelector(".corpus-chrome")?.className).toContain("lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]");
-      expect(workspace?.querySelector(".corpus-work")?.className).toContain("lg:grid-cols-[260px_minmax(0,1fr)]");
-      expect(workspace?.querySelector(".corpus-work")?.className).not.toContain("300px");
+      // Rows, not a side-by-side split: the chrome is three even columns on
+      // its own bounded row, and the work row shares the same three-column
+      // seams with the viewer spanning two of them.
+      expect(workspace?.querySelector(".corpus-chrome")?.className).toContain("sm:grid-cols-3");
+      expect(workspace?.querySelector(".corpus-work")?.className).toContain("lg:grid-cols-3");
+      expect(workspace?.querySelector(".corpus-work > .lg\\:col-span-2")).toBeTruthy();
       cleanup();
       vi.clearAllMocks();
     }

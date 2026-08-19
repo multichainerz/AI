@@ -46,7 +46,7 @@ describe("collapsed navigation rail", () => {
   it("draws settings as the last row of the primary menu, above the collapse action", () => {
     const menu = app.indexOf('<nav aria-label="Primary navigation">');
     const menuEnd = app.indexOf("</nav>", menu);
-    const topGroup = app.indexOf('<div className="nav-group">', menu);
+    const topGroup = app.indexOf('className="nav-group"', menu);
     const footer = app.indexOf('<div className="sidebar-bottom">');
     const collapse = app.indexOf('className="sidebar-collapse-button', footer);
 
@@ -55,7 +55,11 @@ describe("collapsed navigation rail", () => {
     expect(menuEnd).toBeGreaterThan(topGroup);
     expect(app).not.toContain("nav-group--bottom");
 
-    expect(app).toContain('{primaryNavigationItems("top").map(renderNavigationRow)}');
+    // The rail draws the model's own groups now rather than flattening them,
+    // so the administration areas can sit behind one heading that folds. Every
+    // top-placement group is still rendered, and the row renderer is unchanged.
+    expect(app).toContain('.filter((group) => group.placement === "top")');
+    expect(app).toContain("group.items.map(renderNavigationRow)");
     expect(app).toContain('aria-current={active ? "page" : undefined}');
 
     expect(footer).toBeGreaterThan(menuEnd);

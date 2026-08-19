@@ -306,6 +306,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     background: rgba(255, 255, 255, 0.085);
     box-shadow: inset 0 1px rgba(255, 255, 255, 0.05), 0 10px 24px -20px rgba(0, 0, 0, 0.72);
   }
+  /* No indent guide at 80px: there is no label to hang under, and a hairline
+     beside a column of centred icons reads as a rendering artefact. */
+  .app-shell--focus .sidebar .nav-subgroup {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
   .app-shell--focus .sidebar nav button > span + span,
   .app-shell--focus .sidebar-bottom > button > span + span,
   .app-shell--focus .sidebar > div:first-child > strong {
@@ -360,11 +367,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* A column rather than a start-packed grid, and the change is load-bearing:
    `.nav-group--bottom` reaches the foot of the menu with an auto margin, which
    a grid with `align-content: start` would have swallowed silently. */
-.sidebar nav { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
+.sidebar nav { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
 .sidebar nav::-webkit-scrollbar { width: 6px; }
 .sidebar nav::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, 0.28); }
 .sidebar nav::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.42); }
+/* 6px between groups, not 17. That gap was measured when the rail drew a
+   single group and the value only had to separate the menu from nothing; with
+   the administration areas behind their own heading it became a rift, and the
+   heading read as a widget parked below the menu rather than the next row of
+   it. The heading itself is the separation now, so the gap only has to say the
+   run has ended.
+
+   `.nav-subgroup` restates the row gap because it is a grid *item* of
+   `.nav-group`, not a grid container: without it the four indented rows sat
+   flush against one another while every row above them had 3px. */
 .nav-group { display: grid; gap: 3px; }
+.nav-subgroup { display: grid; gap: 3px; }
 /* Settings, last in the same menu. The auto margin is the whole of "at the
    bottom" -- and it is also what keeps the row reachable when the rail is too
    short for its own contents: once the nav scrolls, an auto margin resolves to
@@ -759,6 +777,49 @@ main {
 }
 .dot-grid-field--boot {
   opacity: 0.22;
+}
+
+/*
+ * The same dot field as the boot and sign-in screens, drawn in CSS rather than
+ * on a canvas.
+ *
+ * `DotGridField` is a `<canvas>` on a `requestAnimationFrame` loop, which is
+ * the right thing for one full-screen reveal and the wrong thing for a header
+ * that appears on every page: seven areas would each mount a canvas and animate
+ * it forever to draw a static texture. This is the same 20px cell and 6px dot
+ * the canvas uses, as one repeating gradient, so the two read as one language
+ * while costing nothing per page.
+ *
+ * Masked, not faded: the dots stop before the actions on the right rather than
+ * sitting under them at low opacity, which is what keeps a button's own border
+ * the only edge in that corner. `-webkit-mask-image` alongside the standard
+ * property because the container's Chromium is not new enough everywhere.
+ *
+ * Scoped to the title row rather than the whole card. `WorkspaceIntro` also
+ * hosts a bordered content region on some screens -- the execution boundary and
+ * run counters on Profiles -- and a field spanning both ran dots behind a
+ * switch and a metric row. The pattern belongs to the title, and the region
+ * below is a separate surface.
+ */
+.workspace-intro-field {
+  position: relative;
+  isolation: isolate;
+}
+.workspace-intro-field::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(currentColor 1.6px, transparent 1.7px);
+  background-size: 20px 20px;
+  background-position: 10px 10px;
+  color: rgb(255 255 255 / 0.10);
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 34%, transparent 72%);
+  mask-image: linear-gradient(to right, #000 0%, #000 34%, transparent 72%);
+}
+[data-theme="light"] .workspace-intro-field::before {
+  color: rgb(16 16 20 / 0.07);
 }
 
 
