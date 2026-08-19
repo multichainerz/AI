@@ -109,6 +109,12 @@ def signed_headers(method: str, path: str, body: Any) -> dict[str, str]:
             raise ReconcileError("could not sign the corpus request with the enrolled node identity")
         signature = base64.urlsafe_b64encode(Path(signature_file.name).read_bytes()).decode("ascii").rstrip("=")
     return {
+        # An explicit product identity, because the default is a block: bare
+        # urllib announces "Python-urllib", which Cloudflare's Browser
+        # Integrity Check refuses with error 1010 before the control plane
+        # ever sees the request. The curl-based node clients pass; these two
+        # failed on any Cloudflare-fronted deployment until this header.
+        "User-Agent": "orcasynapse-hermes-corpus/1.0",
         "x-orcasynapse-node-timestamp": timestamp,
         "x-orcasynapse-node-nonce": nonce,
         "x-orcasynapse-node-signature": signature,
