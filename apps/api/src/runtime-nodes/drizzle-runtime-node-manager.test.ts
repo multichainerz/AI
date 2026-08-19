@@ -889,6 +889,7 @@ describe("runtime node pure helpers", () => {
 
       expect(listed?.expectedHermesCommit).toBe(pinned);
       expect(listed?.expectedHermesCommit).toBe(documentOf(state).hermesCommit);
+      expect(listed?.controlPlaneUrl).toBe(CONTROL_PLANE);
     });
 
     it("reports no expected commit rather than a guess when none was recorded", async () => {

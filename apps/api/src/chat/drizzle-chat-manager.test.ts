@@ -14,6 +14,7 @@ import {
   chatMessage,
   chatSchedule,
   createTestDatabase,
+  division,
   guardrailPolicy,
   chatRunWakeStatement,
   createChatRunWakeHub,
@@ -230,6 +231,31 @@ describe("DrizzleChatManager message submission", () => {
     const created = await manager().create(principal, { profileId } as never);
     return created.id;
   }
+
+  it("hands submitRun the caller's division so a division-assigned profile can send", async () => {
+    const [group] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const profileId = await seedActiveProfile();
+    await context.database.update(agentProfile)
+      .set({ divisionId: group!.id }).where(eq(agentProfile.id, profileId));
+
+    const person: ChatPrincipal = {
+      id: randomUUID(),
+      subject: `user:${randomUUID()}`,
+      identityMode: "ENTERPRISE",
+      scopes: ["chat:use", "agents:use"],
+      divisionId: group!.id,
+    };
+    const created = await manager().create(person, { profileId } as never);
+    const agentManager = agents();
+    await manager(agentManager).submitMessage(person, created.id, "Hello");
+
+    expect(agentManager.submitRun).toHaveBeenCalledWith(
+      expect.objectContaining({ divisionId: group!.id, identityMode: "ENTERPRISE" }),
+      expect.objectContaining({ profileId, input: "Hello" }),
+      expect.anything(),
+    );
+  });
 
   it("stores the turn pair, titles the conversation, and links the run", async () => {
     const conversationId = await conversation();

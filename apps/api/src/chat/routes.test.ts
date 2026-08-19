@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { ADMIN_SCOPES, type ChatMessage, type ChatSchedule } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
-import { ADMIN_SESSION_COOKIE, type AdminPrincipal, type AdminSessionManager } from "../auth/admin-session.js";
+import { ADMIN_SESSION_COOKIE, scopesForAdminRole, type AdminPrincipal, type AdminSessionManager } from "../auth/admin-session.js";
 import {
   ENTERPRISE_SESSION_COOKIE,
   type EnterpriseIdentityManager,
@@ -225,6 +225,38 @@ describe("controlled chat routes", () => {
     const app = await chatApp();
     const response = await app.inject({ method: "GET", url: "/api/v1/chat/conversations" });
     expect(response.statusCode).toBe(401);
+  });
+
+  it("answers 403, not 401, when a live administrator session lacks chat:use", async () => {
+    class SecuritySessions implements AdminSessionManager {
+      async createInstallationKeySession() { return null; }
+      async authenticate(token: string | undefined) {
+        return token === SESSION_TOKEN
+          ? {
+              ...principal,
+              role: "SECURITY_ADMIN" as const,
+              scopes: [...scopesForAdminRole("SECURITY_ADMIN")],
+            }
+          : null;
+      }
+      async revoke() { return true; }
+    }
+    const app = await createApp({
+      logger: false,
+      runtime: {
+        bootstrapState: "READY",
+        sessionManager: new SecuritySessions(),
+        chatManager: memoryChatManager(),
+      },
+    });
+    apps.push(app);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/chat/conversations",
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "FORBIDDEN" });
   });
 
   it("lists conversations without exposing credentials", async () => {

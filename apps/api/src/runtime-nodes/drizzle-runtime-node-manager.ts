@@ -181,7 +181,11 @@ function storedUnits(value: unknown): HermesRuntimeNode["units"] {
  * look it up, and a default of null would quietly report "no target recorded"
  * for a node that has one.
  */
-function summarize(node: StoredNode, expectedHermesCommit: string | null): HermesRuntimeNode {
+function summarize(
+  node: StoredNode,
+  expectedHermesCommit: string | null,
+  controlPlaneUrl: string | null = null,
+): HermesRuntimeNode {
   const capabilities = Array.isArray(node.capabilities)
     ? node.capabilities.filter((value): value is string => typeof value === "string")
     : [];
@@ -208,6 +212,7 @@ function summarize(node: StoredNode, expectedHermesCommit: string | null): Herme
     enrolledAt: node.enrolledAt?.toISOString() ?? null,
     revokedAt: node.revokedAt?.toISOString() ?? null,
     revision: node.revision,
+    controlPlaneUrl,
     createdAt: node.createdAt.toISOString(),
     updatedAt: node.updatedAt.toISOString(),
   };
@@ -476,11 +481,16 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       .from(hermesRuntimeNode)
       .leftJoin(serviceConnection, eq(hermesRuntimeNode.serviceConnectionId, serviceConnection.id))
       .orderBy(asc(hermesRuntimeNode.displayName));
-    const pins = await this.recordedHermesCommits(nodes.map(({ node }) => node.id));
+    const ids = nodes.map(({ node }) => node.id);
+    const [pins, origins] = await Promise.all([
+      this.recordedHermesCommits(ids),
+      this.recordedControlPlaneUrls(ids),
+    ]);
     return nodes.map(({ node, connectionStatus }) =>
       summarize(
         { ...node, serviceConnection: connectionStatus ? { status: connectionStatus } : null } as StoredNode,
         pins.get(node.id) ?? null,
+        origins.get(node.id) ?? null,
       ));
   }
 
@@ -514,6 +524,30 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       if (commit) pins.set(row.nodeId, commit);
     }
     return pins;
+  }
+
+  /**
+   * The origin each node was told to call back on.
+   *
+   * Same newest-row-wins read as the Hermes pin: the repair command has to
+   * use this, not the browser origin, or a Zero Trust dashboard prints a
+   * hostname the node cannot reach.
+   */
+  private async recordedControlPlaneUrls(nodeIds: string[]): Promise<Map<string, string>> {
+    if (nodeIds.length === 0) return new Map();
+    const rows = await this.database
+      .select({ nodeId: hermesNodeEnrollment.nodeId, controlPlaneUrl: hermesNodeEnrollment.controlPlaneUrl })
+      .from(hermesNodeEnrollment)
+      .where(and(
+        inArray(hermesNodeEnrollment.nodeId, nodeIds),
+        isNotNull(hermesNodeEnrollment.controlPlaneUrl),
+      ))
+      .orderBy(asc(hermesNodeEnrollment.createdAt), asc(hermesNodeEnrollment.id));
+    const urls = new Map<string, string>();
+    for (const row of rows) {
+      if (row.controlPlaneUrl) urls.set(row.nodeId, row.controlPlaneUrl);
+    }
+    return urls;
   }
 
   private async runtimePrerequisites(): Promise<RuntimePrerequisites> {
@@ -630,7 +664,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         return pending;
       });
       return {
-        node: summarize(node as StoredNode, input.hermesCommit),
+        node: summarize(node as StoredNode, input.hermesCommit, input.controlPlaneUrl.replace(/\/$/, "")),
         bundle: {
           format: "orcasynapse-hermes-enrollment/v1",
           nodeId: node.id,
@@ -868,7 +902,13 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           metadata: { kind: "HERMES", environment, managedBy: "HermesRuntimeNode" },
         },
       ]);
-      return { expired: false as const, node: updated, modelBootstrap, hermesCommit: enrollment.hermesCommit };
+      return {
+        expired: false as const,
+        node: updated,
+        modelBootstrap,
+        hermesCommit: enrollment.hermesCommit,
+        controlPlaneUrl: enrollment.controlPlaneUrl,
+      };
     }).catch((error: unknown) => {
       if (error instanceof RuntimeNodeEnrollmentError) throw error;
       if (isUniqueViolation(error)) {
@@ -896,7 +936,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     await this.admitBaselineToolsets(enrolled.node.id).catch(() => undefined);
     const { publicKeyPem } = await this.controlPlanePublicKey();
     return {
-      node: summarize(enrolled.node as StoredNode, enrolled.hermesCommit),
+      node: summarize(enrolled.node as StoredNode, enrolled.hermesCommit, enrolled.controlPlaneUrl),
       heartbeatPath: `/api/v1/runtime-nodes/${enrolled.node.id}/heartbeat`,
       controlPlanePublicKeyPem: publicKeyPem,
       desiredStatePath: `/api/v1/runtime-nodes/${enrolled.node.id}/desired-state`,
@@ -1159,7 +1199,11 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       });
       return applied;
     });
-    return summarize(result as StoredNode, (await this.recordedHermesCommits([nodeId])).get(nodeId) ?? null);
+    const [pins, origins] = await Promise.all([
+      this.recordedHermesCommits([nodeId]),
+      this.recordedControlPlaneUrls([nodeId]),
+    ]);
+    return summarize(result as StoredNode, pins.get(nodeId) ?? null, origins.get(nodeId) ?? null);
   }
 
   async remove(principal: AdminPrincipal, nodeId: string, input: RemoveHermesRuntimeNode): Promise<void> {

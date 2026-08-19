@@ -344,6 +344,13 @@ function asAgentPrincipal(principal: ChatPrincipal): AgentPrincipal {
     subject: principal.subject,
     identityMode: principal.identityMode,
     scopes: principal.scopes,
+    /*
+     * `profileVisibleTo` treats a missing division as "no division" — the
+     * narrowest reading. Dropping it here is how a person could create a
+     * conversation on their division's profile and then 404 on the first send:
+     * create used the full principal, submitRun did not.
+     */
+    divisionId: principal.divisionId ?? null,
   };
 }
 

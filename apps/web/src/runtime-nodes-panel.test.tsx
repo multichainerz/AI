@@ -477,13 +477,16 @@ describe("the enrolled runtime's maintenance path", () => {
    * node had no visible way to update it.
    */
   it("offers the repair command once a node is enrolled", async () => {
-    api.getHermesRuntimeNodes.mockResolvedValue({ items: [runtimeNode()] });
+    api.getHermesRuntimeNodes.mockResolvedValue({
+      items: [runtimeNode({ controlPlaneUrl: "http://10.0.0.160:8080" })],
+    });
     await panel();
 
-    const maintenance = within(screen.getByRole("article", { name: "Runtime maintenance" }));
+    const maintenance = within(await screen.findByRole("article", { name: "Runtime maintenance" }));
     // --repair, not --connect: on a completed enrollment the installer refuses
     // --connect outright and tells the operator to decommission.
     const command = maintenance.getByText(/curl -fsSL .*\/install\/agentic-node\.sh \| sudo bash -s -- --repair/);
+    expect(command.textContent).toContain("http://10.0.0.160:8080/install/agentic-node.sh");
     expect(command.textContent).not.toContain("--connect");
     expect(maintenance.getByRole("button", { name: "Copy command" })).toBeTruthy();
     // The ordering that bit tonight's deployment twice: the node downloads

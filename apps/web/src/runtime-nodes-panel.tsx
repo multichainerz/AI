@@ -224,6 +224,14 @@ export function RuntimeNodesPanel({
   // can be offered at all, and an unloaded snapshot is not a development one.
   const targetKnown = targetEnvironment !== null;
   const activeRuntimeExists = nodes.some((node) => node.enrolledAt && node.status !== "REVOKED");
+  /*
+   * The origin the node was enrolled against, not the browser's. A dashboard
+   * opened through Access is on a hostname Hermes cannot pass; `--repair`
+   * downloads from this origin, so printing `window.location.origin` is how
+   * a tunnel-fronted install hands VM2 a 403.
+   */
+  const repairOrigin = nodes.find((node) => node.enrolledAt && node.status !== "REVOKED")?.controlPlaneUrl
+    ?? defaultControlPlaneUrl();
   const enrolledNodes = nodes.filter((node) => node.revokedAt === null);
   const anyOnline = enrolledNodes.some((node) => node.status === "ONLINE");
   /** The hand-off is live from the moment a claim exists until VM2 answers. */
@@ -535,10 +543,10 @@ export function RuntimeNodesPanel({
             </strong>
           </div>
           <code className="block overflow-x-auto rounded border border-border bg-bg px-3 py-2.5 font-mono text-caption text-muted">
-            {agenticNodeRepairCommand(defaultControlPlaneUrl())}
+            {agenticNodeRepairCommand(repairOrigin)}
           </code>
           <div className="flex flex-wrap items-center gap-2">
-            <CopyButton size="sm" value={() => agenticNodeRepairCommand(defaultControlPlaneUrl())}>
+            <CopyButton size="sm" value={() => agenticNodeRepairCommand(repairOrigin)}>
               Copy command
             </CopyButton>
           </div>

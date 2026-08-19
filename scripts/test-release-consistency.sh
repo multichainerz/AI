@@ -67,6 +67,11 @@ contract_version="$(sed -nE 's/.*ORCASYNAPSE_VERSION = "([^"]+)".*/\1/p' package
 [[ "${contract_version}" == "v${version}" ]] \
   || fail "packages/contracts/src/version.ts declares '${contract_version}', expected 'v${version}'"
 
+# CONTRIBUTING requires a matching CHANGELOG entry. Nothing enforced it, so
+# v9.2.0 through v9.5.1 shipped with the heading still at v9.1.0.
+grep -Eq "^## v${version}( |$)" CHANGELOG.md \
+  || fail "CHANGELOG.md has no heading for v${version}"
+
 agentic_version="$(sed -nE 's/^INSTALLER_VERSION="([^"]+)"$/\1/p' scripts/install-agentic-node.sh)"
 [[ "${agentic_version}" == "v${version}" ]] \
   || fail "scripts/install-agentic-node.sh INSTALLER_VERSION is '${agentic_version}', expected 'v${version}'"

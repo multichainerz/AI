@@ -103,6 +103,14 @@ export const hermesRuntimeNodeSchema = z.object({
   enrolledAt: z.iso.datetime().nullable(),
   revokedAt: z.iso.datetime().nullable(),
   revision: z.number().int().nonnegative(),
+  /**
+   * The origin VM2 was told to call back on, from the consumed enrolment.
+   *
+   * Null when no enrolment recorded one (an older node). The repair command
+   * must use this, not the browser's `window.location.origin`: a tunnel-
+   * fronted dashboard is on an Access hostname the node cannot reach.
+   */
+  controlPlaneUrl: z.string().min(1).max(2_048).nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 }).strict();

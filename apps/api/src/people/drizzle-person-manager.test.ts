@@ -5,6 +5,7 @@ import {
   division,
   enterpriseUser,
   enterpriseUserSession,
+  localAdministrator,
   localUser,
   type TestDatabase,
 } from "@orcasynapse/database";
@@ -83,6 +84,18 @@ describe("DrizzlePersonManager", () => {
     await manager().create(principal, input);
 
     await expect(manager().create(principal, input)).rejects.toBeInstanceOf(PersonConflictError);
+  });
+
+  it("rejects a username that already names a local administrator", async () => {
+    await context.database.insert(localAdministrator).values({
+      username: "admin",
+      displayName: "Local Administrator",
+      passwordHash: "scrypt$placeholder",
+      role: "PLATFORM_ADMIN",
+    });
+
+    await expect(manager().create(principal, personInput({ username: "admin" })))
+      .rejects.toBeInstanceOf(PersonConflictError);
   });
 
   it("refuses a password below the local policy", async () => {

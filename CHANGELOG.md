@@ -5,6 +5,49 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.5.3 — 2026-08-20
+
+Closes the defects that made Session, Access, VM2 repair and the
+in-dashboard update check disagree with the rest of the product.
+
+### Upgrade notes
+
+- **GitHub tags are what the dashboard checks.** `main` can sit on v9.5.3
+  while Settings → System still reports "up to date" if the tag was never
+  pushed. Publish with `git push origin v9.5.3` (and any earlier unpushed
+  `vX.Y.Z` tags). Check for updates does not install; Approve or run the
+  copied host command.
+- **API, web and contracts must ship together.** The runtime-node summary
+  now requires `controlPlaneUrl` (nullable). A mixed pair fails schema
+  parse at the dashboard or the list route.
+
+### Changes
+
+- copy `divisionId` onto the principal chat hands to `submitRun`, so a
+  person in a division can send on that division's profile
+- answer 403, not 401, when a live administrator session lacks `chat:use`
+  or a tooling write scope — 401 was signing SECURITY/OPERATIONS/AUDITOR
+  out of the workspace
+- gate Session on `chat:use` in the shell, matching the API
+- refuse a People username that already names a local administrator, and
+  refuse provisioning an administrator whose username already names a person
+- print the VM2 `--repair` command from the origin stored at enrolment,
+  not the browser's Access hostname
+- walk every GitHub tags page when checking for updates
+- fail the release-consistency gate unless CHANGELOG has a heading for
+  the version being shipped
+
+## v9.5.2 — 2026-08-20
+
+Widens the inference gateway to the current OpenAI and OpenRouter chat
+surface.
+
+### Changes
+
+- accept OpenAI/OpenRouter content-parts arrays on the gateway and inspect
+  every text part the way string bodies are inspected; round-trip assistant
+  echo fields without failing the second turn of a reasoning conversation
+
 ## v9.1.0 — 2026-08-19
 
 Adds run artifacts — files an agent produces are now published, governed, and

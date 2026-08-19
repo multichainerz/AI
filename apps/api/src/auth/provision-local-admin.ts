@@ -3,6 +3,7 @@ import {
   auditEvent,
   createDrizzleClient,
   localAdministrator,
+  localUser,
   readBootstrapSecret,
 } from "@orcasynapse/database";
 import { hashLocalPassword, localPasswordIsValid } from "@orcasynapse/security";
@@ -42,6 +43,15 @@ try {
       .where(eq(localAdministrator.username, username))
       .limit(1);
     if (existing) return { created: false, username: existing.username };
+
+    const [person] = await transaction
+      .select({ id: localUser.id })
+      .from(localUser)
+      .where(eq(localUser.username, username))
+      .limit(1);
+    if (person) {
+      throw new Error("That username is already a person account. Choose a different administrator username.");
+    }
 
     const [created] = await transaction
       .insert(localAdministrator)

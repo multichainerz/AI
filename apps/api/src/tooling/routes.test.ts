@@ -1,7 +1,7 @@
 import { ADMIN_SCOPES, type AdministratorSession } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
-import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
+import { ADMIN_SESSION_COOKIE, scopesForAdminRole, type AdminSessionManager } from "../auth/admin-session.js";
 import type { ToolingManager } from "./tooling-manager.js";
 
 const SESSION_TOKEN = "s".repeat(43);
@@ -54,6 +54,42 @@ async function toolingApp() {
 }
 
 describe("governed tooling routes", () => {
+  it("answers 403, not 401, when a live administrator session lacks the write scope", async () => {
+    class OperationsSessions implements AdminSessionManager {
+      async createInstallationKeySession() { return null; }
+      async authenticate(token: string | undefined) {
+        return token === SESSION_TOKEN
+          ? {
+              ...session,
+              role: "OPERATIONS_ADMIN" as const,
+              scopes: [...scopesForAdminRole("OPERATIONS_ADMIN")],
+            }
+          : null;
+      }
+      async revoke() { return true; }
+    }
+    const app = await createApp({
+      logger: false,
+      runtime: {
+        bootstrapState: "READY",
+        sessionManager: new OperationsSessions(),
+        toolingManager: manager(),
+      },
+    });
+    apps.push(app);
+    const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` };
+    const listed = await app.inject({ method: "GET", url: "/api/v1/admin/tooling/tools", headers });
+    expect(listed.statusCode).toBe(200);
+    const issued = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/tooling/credentials",
+      headers,
+      payload: { name: "Hermes pilot gateway" },
+    });
+    expect(issued.statusCode).toBe(403);
+    expect(issued.json()).toMatchObject({ error: "FORBIDDEN" });
+  });
+
   it("protects the administrator registry and one-time credential issuance", async () => {
     const { app } = await toolingApp();
     expect((await app.inject({ method: "GET", url: "/api/v1/admin/tooling/tools" })).statusCode).toBe(401);

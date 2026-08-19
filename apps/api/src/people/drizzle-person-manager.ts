@@ -4,6 +4,7 @@ import {
   division,
   enterpriseUser,
   enterpriseUserSession,
+  localAdministrator,
   localUser,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
@@ -91,6 +92,18 @@ export class DrizzlePersonManager {
             throw new PersonConflictError(`${target.displayName} is suspended. Reactivate it before adding people to it.`);
           }
         }
+        /*
+         * One sign-in field, two stores. A person username that matches a
+         * local administrator used to lock that administrator: the front page
+         * probes admin first, a wrong password increments `failedLoginCount`,
+         * and five People logins locked `admin` for fifteen minutes.
+         */
+        const [administrator] = await transaction
+          .select({ id: localAdministrator.id })
+          .from(localAdministrator)
+          .where(eq(localAdministrator.username, input.username))
+          .limit(1);
+        if (administrator) throw new PersonConflictError("That username is already taken.");
         const [user] = await transaction
           .insert(enterpriseUser)
           .values({

@@ -590,7 +590,7 @@ function App() {
   // One definition of "may call admin routes", shared with every governed
   // view. The inline copy that used to live here was the same expression by
   // hand, which is how a shell and a screen start disagreeing about a session.
-  const { unlocked } = adminAccess(adminSession);
+  const { unlocked, can } = adminAccess(adminSession);
   /*
    * One error cell serves three surfaces — the front page, the connection
    * drawer and the elevation dialog — and only one of them is ever visible.
@@ -617,21 +617,15 @@ function App() {
     setEnterpriseSession(null);
   };
   /*
-   * All three read the same way on purpose. Chat used to accept any enterprise
-   * session without asking for its scope, which made it the one governed area
-   * whose locked screen could not render at all: past the front-page guard an
-   * enterprise session is always present when the administrator one is not, so
-   * `chatUnlocked` was a constant `true` while its two siblings were a real
-   * question. Deleting Chat's locked screen would have been the other way to
-   * resolve that, and the wrong one — it is the screen an employee is most
-   * likely to arrive at without permission.
+   * Session requires `chat:use`. Only PLATFORM_ADMIN holds it; treating any
+   * unlocked admin as chat-capable sent SECURITY / OPERATIONS / AUDITOR into
+   * a 401 that Chat maps to sign-out. Gate on the scope, the same way the
+   * API now answers 403 for a live admin session that lacks it.
    *
-   * `enterpriseSessionSchema.scopes` is a fixed three-literal tuple today, so
-   * in practice all three still answer true. That is a property of the
-   * contract, not of these lines: widen the tuple and the three screens start
-   * disagreeing, which is exactly what they should do.
+   * People still unlock Session through the enterprise tuple. Agents stays
+   * `unlocked` because every admin role can read profiles.
    */
-  const chatUnlocked = unlocked || enterpriseSession?.scopes.includes("chat:use") === true;
+  const chatUnlocked = can("chat:use") || enterpriseSession?.scopes.includes("chat:use") === true;
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
 
   const refreshWorkspaceState = useCallback(async () => {

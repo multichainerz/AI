@@ -17,7 +17,15 @@ import {
 const RELEASE_TAG_PATTERN = /^(?:ai-)?v(\d+)\.(\d+)\.(\d+)$/;
 /** A full git object name. Nothing shorter is a pin. */
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
-const TAGS_ENDPOINT = "https://api.github.com/repos/multichainerz/AI/tags?per_page=100";
+const TAGS_PAGE_SIZE = 100;
+/**
+ * Five pages is 500 tags, far above this repository, and five GitHub calls
+ * stay inside the unauthenticated budget even if the 5-minute cache misses
+ * a few times an hour. Twenty would have spent a third of that budget on
+ * a single check.
+ */
+const TAGS_MAX_PAGES = 5;
+const TAGS_ENDPOINT = `https://api.github.com/repos/multichainerz/AI/tags?per_page=${TAGS_PAGE_SIZE}`;
 const INSTALLER_URL = "https://raw.githubusercontent.com/multichainerz/AI/main/install.sh";
 
 export interface ReleaseVersion {
@@ -68,16 +76,24 @@ export function latestReleaseVersion(tags: unknown): ReleaseVersion {
  * no second call and cannot disagree with the check the operator just read.
  */
 async function fetchReleaseTags(fetchImplementation: typeof fetch): Promise<unknown> {
-  const response = await fetchImplementation(TAGS_ENDPOINT, {
-    headers: {
-      accept: "application/vnd.github+json",
-      "user-agent": "OrcaSynapse-update-check",
-      "x-github-api-version": "2022-11-28",
-    },
-    signal: AbortSignal.timeout(8_000),
-  });
-  if (!response.ok) throw new Error(`GitHub release lookup returned HTTP ${response.status}.`);
-  return response.json();
+  const collected: unknown[] = [];
+  const headers = {
+    accept: "application/vnd.github+json",
+    "user-agent": "OrcaSynapse-update-check",
+    "x-github-api-version": "2022-11-28",
+  } as const;
+  for (let page = 1; page <= TAGS_MAX_PAGES; page += 1) {
+    const response = await fetchImplementation(`${TAGS_ENDPOINT}&page=${page}`, {
+      headers,
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) throw new Error(`GitHub release lookup returned HTTP ${response.status}.`);
+    const body: unknown = await response.json();
+    if (!Array.isArray(body)) throw new Error("GitHub returned an invalid tag list.");
+    collected.push(...body);
+    if (body.length < TAGS_PAGE_SIZE) break;
+  }
+  return collected;
 }
 
 /**
@@ -91,8 +107,9 @@ async function fetchReleaseTags(fetchImplementation: typeof fetch): Promise<unkn
  * recording a partial commit would let a host agent install *something* rather
  * than provably the approved release.
  *
- * Only the first page of tags is searched, as the update check does. The tag an
- * operator approves is one the check just showed them, so it is on that page.
+ * Walks the same published tag pages as the update check. The tag an operator
+ * approves is one the check just showed them, so the two cannot disagree about
+ * whether it exists.
  */
 export async function resolveReleaseTarget(
   desiredVersion: string,

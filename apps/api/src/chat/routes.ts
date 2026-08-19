@@ -100,6 +100,20 @@ export async function requireChatPrincipal(
     });
     return null;
   }
+  /*
+   * A live administrator session that lacks `chat:use` is not "unsigned".
+   * Answering 401 here used to drop the whole workspace: Chat and Files treat
+   * 401 as expiry, so SECURITY / OPERATIONS / AUDITOR opening Session signed
+   * themselves out. 403 is the same answer `requireAdmin` gives for a missing
+   * scope, and leaves the session cookie alone.
+   */
+  if (administrator.outcome === "ADMINISTRATOR") {
+    await reply.code(403).send({
+      error: "FORBIDDEN",
+      message: "The administrator session does not grant 'chat:use'.",
+    });
+    return null;
+  }
   await reply.code(401).send({
     error: "UNAUTHORIZED",
     message: "Sign in with an enterprise account or an authorized administrator session.",

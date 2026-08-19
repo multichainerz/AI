@@ -158,6 +158,7 @@ describe("the runtime node summary", () => {
     enrolledAt: null,
     revokedAt: null,
     revision: 0,
+    controlPlaneUrl: null,
     createdAt: "2026-08-15T00:00:00.000Z",
     updatedAt: "2026-08-15T00:00:00.000Z",
   };

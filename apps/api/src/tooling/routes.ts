@@ -131,9 +131,23 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply, option
   // a plaintext, non-expiring MCP bearer token, a permanent credential minted
   // by the very password the gate exists to make unusable. The copy is gone;
   // `authenticateAdministrator` owns the rule for every module that needs it.
-  const administrator = await authenticateAdministrator(request, reply, options.sessionManager, scope);
+  /*
+   * Authenticate without the scope, then refuse it as 403. Passing the scope
+   * into `authenticate()` collapsed a live session that lacked it into
+   * `NO_SESSION`, which this function answered as 401 — and the dashboard
+   * treats 401 as expiry. OPERATIONS/AUDITOR writing a tool they may only
+   * read then signed the whole workspace out.
+   */
+  const administrator = await authenticateAdministrator(request, reply, options.sessionManager);
   if (administrator.outcome === "REFUSED") return null;
   if (administrator.outcome === "ADMINISTRATOR") {
+    if (!administrator.principal.scopes.includes(scope)) {
+      await reply.code(403).send({
+        error: "FORBIDDEN",
+        message: `The administrator session does not grant '${scope}'.`,
+      });
+      return null;
+    }
     return { id: administrator.principal.id, subject: administrator.principal.subject };
   }
   if (!options.sessionManager) {

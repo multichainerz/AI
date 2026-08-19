@@ -59,6 +59,7 @@ vi.mock("./api.js", async (load) => ({
 }));
 
 const { FilesView } = await import("./files-view.js");
+const { OrcaSynapseApiError } = await import("./api.js");
 
 afterEach(() => {
   cleanup();
@@ -127,6 +128,21 @@ describe("files view", () => {
 
     await user.click(screen.getByRole("button", { name: "All" }));
     expect(rows().getByText("findings.md")).toBeTruthy();
+  });
+
+  it("treats 401 as expiry and 403 as a refusal that leaves the session", async () => {
+    getChatArtifacts.mockRejectedValueOnce(new OrcaSynapseApiError(401, "unsigned"));
+    const expiredOn401 = vi.fn();
+    render(<FilesView onSessionExpired={expiredOn401} />);
+    await waitFor(() => expect(expiredOn401).toHaveBeenCalled());
+
+    cleanup();
+    getChatArtifacts.mockRejectedValueOnce(new OrcaSynapseApiError(403, "The administrator session does not grant 'chat:use'."));
+    const expiredOn403 = vi.fn();
+    render(<FilesView onSessionExpired={expiredOn403} />);
+    await waitFor(() => screen.getByText(/does not grant/));
+    expect(expiredOn403).not.toHaveBeenCalled();
+    expect(screen.queryByText("No files yet")).toBeNull();
   });
 
   it("renders a failed load as a failure, never as an empty library", async () => {

@@ -71,6 +71,22 @@ describe("platform update checks", () => {
     expect(update.automaticUpdateSupported).toBe(false);
     expect(update.target).toBeNull();
   });
+
+  it("walks every tags page so a newer release off page one is still found", async () => {
+    const older = Array.from({ length: 100 }, (_, index) => ({ name: `v1.0.${index}` }));
+    const fetchImplementation = vi.fn(async (input: string | URL | Request) => {
+      const page = new URL(String(input)).searchParams.get("page");
+      if (page === "1") return new Response(JSON.stringify(older), { status: 200 });
+      if (page === "2") return new Response(JSON.stringify([{ name: "v9.5.2" }]), { status: 200 });
+      throw new Error(`unexpected tags URL ${String(input)}`);
+    });
+
+    const update = await checkForPlatformUpdate("v9.5.0", fetchImplementation);
+
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+    expect(update.latestVersion).toBe("v9.5.2");
+    expect(update.updateAvailable).toBe(true);
+  });
 });
 
 describe("resolving an approved tag to a commit", () => {
