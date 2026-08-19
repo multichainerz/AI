@@ -138,4 +138,41 @@ describe("internal inference gateway routes", () => {
     expect(forwarded.messages[1]).toEqual({ role: "assistant", content: "an answer" });
     expect(JSON.stringify(forwarded)).not.toContain("chain of thought");
   });
+
+  it("strips the served assistant fields and forwards OpenRouter's round-trip contract", async () => {
+    const { app, gateway } = await gatewayApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/internal/v1/chat/completions",
+      headers: { authorization: "Bearer runtime-key" },
+      payload: {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "describe" }, { type: "image_url", image_url: { url: "https://images.internal/a.png" } }] },
+          {
+            role: "assistant",
+            content: "declined",
+            refusal: "I cannot help with that.",
+            annotations: [{ type: "url_citation" }],
+            reasoning_details: [{ type: "reasoning.text", text: "kept for the upstream that minted it" }],
+            audio: { id: "audio_1" },
+          },
+          { role: "user", content: "try again" },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const forwarded = (gateway.chat.mock.calls.at(-1) as unknown as [unknown, { messages: Array<Record<string, unknown>> }])[1];
+    // The multimodal first message travels intact — parts are not flattened.
+    expect(forwarded.messages[0]!.content).toEqual([
+      { type: "text", text: "describe" },
+      { type: "image_url", image_url: { url: "https://images.internal/a.png" } },
+    ]);
+    // Server-generated fields are gone; the OpenRouter round-trip field stays.
+    expect(forwarded.messages[1]).toEqual({
+      role: "assistant",
+      content: "declined",
+      reasoning_details: [{ type: "reasoning.text", text: "kept for the upstream that minted it" }],
+    });
+  });
 });

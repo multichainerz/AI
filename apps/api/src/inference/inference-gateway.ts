@@ -93,9 +93,17 @@ function secureEqual(left: string, right: string): boolean {
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
-function messageText(message: InferenceGatewayChatRequest["messages"][number]): string {
-  if (typeof message.content === "string") return message.content;
-  return "";
+type GatewayMessage = InferenceGatewayChatRequest["messages"][number];
+type GatewayContentPart = Exclude<GatewayMessage["content"], string | null | undefined>[number];
+
+/**
+ * Whether one content part carries guarded text. Only `text` parts do —
+ * image, audio and file parts are opaque extensions the guardrail layer has
+ * nothing to read in — and the schema types text parts fully so the rewrite
+ * below can put a redacted string back exactly where the original sat.
+ */
+function isTextPart(part: GatewayContentPart): part is Extract<GatewayContentPart, { type: "text"; text: string }> {
+  return part.type === "text" && "text" in part && typeof part.text === "string";
 }
 
 function endpointFor(connection: ResolvedConnection): URL {
@@ -113,7 +121,14 @@ function endpointFor(connection: ResolvedConnection): URL {
   }
 }
 
-const COMPATIBILITY_HINTS = ["reasoning_effort", "stream_options"] as const;
+/*
+ * Optional request fields a compact OpenAI-compatible server may reject
+ * instead of ignoring. `max_completion_tokens` is a swap rather than a drop:
+ * the gateway forwards the modern field — OpenAI's reasoning models refuse
+ * the deprecated `max_tokens` — and a backend that rejects it gets the same
+ * cap re-sent under the old name.
+ */
+const COMPATIBILITY_HINTS = ["reasoning_effort", "stream_options", "max_completion_tokens"] as const;
 type CompatibilityHint = typeof COMPATIBILITY_HINTS[number];
 
 function inferenceBackend(connection: ResolvedConnection): InferenceBackend {
@@ -452,12 +467,7 @@ export class DrizzleInferenceGateway {
      */
     const inspected: InferenceGatewayChatRequest["messages"] = [];
     const redactions: GuardrailRuleMatch[] = [];
-    for (const message of input.messages) {
-      const text = messageText(message);
-      if (!text) {
-        inspected.push(message);
-        continue;
-      }
+    const inspectText = async (text: string) => {
       const inspection = inspectInput(text, policy, policy.rules);
       if (inspection.decision === "BLOCK") {
         // The violation name and the rule labels, never the text that carried
@@ -472,7 +482,38 @@ export class DrizzleInferenceGateway {
         throw new InferenceGatewayError("POLICY_REJECTED", `OrcaSynapse rejected the runtime request (${inspection.reason}).`);
       }
       redactions.push(...inspection.matches.filter(({ action }) => action !== "FLAG"));
-      inspected.push(inspection.text === text ? message : { ...message, content: inspection.text });
+      return inspection.text;
+    };
+    for (const message of input.messages) {
+      if (typeof message.content === "string" && message.content) {
+        const text = await inspectText(message.content);
+        inspected.push(text === message.content ? message : { ...message, content: text });
+        continue;
+      }
+      /*
+       * Content-parts form: every text part is guarded exactly as a string
+       * body is, and a redaction is written back into the part it came from.
+       * Skipping this walk would make the guardrails a string-only formality
+       * the moment a caller switches to the array form both APIs prefer.
+       */
+      if (Array.isArray(message.content)) {
+        let changed = false;
+        const parts: GatewayContentPart[] = [];
+        for (const part of message.content) {
+          if (isTextPart(part) && part.text) {
+            const text = await inspectText(part.text);
+            if (text !== part.text) {
+              changed = true;
+              parts.push({ ...part, text });
+              continue;
+            }
+          }
+          parts.push(part);
+        }
+        inspected.push(changed ? { ...message, content: parts } : message);
+        continue;
+      }
+      inspected.push(message);
     }
     const guarded: InferenceGatewayChatRequest = { ...input, messages: inspected };
     if (redactions.length > 0) {
@@ -487,7 +528,8 @@ export class DrizzleInferenceGateway {
     // decoration that only the audit trail believes in.
     const forwardedInput: Record<string, unknown> = { ...guarded };
     delete forwardedInput.max_completion_tokens;
-    forwardedInput.max_tokens = Math.min(
+    delete forwardedInput.max_tokens;
+    const outputTokenCap = Math.min(
       input.max_completion_tokens ?? input.max_tokens ?? runtime.maxOutputTokens,
       runtime.maxOutputTokens,
     );
@@ -499,8 +541,14 @@ export class DrizzleInferenceGateway {
         model: runtime.modelAlias,
         user: `hermes:${runtimeConnectionId}`,
       };
-      for (const hint of new Set([...omittedHints, ...additionalOmissions])) delete body[hint];
-      if (input.stream && !omittedHints.has("stream_options") && !additionalOmissions.has("stream_options")) {
+      const omitted = new Set([...omittedHints, ...additionalOmissions]);
+      for (const hint of omitted) delete body[hint];
+      // The cap always travels; only its spelling adapts. Modern field first —
+      // OpenAI's reasoning models refuse `max_tokens` — and the deprecated one
+      // for a backend that rejected the modern name.
+      if (omitted.has("max_completion_tokens")) body.max_tokens = outputTokenCap;
+      else body.max_completion_tokens = outputTokenCap;
+      if (input.stream && !omitted.has("stream_options")) {
         body.stream_options = { include_usage: true };
       }
       return body;

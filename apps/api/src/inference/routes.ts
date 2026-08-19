@@ -133,15 +133,22 @@ export async function registerInferenceGatewayRoutes(
       return reply.code(400).send({ error: { type: "invalid_request_error", message } });
     }
     /*
-     * Reasoning traces come back out of every history round-trip — Hermes
-     * echoes assistant messages exactly as the model returned them — and the
-     * upstreams that produce them reject them on the way back in. Accepted by
-     * the schema so the request parses, removed here so the upstream only
-     * ever receives what it accepts.
+     * Server-generated message fields come back out of every history
+     * round-trip — Hermes echoes assistant messages exactly as the model
+     * returned them — and upstreams reject most of their own output fields on
+     * the way back in. Accepted by the schema so the request parses, removed
+     * here so the upstream only ever receives what it accepts.
+     *
+     * `reasoning_details` is deliberately NOT in this list: OpenRouter asks
+     * clients to echo it to preserve reasoning across turns, and no other
+     * upstream produces it, so forwarding it can only reach the upstream
+     * that minted it.
      */
     const outbound = {
       ...parsed.data,
-      messages: parsed.data.messages.map(({ reasoning_content, reasoning, ...message }) => message),
+      messages: parsed.data.messages.map(
+        ({ reasoning_content, reasoning, refusal, annotations, audio, images, ...message }) => message,
+      ),
     };
     const abort = new AbortController();
     const abortOnDisconnect = () => { if (!reply.raw.writableEnded) abort.abort(); };

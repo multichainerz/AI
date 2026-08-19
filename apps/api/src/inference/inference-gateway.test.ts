@@ -181,9 +181,12 @@ describe("DrizzleInferenceGateway", () => {
     const options = vi.mocked(fetcher).mock.calls[0]![1]!;
     expect(JSON.parse(String(options.body))).toMatchObject({
       model: "approved-agent",
-      max_tokens: 4_096,
+      // The modern spelling: OpenAI's reasoning models refuse max_tokens, and
+      // a backend that refuses this one gets the same cap re-sent as max_tokens.
+      max_completion_tokens: 4_096,
       user: `hermes:${hermesConnectionId}`,
     });
+    expect(JSON.parse(String(options.body))).not.toHaveProperty("max_tokens");
 
     const [recorded] = await context.database
       .select({ action: auditEvent.action, metadata: auditEvent.metadata })
@@ -237,7 +240,7 @@ describe("DrizzleInferenceGateway", () => {
     });
   });
 
-  it("normalizes max_completion_tokens to the backend's bounded max_tokens field", async () => {
+  it("carries one bounded output cap under the modern field, whichever spelling arrived", async () => {
     const { gateway, fetcher } = await harness();
 
     await gateway.chat(
@@ -247,8 +250,8 @@ describe("DrizzleInferenceGateway", () => {
     );
 
     const options = vi.mocked(fetcher).mock.calls[0]![1]!;
-    expect(JSON.parse(String(options.body))).toMatchObject({ max_tokens: 2_000 });
-    expect(JSON.parse(String(options.body))).not.toHaveProperty("max_completion_tokens");
+    expect(JSON.parse(String(options.body))).toMatchObject({ max_completion_tokens: 2_000 });
+    expect(JSON.parse(String(options.body))).not.toHaveProperty("max_tokens");
   });
 
   it("removes optional request hints that llama.cpp rejects", async () => {
@@ -263,6 +266,10 @@ describe("DrizzleInferenceGateway", () => {
     const body = JSON.parse(String(vi.mocked(fetcher).mock.calls[0]![1]!.body));
     expect(body).not.toHaveProperty("reasoning_effort");
     expect(body).not.toHaveProperty("stream_options");
+    // The cap is a swap on this backend, never a drop: llama.cpp's compact
+    // surface gets the same bound under the deprecated spelling.
+    expect(body).toMatchObject({ max_tokens: 4_096 });
+    expect(body).not.toHaveProperty("max_completion_tokens");
   });
 
   it("keeps supported hints for vLLM", async () => {
@@ -298,6 +305,50 @@ describe("DrizzleInferenceGateway", () => {
     const retriedBody = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
     expect(retriedBody).not.toHaveProperty("reasoning_effort");
     expect(retriedBody).not.toHaveProperty("stream_options");
+  });
+
+  it("re-sends the cap as max_tokens when a backend rejects the modern field", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Unrecognized key: max_completion_tokens" }), { status: 400 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [] }), { status: 200 }));
+    const { gateway } = await harness(fetcher as typeof fetch, { inferenceBackend: "CUSTOM_OPENAI_COMPATIBLE" });
+
+    await gateway.chat("runtime-key", request, new AbortController().signal);
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const first = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
+    expect(first).toMatchObject({ max_completion_tokens: 4_096 });
+    const retried = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
+    expect(retried).toMatchObject({ max_tokens: 4_096 });
+    expect(retried).not.toHaveProperty("max_completion_tokens");
+  });
+
+  it("guards every text part of an array-content message, not only string bodies", async () => {
+    /*
+     * The array form is the one both APIs treat as canonical for anything
+     * multimodal. A guardrail that read only string content would become a
+     * formality the moment a caller switched forms — a credential inside a
+     * text part sailed past inspection while the same string in a plain body
+     * was refused.
+     */
+    const { gateway } = await harness();
+
+    await expect(gateway.chat(
+      "runtime-key",
+      {
+        ...request,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "-----BEGIN PRIVATE KEY-----\nsecret" },
+            { type: "image_url", image_url: { url: "https://images.internal/chart.png" } },
+          ],
+        }],
+      },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "POLICY_REJECTED" });
   });
 
   it("bounds and releases a chunked 400 instead of teeing it", async () => {
