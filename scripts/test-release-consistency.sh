@@ -75,4 +75,20 @@ remover_version="$(sed -nE 's/^INSTALLER_VERSION="([^"]+)"$/\1/p' scripts/remove
 [[ "${remover_version}" == "v${version}" ]] \
   || fail "scripts/remove-agentic-node.sh INSTALLER_VERSION is '${remover_version}', expected 'v${version}'"
 
+# --- the lockfile matches every manifest -------------------------------------
+# The Docker image builds run `pnpm install --frozen-lockfile`, so a dependency
+# removed from a package.json without regenerating pnpm-lock.yaml ships a
+# release that cannot install itself. Local development never notices: a plain
+# `pnpm install` repairs the lockfile silently, and warm node_modules never
+# re-resolve. v9.2.0 shipped exactly this -- `jose` left apps/api in the v9.0.0
+# OIDC removal and the stale lockfile surfaced eleven releases of surfaces
+# later, at "Build the pinned release" on an operator's VM. `--lockfile-only`
+# makes the check pure: it validates and writes nothing.
+if command -v pnpm >/dev/null 2>&1; then
+  pnpm install --frozen-lockfile --lockfile-only >/dev/null 2>&1 \
+    || fail "pnpm-lock.yaml is out of date with a package.json; run 'pnpm install' and commit the lockfile"
+else
+  echo "warning: pnpm is not on PATH here, so the lockfile freshness gate did not run" >&2
+fi
+
 echo "Release consistency check passed at v${version} (postgres image ${compose_image})."
