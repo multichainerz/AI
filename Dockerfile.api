@@ -38,6 +38,7 @@ COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY scripts/install-agentic-node.sh ./scripts/install-agentic-node.sh
 COPY scripts/remove-agentic-node.sh ./scripts/remove-agentic-node.sh
 COPY scripts/hermes-corpus-reconciler.py ./scripts/hermes-corpus-reconciler.py
+COPY scripts/hermes-artifact-publisher.py ./scripts/hermes-artifact-publisher.py
 
 USER node
 

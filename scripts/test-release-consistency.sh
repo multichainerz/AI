@@ -75,6 +75,21 @@ remover_version="$(sed -nE 's/^INSTALLER_VERSION="([^"]+)"$/\1/p' scripts/remove
 [[ "${remover_version}" == "v${version}" ]] \
   || fail "scripts/remove-agentic-node.sh INSTALLER_VERSION is '${remover_version}', expected 'v${version}'"
 
+# --- every script the API serves ships in its image --------------------------
+# apps/api reads these off disk at request time. Development serves them from
+# the repo tree, so a script missing from Dockerfile.api works everywhere
+# except the released container -- where the download 500s mid-enrollment on an
+# operator's VM, which is exactly how the artifact publisher shipped in v9.1.0.
+# The list is derived from the route file rather than maintained here, so a
+# fifth served script is covered the day it is added.
+served_scripts="$(sed -nE 's|.*new URL\("(\.\./)+(scripts/[^"]+)".*|\2|p' apps/api/src/runtime-nodes/routes.ts | sort -u)"
+[[ -n "${served_scripts}" ]] || fail "found no served scripts in runtime-nodes/routes.ts; update this check's pattern"
+while IFS= read -r served; do
+  [[ -f "${served}" ]] || fail "apps/api serves ${served} but the file does not exist"
+  grep -Fq "COPY ${served} ./${served}" Dockerfile.api \
+    || fail "apps/api serves ${served} but Dockerfile.api does not copy it into the image"
+done <<< "${served_scripts}"
+
 # --- the lockfile matches every manifest -------------------------------------
 # The Docker image builds run `pnpm install --frozen-lockfile`, so a dependency
 # removed from a package.json without regenerating pnpm-lock.yaml ships a
