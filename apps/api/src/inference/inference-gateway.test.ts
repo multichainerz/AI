@@ -556,4 +556,29 @@ describe("DrizzleInferenceGateway rate-limit counter", () => {
     // The prompt must never reach an origin the operator did not approve.
     expect(fetcher).not.toHaveBeenCalled();
   });
+
+  /*
+   * The authored-policy latch, on the gateway path. A drafted-but-never-
+   * activated policy used to fall back to the permissive defaults silently;
+   * authored guardrails that are not enforcing must refuse, and must do so
+   * before any prompt leaves for the model.
+   */
+  it("refuses inference when only never-activated guardrail drafts exist", async () => {
+    const { gateway, fetcher } = await harness();
+    await context.database.insert(guardrailPolicy).values({
+      slug: `policy-${randomUUID().slice(0, 8)}`,
+      displayName: "Drafted guardrails",
+      description: "Written but never activated.",
+      version: "1",
+      status: "DRAFT",
+      maxInputCharacters: 32_000,
+      maxOutputCharacters: 200_000,
+      firstActivatedAt: null,
+      rules: [],
+    });
+
+    await expect(gateway.chat("runtime-key", request, new AbortController().signal))
+      .rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });

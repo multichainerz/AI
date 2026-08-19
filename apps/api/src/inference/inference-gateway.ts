@@ -246,10 +246,11 @@ export class DrizzleInferenceGateway {
   }
 
   private async resolvePolicy(): Promise<ResolvedPolicy> {
+    // Latched on "a policy has been authored", like chat and agent runs: a
+    // catalogue of never-activated drafts must refuse, not silently default.
     const [enforced] = await this.database
       .select({ total: sql<number>`count(*)::int` })
-      .from(guardrailPolicy)
-      .where(isNotNull(guardrailPolicy.firstActivatedAt));
+      .from(guardrailPolicy);
     if ((enforced?.total ?? 0) === 0) return DEFAULT_POLICY;
 
     const active = await this.database

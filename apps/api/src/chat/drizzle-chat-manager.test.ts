@@ -403,6 +403,23 @@ describe("DrizzleChatManager message submission", () => {
       .rejects.toThrow(/Activate one guardrail policy/);
   });
 
+  /*
+   * The silent variant of the test above, and the one that used to fail open.
+   *
+   * An operator who authors a policy and its rules but never presses Activate
+   * has expressed guardrail intent; enforcing nothing while looking configured
+   * is the worst available answer. The latch counts authored policies, so this
+   * refuses with instructions rather than waving the message through -- and a
+   * genuinely fresh install (no policies at all) still chats on the defaults.
+   */
+  it("refuses chat when only never-activated drafts exist, rather than enforcing nothing", async () => {
+    await seedActiveGuardrail({ status: "DRAFT", firstActivatedAt: null });
+    const conversationId = await conversation();
+
+    await expect(manager().submitMessage(principal, conversationId, "Hello"))
+      .rejects.toThrow(/Activate one guardrail policy/);
+  });
+
   it("rate-limits a subject across its conversations", async () => {
     const conversationId = await conversation();
     // The limit is twelve user messages per minute.

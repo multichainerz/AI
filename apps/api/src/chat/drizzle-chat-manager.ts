@@ -38,7 +38,7 @@ import {
   type ChatRunWatch,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, lte, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, gt, gte, inArray, lte, ne, sql, type SQL } from "drizzle-orm";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
 import { profileVisibleTo } from "../agents/profile-visibility.js";
 import {
@@ -1612,10 +1612,19 @@ export class DrizzleChatManager implements ChatManager {
   }
 
   private async resolvePolicy(): Promise<ChatPolicy> {
+    /*
+     * The latch is "a policy has been authored", not "a policy was ever
+     * activated". It used to be the latter, and the gap between the two was a
+     * silent one: an operator who created a policy and its rules but never
+     * pressed Activate got a success toast, a configured-looking screen, and a
+     * chat that enforced nothing -- with no error anywhere saying so. Counting
+     * every row keeps a fresh install (zero policies) permissive while making
+     * an authored-but-inactive catalogue refuse with instructions instead of
+     * quietly waving everything through.
+     */
     const [enforcement] = await this.database
       .select({ total: count() })
-      .from(guardrailPolicy)
-      .where(isNotNull(guardrailPolicy.firstActivatedAt));
+      .from(guardrailPolicy);
     const catalogueEnforced = (enforcement?.total ?? 0) > 0;
     const policies = !catalogueEnforced ? [] : await this.database
       .select({

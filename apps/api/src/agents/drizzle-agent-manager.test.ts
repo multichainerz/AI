@@ -413,7 +413,7 @@ describe("DrizzleAgentManager runs", () => {
     ).rejects.toThrow(/Activate one guardrail policy/);
   });
 
-  it("falls back to the platform ceiling when no policy has ever been activated", async () => {
+  it("falls back to the platform ceiling when no policy has been authored", async () => {
     const active = await activeProfile();
     await enableRuntime();
     await enrolHealthyRuntime();
@@ -425,6 +425,22 @@ describe("DrizzleAgentManager runs", () => {
       .from(agentRun)
       .where(eq(agentRun.id, run.id));
     expect(stored?.outputCharacterLimit).toBe(200_000);
+  });
+
+  /*
+   * The gap the authored-policy latch closes. A drafted-but-never-activated
+   * policy used to leave runs on the permissive defaults with nothing anywhere
+   * saying so; authored guardrails that are not enforcing must refuse loudly.
+   */
+  it("fails closed when only never-activated drafts exist", async () => {
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    await activeGuardrailPolicy(4_096, { status: "DRAFT", firstActivatedAt: null });
+
+    await expect(
+      manager().submitRun(principal, { profileId: active.id, input: "hello" } as never),
+    ).rejects.toThrow(/Activate one guardrail policy/);
   });
 
   it("lets a caller that already resolved the policy pass its own limit", async () => {

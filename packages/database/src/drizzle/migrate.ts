@@ -203,7 +203,7 @@ async function seedDefaultConfigurationSets(pool: Pool): Promise<void> {
 const LOCAL_PEOPLE_GROUP = "orcasynapse:people";
 
 /**
- * The governed memory tools, and a grant for every profile version.
+ * The governed built-in tools, and a grant for every profile version.
  *
  * Permissive on a fresh install, deliberately. An administrator who has just
  * installed this has no basis yet for deciding which agents should remember
@@ -212,14 +212,15 @@ const LOCAL_PEOPLE_GROUP = "orcasynapse:people";
  * which is the direction that requires knowledge rather than the direction that
  * requires guessing.
  *
- * Permissive is also cheap here, because granting these two changes no
- * boundary. Both are `READ_ONLY`, neither acts on the world, and the division a
- * call reads and writes comes from the run authorization rather than the grant
- * -- so a wider grant lets more agents keep notes, never lets any agent read
- * another division's. A `CONSEQUENTIAL` tool would be a different decision, and
- * still passes through the human approval inbox at call time regardless.
+ * Permissive is also cheap here, because granting these changes no boundary.
+ * All are `READ_ONLY`, none acts on the world, and the scope a call reads and
+ * writes -- the division for memory, the conversation for attached files --
+ * comes from the run authorization rather than the grant, so a wider grant
+ * lets more agents use the feature, never lets any agent read another scope's
+ * rows. A `CONSEQUENTIAL` tool would be a different decision, and still passes
+ * through the human approval inbox at call time regardless.
  */
-const MEMORY_TOOLS = [
+const BUILT_IN_TOOLS = [
   {
     slug: "remember",
     displayName: "Remember",
@@ -241,10 +242,24 @@ const MEMORY_TOOLS = [
       properties: { query: { type: "string", description: "Words to search for. Omit for the most recent." } },
     },
   },
+  {
+    slug: "read-file",
+    displayName: "Read attached file",
+    description: "Read a file the user attached to this conversation. Text comes back in pages; a binary file reports its metadata only.",
+    handlerKey: "orcasynapse.files.read",
+    inputSchema: {
+      type: "object",
+      properties: {
+        artifactId: { type: "string", description: "The file's artifactId, as listed under ATTACHED FILES." },
+        offset: { type: "number", description: "Character position to continue a long text file from. Omit to start at the beginning." },
+      },
+      required: ["artifactId"],
+    },
+  },
 ] as const;
 
-async function seedMemoryTools(pool: Pool): Promise<void> {
-  for (const tool of MEMORY_TOOLS) {
+async function seedBuiltInTools(pool: Pool): Promise<void> {
+  for (const tool of BUILT_IN_TOOLS) {
     await pool.query(
       `INSERT INTO "GovernedTool" ("slug", "displayName", "description", "risk", "status", "handlerKey", "inputSchema", "updatedAt")
        VALUES ($1, $2, $3, 'READ_ONLY', 'ACTIVE', $4, $5::jsonb, CURRENT_TIMESTAMP)
@@ -266,12 +281,12 @@ async function seedMemoryTools(pool: Pool): Promise<void> {
             CURRENT_TIMESTAMP
        FROM "AgentProfileVersion" v
        CROSS JOIN "GovernedTool" t
-      WHERE t."handlerKey" IN ('orcasynapse.memory.remember', 'orcasynapse.memory.recall')
+      WHERE t."handlerKey" = ANY($2::text[])
         AND NOT EXISTS (
           SELECT 1 FROM "AgentToolGrant" g
            WHERE g."profileVersionId" = v."id" AND g."toolId" = t."id"
         )`,
-    [LOCAL_PEOPLE_GROUP],
+    [LOCAL_PEOPLE_GROUP, BUILT_IN_TOOLS.map((tool) => tool.handlerKey)],
   );
 }
 
@@ -328,7 +343,7 @@ export async function runMigrations(connectionString: string): Promise<void> {
     // After the profile, never before: the backfill claims every version that
     // has no set, and the seeded profile's version must be one of them.
     await seedDefaultConfigurationSets(pool);
-    await seedMemoryTools(pool);
+    await seedBuiltInTools(pool);
     await pool.query(
       `INSERT INTO "SchemaMetadata" ("id", "epoch") VALUES ('current', $1)
        ON CONFLICT ("id") DO UPDATE SET "epoch" = EXCLUDED."epoch"`,

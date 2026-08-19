@@ -66,24 +66,35 @@ describe("the default configuration sets seeded at installation", () => {
 });
 
 /*
- * A fresh install should arrive able to remember, not able to be configured to
- * remember. An administrator who has just installed this has no basis yet for
- * deciding which agents keep notes; making them configure it first means the
- * feature is off for everyone who did not already know it existed.
+ * A fresh install should arrive able to remember and to read what a person
+ * attaches, not able to be configured to. An administrator who has just
+ * installed this has no basis yet for deciding which agents get these; making
+ * them configure it first means the feature is off for everyone who did not
+ * already know it existed.
  *
- * Cheap to be permissive here because the grant is not the boundary: both tools
- * are READ_ONLY, and the division a call reads and writes comes from the run
- * authorization. A wider grant lets more agents keep notes; it never lets one
- * read another division's.
+ * Cheap to be permissive here because the grant is not the boundary: every
+ * built-in is READ_ONLY, and the scope a call reads -- the division for
+ * memory, the conversation for attached files -- comes from the run
+ * authorization. A wider grant lets more agents use the feature; it never lets
+ * one read another scope's rows.
  */
-describe("the governed memory tools seeded at installation", () => {
-  it("seeds both tools as active and read-only", async () => {
+const BUILT_IN_HANDLER_KEYS = [
+  "orcasynapse.memory.remember",
+  "orcasynapse.memory.recall",
+  "orcasynapse.files.read",
+];
+
+describe("the governed built-in tools seeded at installation", () => {
+  it("seeds every built-in as active and read-only", async () => {
     const tools = await context.database
       .select().from(governedTool)
-      .where(inArray(governedTool.handlerKey, ["orcasynapse.memory.remember", "orcasynapse.memory.recall"]));
+      .where(inArray(governedTool.handlerKey, BUILT_IN_HANDLER_KEYS));
 
-    expect(tools).toHaveLength(2);
+    expect(tools).toHaveLength(BUILT_IN_HANDLER_KEYS.length);
     expect(tools.every((tool) => tool.status === "ACTIVE" && tool.risk === "READ_ONLY")).toBe(true);
+    // The slug is the name the model calls the tool by, so it is part of the
+    // contract with the ATTACHED FILES instructions rather than a label.
+    expect(tools.map((tool) => tool.slug).sort()).toEqual(["read-file", "recall", "remember"]);
   });
 
   /*
@@ -91,14 +102,14 @@ describe("the governed memory tools seeded at installation", () => {
    * row in a table, not a capability -- `listToolsForRun` returns only granted
    * tools, so without this the agent never sees them.
    */
-  it("grants both to every profile version that exists", async () => {
+  it("grants every built-in to every profile version that exists", async () => {
     const versions = await context.database.select({ id: agentProfileVersion.id }).from(agentProfileVersion);
     const grants = await context.database
       .select({ profileVersionId: agentToolGrant.profileVersionId, allowedGroups: agentToolGrant.allowedGroups })
       .from(agentToolGrant);
 
     expect(versions.length).toBeGreaterThan(0);
-    expect(grants).toHaveLength(versions.length * 2);
+    expect(grants).toHaveLength(versions.length * BUILT_IN_HANDLER_KEYS.length);
     // Named group, not a wildcard: the matcher intersects groups, and a locally
     // created person carries exactly this one.
     expect(grants.every(({ allowedGroups }) => allowedGroups.includes("orcasynapse:people"))).toBe(true);

@@ -797,10 +797,12 @@ export class DrizzleAgentManager implements AgentManager {
    * loosened the third — the opposite of what an operator suspending a policy
    * is asking for.
    *
-   * `firstActivatedAt` is the latch, exactly as it is in `resolvePolicy` on the
-   * chat manager: before a deployment has ever activated a policy the defaults
-   * stand, and afterwards the absence of an active one is a refusal rather than
-   * a default.
+   * The latch is "a policy has been authored", exactly as it is in
+   * `resolvePolicy` on the chat manager: with no policy rows the defaults
+   * stand, and from the first authored policy onward the absence of an active
+   * one is a refusal rather than a default. It used to latch on
+   * `firstActivatedAt`, which left one silent gap: a catalogue of drafts that
+   * nobody had ever activated enforced nothing and said nothing.
    */
   private async activePolicy(): Promise<{
     maxInputCharacters: number;
@@ -811,8 +813,7 @@ export class DrizzleAgentManager implements AgentManager {
   }> {
     const [enforced] = await this.database
       .select({ total: sql<number>`count(*)::int` })
-      .from(guardrailPolicy)
-      .where(isNotNull(guardrailPolicy.firstActivatedAt));
+      .from(guardrailPolicy);
     const catalogueEnforced = (enforced?.total ?? 0) > 0;
 
     const active = !catalogueEnforced ? [] : await this.database

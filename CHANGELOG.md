@@ -5,6 +5,34 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.5.4 — 2026-08-20
+
+Lets agents read what people attach to a conversation, and stops authored
+guardrails from silently enforcing nothing.
+
+### Upgrade notes
+
+- **Drafted-but-never-activated guardrail policies now refuse traffic.** If
+  any guardrail policy exists and none is ACTIVE, chat, agent runs and the
+  inference gateway answer "Activate one guardrail policy" instead of running
+  the permissive defaults. Activate (or delete) lingering drafts after
+  upgrading. A deployment with no policies at all keeps the fresh-install
+  defaults, unchanged.
+- The `read-file` governed tool is seeded and granted to every profile
+  version on migration, like the memory tools; narrow the grants in Tooling
+  if a profile should not read conversation uploads.
+
+### Changes
+
+- announce a conversation's uploaded files to the run under ATTACHED FILES,
+  with the artifactId the new tool needs
+- add the `read-file` governed tool: conversation-scoped by the run
+  authorization, 60k-character pages with offset continuation, metadata-only
+  answers for binary files, and a workspace pointer for node-stored artifacts
+- latch guardrail enforcement on "a policy has been authored" rather than
+  "a policy was ever activated", closing the silent-permissive gap in chat,
+  agent submission and the inference gateway
+
 ## v9.5.3 — 2026-08-20
 
 Closes the defects that made Session, Access, VM2 repair and the
