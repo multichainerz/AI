@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v9.2.2"
+INSTALLER_VERSION="v9.2.3"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -1070,7 +1070,15 @@ AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=true
-ReadWritePaths=${STATE_ROOT}/data ${HERMES_HOME_DIR}
+# The artifacts subtree is where a governed run saves deliverable files -- the
+# composed instructions tell the model to write there, and the publisher ships
+# what appears. The directory's POSIX mode (2775, group ${HERMES_USER}) was
+# never the gate: ProtectSystem=strict makes the whole state root read-only to
+# this service, so without the entry here every deliverable write failed with
+# EROFS and the model fell back to its home directory, where files are lost
+# with the run. Deliberately artifacts alone and not the whole state root:
+# the runtime must not be able to rewrite its own pinned code or managed scope.
+ReadWritePaths=${STATE_ROOT}/data ${STATE_ROOT}/artifacts ${HERMES_HOME_DIR}
 ReadOnlyPaths=${HERMES_MANAGED_DIR}
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
@@ -2074,6 +2082,10 @@ repair_runtime_installation() {
   create_service_account
   install_hermes_directory 0750 "${STATE_ROOT}/data"
   install_hermes_directory 0750 "${HERMES_HOME_DIR}"
+  # The unit written below names this path in ReadWritePaths, and systemd
+  # refuses to start a unit whose ReadWritePaths entry does not exist -- a node
+  # enrolled before deliverables existed has no artifacts directory to name.
+  install -d -m 2775 -o root -g "${HERMES_USER}" "${STATE_ROOT}/artifacts"
   ensure_hermes_gateway_config_anchor
   reconcile_managed_runtime_policy
   write_hermes_runtime_unit
@@ -2199,6 +2211,10 @@ main() {
   # service account can write, so the pinned model route and the baseline
   # guardrails cannot be overridden from the runtime's own state directory.
   install_hermes_directory 0750 "${STATE_ROOT}/data"
+  # Created here, before the runtime unit that names it in ReadWritePaths, not
+  # only in the publisher step: systemd refuses to start a unit whose
+  # ReadWritePaths entry does not exist, and the publisher step runs last.
+  install -d -m 2775 -o root -g "${HERMES_USER}" "${STATE_ROOT}/artifacts"
   ensure_hermes_gateway_config_anchor
   if (( resuming )); then
     [[ -s "${STATE_ROOT}/identity/node.key" && -s "${STATE_ROOT}/identity/node.pub" ]] \
