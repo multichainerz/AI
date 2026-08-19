@@ -302,13 +302,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         <Button className="shrink-0" onClick={() => void load().catch(fail)}>Refresh</Button>
       }
     >
-      <section
-        aria-label="What agents can use"
-        className={cn(
-          "border-l-2 px-1 py-0.5",
-          summary.tone === "bad" ? "border-l-bad" : summary.tone === "warn" ? "border-l-warn" : "border-l-good",
-        )}
-      >
+      <section aria-label="What agents can use">
         <MicroLabel className="block">Right now</MicroLabel>
         <strong className={cn(
           "mt-1 block text-label font-semibold",
@@ -327,7 +321,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         * a subsystem running behind a screen that no longer mentions it.
         */}
       {mcpTools.length > 0 ? (
-        <section aria-label="OrcaSynapse-executed MCP tools" className="border-l-2 border-l-warn px-1 py-0.5">
+        <section aria-label="OrcaSynapse-executed MCP tools">
           <strong className="block text-label font-semibold text-warn">
             {mcpTools.length === 1
               ? "1 OrcaSynapse-executed MCP tool is registered."

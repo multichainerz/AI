@@ -287,10 +287,7 @@ export function GuardrailsView({
         {canManage && <Button variant="primary" onClick={startCreate}>New policy</Button>}
       </>}
     >
-      <section className={cn(
-        "flex items-center gap-4 border-l-2 px-1 py-0.5",
-        active ? "border-l-good" : activatedBefore ? "border-l-bad" : "border-l-border-strong",
-      )}>
+      <section className="flex items-center gap-4">
         <div className="min-w-0 flex-1">
           <MicroLabel className="block">Runtime boundary</MicroLabel>
           <strong className="mt-1.5 block text-label font-semibold text-text">

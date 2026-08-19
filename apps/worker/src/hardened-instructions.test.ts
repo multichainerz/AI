@@ -9,8 +9,8 @@ import { hardenedInstructions } from "./agent-processor.js";
  * paragraph twice under two headings — which reads to a model as emphasis
  * rather than as the absence it actually was.
  */
-const run = (soulMd: string, instructions = "Answer support questions from the handbook.") =>
-  ({ version: { soulMd, instructions } } as never);
+const run = (soulMd: string, instructions = "Answer support questions from the handbook.", sessionId = "session-77") =>
+  ({ version: { soulMd, instructions }, sessionId } as never);
 
 describe("hardenedInstructions", () => {
   it("does not repeat the instructions when a Profile has no soul", () => {
@@ -73,5 +73,19 @@ describe("hardenedInstructions", () => {
     expect(rendered.length).toBeGreaterThan(40);
     expect(characters).toBeLessThanOrEqual(6_000);
     expect(characters).toBeGreaterThan(5_900);
+  });
+
+  it("tells the model where a deliverable file must be saved, by session", () => {
+    // The artifact publisher watches one directory per session; a run whose
+    // model was never told the convention writes into its workspace and the
+    // file silently dies with it.
+    const text = hardenedInstructions(run("Speak plainly and cite the handbook."));
+
+    expect(text).toContain("DELIVERABLE FILES");
+    expect(text).toContain("/var/lib/orcasynapse-hermes/artifacts/session-77/");
+    // Before the boundary, after the instructions: operational context, not
+    // the final word.
+    expect(text.indexOf("DELIVERABLE FILES")).toBeGreaterThan(text.indexOf("Answer support questions"));
+    expect(text.indexOf("DELIVERABLE FILES")).toBeLessThan(text.indexOf("ORCASYNAPSE ENFORCED EXECUTION BOUNDARY"));
   });
 });

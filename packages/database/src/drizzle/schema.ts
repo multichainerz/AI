@@ -31,6 +31,7 @@ export const chatConversationStatus = pgEnum("ChatConversationStatus", ['ACTIVE'
 export const chatFeedbackRating = pgEnum("ChatFeedbackRating", ['HELPFUL', 'NOT_HELPFUL'])
 export const chatMessageRole = pgEnum("ChatMessageRole", ['USER', 'ASSISTANT'])
 export const chatMessageStatus = pgEnum("ChatMessageStatus", ['PENDING', 'COMPLETED', 'FAILED', 'CANCELLED'])
+export const chatArtifactStorage = pgEnum("ChatArtifactStorage", ['INLINE', 'NODE'])
 export const componentCompatibilityStatus = pgEnum("ComponentCompatibilityStatus", ['NOT_TESTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED'])
 export const connectionStatus = pgEnum("ConnectionStatus", ['NOT_TESTED', 'HEALTHY', 'DEGRADED', 'UNREACHABLE', 'DISABLED'])
 export const deploymentEnvironment = pgEnum("DeploymentEnvironment", ['DEVELOPMENT', 'STAGING', 'PRODUCTION'])
@@ -1504,6 +1505,91 @@ export const localUser = pgTable("LocalUser", {
 			columns: [table.userId],
 			foreignColumns: [enterpriseUser.id],
 			name: "LocalUser_userId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+/**
+ * Files an agent produced on VM2, published over the node-signed channel so a
+ * person can retrieve them after the run. Deliberately not corpus tables: the
+ * corpus mirrors desired state an operator approves onto the node; an artifact
+ * is output that already exists and needs no approval to be true.
+ *
+ * `divisionId` is stamped at ingest from the run's profile as authorized at
+ * run start -- the ScopedMemoryEntry pattern -- rather than joined through the
+ * profile at read time, so reassigning a profile to another division does not
+ * silently migrate historical output across tenants. Null is a real scope (a
+ * deployment-wide profile), matched explicitly by every reader; an upload the
+ * control plane cannot attribute to a run it authorized is refused at ingest,
+ * so null never means "unknown". Unlike scoped memory the division FK is
+ * RESTRICT, not CASCADE: memories are working state, these rows are evidence,
+ * and dropping a division must not silently take its produced documents along.
+ */
+export const chatArtifact = pgTable("ChatArtifact", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	runId: uuid().notNull(),
+	/** Null after the conversation is deleted: the evidence outlives the chat. */
+	conversationId: uuid(),
+	messageId: uuid(),
+	nodeId: uuid().notNull(),
+	divisionId: uuid(),
+	ownerSubject: varchar({ length: 200 }).notNull(),
+	/** The path's basename, bounded for display; `path` stays authoritative. */
+	name: varchar({ length: 160 }).notNull(),
+	path: varchar({ length: 1024 }).notNull(),
+	mediaType: varchar({ length: 160 }).notNull(),
+	sizeBytes: integer().notNull(),
+	sha256: varchar({ length: 64 }).notNull(),
+	storage: chatArtifactStorage().notNull(),
+	observedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("ChatArtifact_runId_path_key").using("btree", table.runId.asc().nullsLast(), table.path.asc().nullsLast()),
+	index("ChatArtifact_divisionId_createdAt_idx").using("btree", table.divisionId.asc().nullsLast(), table.createdAt.desc().nullsLast()),
+	index("ChatArtifact_conversationId_idx").using("btree", table.conversationId.asc().nullsLast()),
+	index("ChatArtifact_ownerSubject_createdAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.createdAt.desc().nullsLast()),
+	foreignKey({
+			columns: [table.runId],
+			foreignColumns: [agentRun.id],
+			name: "ChatArtifact_runId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.conversationId],
+			foreignColumns: [chatConversation.id],
+			name: "ChatArtifact_conversationId_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
+	foreignKey({
+			columns: [table.messageId],
+			foreignColumns: [chatMessage.id],
+			name: "ChatArtifact_messageId_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
+	foreignKey({
+			columns: [table.nodeId],
+			foreignColumns: [hermesRuntimeNode.id],
+			name: "ChatArtifact_nodeId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.divisionId],
+			foreignColumns: [division.id],
+			name: "ChatArtifact_divisionId_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
+]);
+
+/**
+ * The bytes, apart from the metadata on purpose: listing artifacts must never
+ * touch blob storage, and `pg_dump --exclude-table` stays available if inline
+ * retention ever outgrows this database. Only rows whose artifact says
+ * `storage: 'INLINE'` exist here, and only at or under the 4 MiB inline limit
+ * the ingest enforces.
+ */
+export const chatArtifactContent = pgTable("ChatArtifactContent", {
+	artifactId: uuid().primaryKey().notNull(),
+	bytes: bytea("bytes").notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.artifactId],
+			foreignColumns: [chatArtifact.id],
+			name: "ChatArtifactContent_artifactId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 

@@ -3,17 +3,17 @@
  *
  * The conversation rail with more than one conversation in it, which nothing
  * covered: `chat-view.test.tsx` renders a single-item list, so every rule the
- * rail actually has -- date grouping, the title/time line, the preview line,
- * the archived label standing in for a timestamp -- was asserted by nothing.
+ * rail actually has -- date grouping, the title/time line, the archived label
+ * standing in for a timestamp -- was asserted by nothing.
  *
  * It doubles as the way to *look* at a populated rail without a signed-in
  * session, which is what a density change needs and a diff cannot give. Set
  * `RAIL_PREVIEW_OUT` to a path and this writes the rendered markup there; pair
  * it with the stylesheet from `pnpm --filter @orcasynapse/web build` and serve
  * it from `apps/web/public`. The fixture is deliberately shaped like a real
- * operator's rail -- long titles in a non-English language, previews that
- * overrun -- because a rail of short English titles never truncates and so
- * never shows the problem being fixed.
+ * operator's rail -- long titles in a non-English language, one thread whose
+ * last turn failed -- because a rail of short English titles never truncates
+ * and so never shows the problem being fixed.
  */
 import type { AgentProfile, ChatConversation } from "@orcasynapse/contracts";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
@@ -52,7 +52,10 @@ const conversations = [
   row(1, "buatin lagu indonesia raya karaoke", "Saya tidak dapat menerjemahkan atau mengarang ulang lirik lagu kebangsaan."),
   row(2, "buat md3 untuk kata kata \"halo dunia\"", "Berikut adalah beberapa teks Lorem Ipsum yang bisa kamu pakai."),
   row(3, "buatin tulisan ASCII ORCA", "Berikut adalah versi ikan orca yang sedang \"joget\" dalam ASCII."),
-  row(4, "install MCP ini https://github.com/example/server", "Saya tidak memiliki kemampuan untuk mengelola konfigurasi MCP."),
+  // A failed turn, whose preview is the runtime's error rather than an answer.
+  // The rail must not put this in front of a reader looking for a thread.
+  row(4, "install MCP ini https://github.com/example/server",
+    "API call failed after 3 retries: HTTP 530 — Cloudflare Tunnel error | idle-backup-vessel-racing.trycloudflare.com — Ray a2c892df886e3673-FRA"),
   row(5, "kamu bisa koneksi dengan Facebook?", "Saya tidak bisa terhubung langsung ke Facebook."),
   row(6, "Buatin postingan facebook untuk promo", "**Judul: Selamat Datang di Indonesia: Negara Kepulauan Terbesar**"),
   row(7, "buatkan press release kerjasama", "Berikut adalah versi press release dengan nada yang lebih formal."),
@@ -133,17 +136,33 @@ describe("conversation rail", () => {
     }
   });
 
-  it("gives each row a title, a preview and a time that are separately readable", async () => {
+  it("gives each row a title and a time that are separately readable", async () => {
     const rail = await renderRail();
     const first = within(rail).getAllByRole("button")[0]!;
 
-    // Three distinct strings, not one run-on label: whatever the CSS does to
-    // them, a row must never merge its preview into its title.
+    // Two distinct strings, not one run-on label: whatever the CSS does to
+    // them, a row must never merge its timestamp into its title.
     expect(within(first).getByText("saya mau buat game simulasi nuklir")).toBeTruthy();
-    expect(within(first).getByText("Baik, saya sudah mencatat bahwa kamu tinggal di Jakarta.")).toBeTruthy();
     // Loose on format because the time is locale-rendered ("20:09" or
     // "08:09 PM" depending on the runner) and strict on there being one.
     expect(within(first).getByText(/\d{1,2}:\d{2}/)).toBeTruthy();
+  });
+
+  it("clamps each date group's column so a long title cannot widen the rail", async () => {
+    /*
+     * A class assertion because jsdom has no layout engine and so cannot see
+     * the failure this pins: with a bare `grid`, the implicit column is `auto`,
+     * which sizes to max-content -- and the Button base sets `whitespace-nowrap`,
+     * so max-content is the longest title in the group with no wrapping. The
+     * column outgrew the rail, every timestamp rode off the right edge, and the
+     * titles clipped without an ellipsis. Rendered, it read as a rail that had
+     * simply lost its timestamps.
+     */
+    const rail = await renderRail();
+    const groups = [...rail.querySelectorAll("section")];
+
+    expect(groups.length).toBeGreaterThan(0);
+    for (const group of groups) expect(group.className).toContain("grid-cols-[minmax(0,1fr)]");
   });
 
   it("labels an archived conversation instead of timing it", async () => {
@@ -154,10 +173,17 @@ describe("conversation rail", () => {
     expect(within(archived).queryByText(/\d{1,2}:\d{2}/)).toBeNull();
   });
 
-  it("falls back to the agent name when a conversation has no preview", async () => {
+  it("keeps the last message out of the rail entirely", async () => {
+    // The rail names threads; it does not quote them. A preview is the
+    // assistant's reply, and when the turn failed it is the runtime's error --
+    // so the row that used to read like a tunnel outage now reads like the
+    // thing the operator actually asked for.
     const rail = await renderRail();
-    const empty = within(rail).getByRole("button", { name: /rangkuman insiden/ });
+    const failed = within(rail).getByRole("button", { name: /install MCP ini/ });
 
-    expect(within(empty).getByText("Administrator")).toBeTruthy();
+    expect(failed.textContent).not.toMatch(/Cloudflare|HTTP 530|Ray /);
+    expect(within(rail).queryByText(/Baik, saya sudah mencatat/)).toBeNull();
+    // Still searchable, just not on display.
+    expect(conversations[4]!.lastMessagePreview).toMatch(/Cloudflare/);
   });
 });

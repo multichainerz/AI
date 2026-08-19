@@ -51,6 +51,8 @@ import { DrizzleOnboardingManager } from "./onboarding/drizzle-onboarding-manage
 import type { HermesRuntimeNodeManager } from "./runtime-nodes/runtime-node-manager.js";
 import { DrizzleHermesRuntimeNodeManager } from "./runtime-nodes/drizzle-runtime-node-manager.js";
 import { DrizzleInferenceGateway } from "./inference/inference-gateway.js";
+import type { ChatArtifactManager } from "./artifacts/artifact-manager.js";
+import { DrizzleChatArtifactManager } from "./artifacts/drizzle-artifact-manager.js";
 import type { HermesCorpusManager } from "./corpus/corpus-manager.js";
 import { DrizzleHermesCorpusManager } from "./corpus/drizzle-corpus-manager.js";
 import type { PlatformReleaseTargetManager } from "./updates/release-target-manager.js";
@@ -86,6 +88,7 @@ export interface RuntimeServices {
   onboardingManager?: OnboardingManager;
   runtimeNodeManager?: HermesRuntimeNodeManager;
   corpusManager?: HermesCorpusManager;
+  artifactManager?: ChatArtifactManager;
   releaseTargetManager?: PlatformReleaseTargetManager;
   inferenceGateway?: DrizzleInferenceGateway;
   database?: OrcaSynapseDatabase;
@@ -184,6 +187,7 @@ export function createRuntimeServices(): RuntimeServices {
     // operator admitting each one by hand.
     const runtimeNodeManager = new DrizzleHermesRuntimeNodeManager(database, encryption, connectionTestService);
     const corpusManager = new DrizzleHermesCorpusManager(database, runtimeNodeManager);
+    const artifactManager = new DrizzleChatArtifactManager(database, runtimeNodeManager);
     const releaseTargetManager = new DrizzlePlatformReleaseTargetManager(database);
     const inferenceGateway = new DrizzleInferenceGateway(database, connectionManager);
     return {
@@ -220,6 +224,7 @@ export function createRuntimeServices(): RuntimeServices {
       onboardingManager,
       runtimeNodeManager,
       corpusManager,
+      artifactManager,
       releaseTargetManager,
       inferenceGateway,
     };

@@ -1,6 +1,7 @@
 export * from "./admin.js";
 export * from "./ai-ops.js";
 export * from "./agents.js";
+export * from "./artifacts.js";
 export * from "./chat.js";
 export * from "./configuration-sets.js";
 export * from "./connections.js";

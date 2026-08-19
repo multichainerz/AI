@@ -261,7 +261,7 @@ export function ModelsView({
         {canManage && <Button variant="primary" onClick={startCreate}>New model route</Button>}
       </>}
     >
-      <section className="flex items-center gap-4 border-l-2 border-l-accent px-1 py-0.5">
+      <section className="flex items-center gap-4">
         <div className="min-w-0 flex-1">
           <MicroLabel className="block">Control boundary</MicroLabel>
           <strong className="mt-1.5 block text-label font-semibold text-text">

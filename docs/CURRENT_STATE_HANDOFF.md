@@ -90,6 +90,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 | `scripts/install-orcasynapse.sh` | VM1 installer |
 | `scripts/install-agentic-node.sh` | VM2 Hermes installer/enroller/repair path |
 | `scripts/hermes-corpus-reconciler.py` | Signed, allowlisted VM2 corpus observation and native mutation adapter |
+| `scripts/hermes-artifact-publisher.py` | Signed VM2 run-artifact publisher: watches `artifacts/<sessionId>/`, inlines files ≤4 MiB, tombstones vanished node-only files |
 
 ## Invariants
 

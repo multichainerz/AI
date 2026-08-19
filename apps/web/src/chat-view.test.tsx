@@ -111,7 +111,18 @@ describe("chat composer", () => {
      * passing on the next two runs.
      */
     expect(await within(runtime).findByRole("button", { name: "Skills" })).toBeTruthy();
-    expect(await within(runtime).findByRole("button", { name: "More conversation actions" })).toBeTruthy();
+    /*
+     * The conversation menu is deliberately not in here. This cluster is the
+     * runtime -- which agent, whether it is ready, what it can use -- and
+     * Rename/Fork/Export/Archive/Delete act on the conversation, so the control
+     * that opens them sits with the conversation's title instead.
+     */
+    expect(within(runtime).queryByRole("button", { name: "More conversation actions" })).toBeNull();
+    const more = await screen.findByRole("button", { name: "More conversation actions" });
+    expect(more.closest("header")).toBe(header);
+    // Beside the title, not merely somewhere in the same header: the menu's
+    // positioning wrapper is the title element's next sibling.
+    expect(more.parentElement?.previousElementSibling?.textContent).toBe("Runbook questions");
   });
 
   it("identifies the agent picker and turns missing setup into an action", async () => {

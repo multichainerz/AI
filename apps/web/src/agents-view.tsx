@@ -474,7 +474,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         {/* "Profiles can be drafted now" is a claim about the reader, so it is
             addressed to the role that can actually draft one. */}
         {canManage && activationReady === false ? (
-          <section className="flex items-center gap-4 border-l-2 border-l-warn px-1 py-0.5" role="status">
+          <section className="flex items-center gap-4" role="status">
             <div className="min-w-0 flex-1">
               <strong className="block text-label font-semibold text-text">Profiles can be drafted now</strong>
               <span className="mt-1 block text-caption text-muted">

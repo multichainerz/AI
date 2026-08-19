@@ -43,6 +43,9 @@ describe("workspace navigation", () => {
     expect(primaryNavigationGroups.flatMap((group) => group.items).map((item) => item.area)).toEqual([
       "Dashboard",
       "Session",
+      // Directly after Session: Files is what conversing produces, so it
+      // lives in the "use the product" group, not among the governance areas.
+      "Files",
       "Agents",
       "Gateway",
       "Operations",
@@ -51,6 +54,7 @@ describe("workspace navigation", () => {
     expect(primaryNavigationItems("top").map((item) => item.area)).toEqual([
       "Dashboard",
       "Session",
+      "Files",
       "Agents",
       "Gateway",
       "Operations",
@@ -88,6 +92,7 @@ describe("workspace navigation", () => {
     expect(described).toEqual({
       Dashboard: "Activity, readiness and next actions",
       Session: "Governed conversations",
+      Files: "Documents your agents produced",
       Agents: "Profiles and runs, skills, memory and tools",
       Gateway: "Models, guardrails and usage for the governed inference path",
       Operations: "Health, incidents and the audit trail",

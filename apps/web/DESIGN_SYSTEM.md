@@ -19,6 +19,15 @@ and complex OrcaSynapse surfaces remain deliberately product-specific.
 
 All non-circular surfaces resolve to `--radius-component` (`0`). `rounded-full` is reserved for true circles such as avatars, status dots, and switch thumbs.
 
+Status is carried by words — a badge, a labelled fact, or the sentence itself —
+and colour only reinforces text that already says the same thing. The 2px left
+tone stripe (`border-l-2` with `border-l-good|warn|bad|accent`, usually over
+`px-1 py-0.5`) that opened seven route views has been removed and should not
+come back: every one of those banners already stated its state in prose, so the
+stripe was a second vocabulary for a fact the reader had just read, and on a
+resolved incident the two disagreed. The blockquote rule in `styles.css` stays —
+a left rule on quoted text is typography, not a status signal.
+
 ## Security and accessibility
 
 - Production keeps `style-src 'self'`; components must not inject stylesheets or JSX `style` attributes.

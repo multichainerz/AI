@@ -25,6 +25,7 @@ import {
   ChevronDown,
   LayoutDashboard,
   LogOut,
+  FolderDown,
   MessageSquareText,
   PanelLeftClose,
   PanelLeftOpen,
@@ -89,6 +90,7 @@ import {
 
 const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
 const ChatView = lazy(() => import("./chat-view.js").then((module) => ({ default: module.ChatView })));
+const FilesView = lazy(() => import("./files-view.js").then((module) => ({ default: module.FilesView })));
 const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ default: module.AgentsView })));
 /*
  * Skills and Memory are one module rendered at two scopes rather than two
@@ -129,6 +131,7 @@ function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
     overview: <LayoutDashboard size={20} strokeWidth={1.8} />,
     chat: <MessageSquareText size={20} strokeWidth={1.8} />,
+    files: <FolderDown size={20} strokeWidth={1.8} />,
     agents: <Bot size={20} strokeWidth={1.8} />,
     settings: <Settings size={20} strokeWidth={1.8} />,
     gateway: <Waypoints size={20} strokeWidth={1.8} />,
@@ -1441,6 +1444,9 @@ function App() {
               onOpenPlatform={() => selectView("Deployment")}
               onSessionExpired={forgetAnySession}
             />
+          ),
+          Files: () => (
+            <FilesView onSessionExpired={forgetAnySession} />
           ),
           Models: () => (
             <ModelsView

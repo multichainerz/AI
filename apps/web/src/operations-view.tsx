@@ -448,8 +448,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           order an operator needs it in: how bad and who saw it, what happened,
           the facts, then what can be done about it.
         */}
-        <div className="grid gap-3">{incidents.map((item) => <article className={cn("grid gap-3.5 rounded-card border border-l-2 border-border bg-surface p-5 shadow-card",
-            item.status === "RESOLVED" ? "border-l-good" : item.severity === "CRITICAL" ? "border-l-bad" : "border-l-warn")} key={item.id}>
+        <div className="grid gap-3">{incidents.map((item) => <article className="grid gap-3.5 rounded-card border border-border bg-surface p-5 shadow-card" key={item.id}>
           <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <Badge variant={item.severity === "CRITICAL" ? "destructive" : "warning"}>{humanLabel(item.severity)}</Badge>
             <StatusText>{item.automated ? "Automatic observation" : "Operator raised"}</StatusText>
@@ -480,7 +479,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           </dl>
           {/* `resolutionNote` is written by acknowledge as well as resolve, so
               it is the operator's note rather than the resolution's. */}
-          {item.resolutionNote && <blockquote className="m-0 rounded border border-l-2 border-border border-l-accent bg-raised p-3">
+          {item.resolutionNote && <blockquote className="m-0 rounded border border-border bg-raised p-3">
             <MicroLabel className="block">Operator note</MicroLabel>
             <span className="mt-1 block text-body leading-relaxed text-muted">{item.resolutionNote}</span>
           </blockquote>}

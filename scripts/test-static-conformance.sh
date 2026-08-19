@@ -73,7 +73,7 @@ declared_lf() {
   while IFS= read -r path; do
     git check-attr eol -- "${path}" | grep -qx "${path}: eol: lf" \
       || { echo "${path} is not declared eol=lf in .gitattributes" >&2; problems=$((problems + 1)); }
-  done < <(git ls-files '*.sh'; echo scripts/hermes-corpus-reconciler.py)
+  done < <(git ls-files '*.sh'; echo scripts/hermes-corpus-reconciler.py; echo scripts/hermes-artifact-publisher.py)
   [[ "${problems}" -eq 0 ]]
 }
 gate "shell scripts are declared LF" declared_lf

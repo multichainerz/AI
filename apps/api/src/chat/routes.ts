@@ -50,10 +50,12 @@ export interface ChatRouteOptions {
   manager?: ChatManager;
 }
 
-async function requireChatPrincipal(
+export async function requireChatPrincipal(
   request: FastifyRequest,
   reply: FastifyReply,
-  options: ChatRouteOptions,
+  // Only the two session managers: typed as the subset it reads so surfaces
+  // with their own manager type (artifacts) can authenticate identically.
+  options: Pick<ChatRouteOptions, "sessionManager" | "identityManager">,
 ): Promise<ChatPrincipal | null> {
   const administrator = await authenticateAdministrator(request, reply, options.sessionManager);
   // Refused before the scope test, not after: a pending password change must

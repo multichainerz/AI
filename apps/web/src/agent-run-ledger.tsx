@@ -98,13 +98,7 @@ export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, canC
   ];
 
   return (
-    <section
-      aria-label="Hermes execution boundary"
-      className={cn(
-        "grid shrink-0 gap-3 border-l-2 px-1 py-0.5",
-        enabled ? "border-l-good" : "border-l-border-strong",
-      )}
-    >
+    <section aria-label="Hermes execution boundary" className="grid shrink-0 gap-3">
       <div className="flex items-center justify-between gap-6">
         <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
           {/* ON/OFF is stated as a word rather than a colour alone, because this
@@ -437,18 +431,34 @@ export function RunDetail({ run, events, busy, canCancel, onCancel }: RunDetailP
               </div>
             </li>;
           })}</ol>}
-        {/* The list is bounded on purpose, and says so: an operator reading it
-            should not assume the omissions are absences. */}
+        {/*
+          * This claimed that tool arguments and tool results were "never
+          * retained here". Arguments are: Hermes reports the call it is about
+          * to make on the TOOL_STARTED event, the projection stores that string
+          * in `preview` and `summary`, and `eventDetail` above prints it. On a
+          * live run every TOOL_STARTED carried one, and for `execute_code` the
+          * string is the Python being executed -- so this footer was denying a
+          * guarantee-shaped thing directly underneath the evidence against it.
+          *
+          * Replaced with what is true, including the part an operator can act
+          * on: nothing between Hermes and this table strips a secret that a run
+          * writes into its own code. Results and reasoning are conditional --
+          * the projection retains `result` and `reasoning` when the runtime
+          * sends them, and this deployment's runtime currently sends neither --
+          * so they are stated as a capability, not as a promise either way.
+          * The bounded-list note is kept; it was the one accurate half.
+          */}
         <footer className="border-t border-border bg-bg px-3 py-2 text-micro leading-relaxed text-faint">
-          Token deltas, chain-of-thought, hidden prompts, credentials, tool arguments, and tool results are never
-          retained here.
+          Hermes reports each call before it runs, and that text is retained and shown here — for executed code it is
+          the source itself. Nothing strips a credential a run writes into its own code. Tool results and reasoning are
+          retained when the runtime sends them. This list is bounded, so an omission is not an absence.
         </footer>
       </section>
       {[
-        { label: "Input", body: run.input, tone: "" },
-        ...(run.output ? [{ label: "Hermes output", body: run.output, tone: "border-l-2 border-l-accent" }] : []),
+        { label: "Input", body: run.input },
+        ...(run.output ? [{ label: "Hermes output", body: run.output }] : []),
       ].map((block) => (
-        <Tile className={block.tone} key={block.label}>
+        <Tile key={block.label}>
           <MicroLabel className="block">{block.label}</MicroLabel>
           <p className="mb-0 mt-1.5 whitespace-pre-wrap break-words text-body leading-relaxed text-text">{block.body}</p>
         </Tile>

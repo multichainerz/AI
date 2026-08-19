@@ -1,4 +1,6 @@
 import {
+  chatArtifactListSchema,
+  type ChatArtifactList,
   auditEventListSchema,
   usageReportSchema,
   type UsageReport,
@@ -486,6 +488,23 @@ export async function rollbackConfiguration(
     },
   );
   return rollbackConfigurationResultSchema.parse(await parsedResponse(response));
+}
+
+export async function getChatArtifacts(filter: { conversationId?: string } = {}): Promise<ChatArtifactList> {
+  const query = filter.conversationId ? `?conversationId=${encodeURIComponent(filter.conversationId)}` : "";
+  const response = await fetch(`/api/v1/chat/artifacts${query}`, {
+    credentials: "same-origin",
+  });
+  return chatArtifactListSchema.parse(await parsedResponse(response));
+}
+
+/**
+ * The download is a navigation, not a fetch: the route answers with
+ * Content-Disposition attachment and forced octet-stream, so handing the URL
+ * to an anchor is what makes the browser save instead of render.
+ */
+export function chatArtifactContentUrl(artifactId: string): string {
+  return `/api/v1/chat/artifacts/${encodeURIComponent(artifactId)}/content`;
 }
 
 export async function getChatConversations(): Promise<ChatConversationList> {

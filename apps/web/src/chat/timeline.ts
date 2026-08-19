@@ -111,24 +111,67 @@ export function groupConsecutiveTimelineEntries<E extends TimelineEvent>(
  * did not send one, and a failure is named because a reader who sees a
  * one-line summary must not have to open it to find out something broke.
  */
+export interface TimelineSummaryPart {
+  key: string;
+  /** The figure. Callers set it in tabular mono; the noun stays in prose. */
+  value: string;
+  /** What the figure counts, or null where the value says so itself. */
+  noun: string | null;
+  /** The one part of this line that should not be grey. */
+  failed?: boolean;
+}
+
+/**
+ * The closing line, as parts rather than a sentence.
+ *
+ * It used to return one joined string, which forced every figure and every noun
+ * to share a single style -- so a failure count read exactly as quietly as a
+ * duration, and the numbers could not be set in the tabular mono every other
+ * figure in this app uses. Splitting it lets the reader's eye land on the digits
+ * and lets a failure be the one thing here with colour.
+ */
+export function timelineSummaryParts(
+  entries: readonly TimelineEntry[],
+  latencyMs: number | null,
+): TimelineSummaryPart[] {
+  const count = (kind: TimelineKind) => entries.filter((entry) => entry.kind === kind).length;
+  const noun = (n: number, word: string) => `${word}${n === 1 ? "" : "s"}`;
+  const failed = entries.filter((entry) => entry.status === "failed").length;
+
+  const parts: TimelineSummaryPart[] = [];
+  /*
+   * "Worked for" is gone. Under an answer, after a list of what ran, a bare
+   * duration is not ambiguous -- the verb was doing no work the position was
+   * not already doing, and it made the line read as a sentence competing with
+   * the answer above rather than as the metadata it is.
+   */
+  if (latencyMs !== null) {
+    parts.push({ key: "duration", value: `${(latencyMs / 1_000).toFixed(1)} s`, noun: null });
+  }
+  if (count("tool") > 0) {
+    parts.push({ key: "tools", value: String(count("tool")), noun: noun(count("tool"), "tool") });
+  }
+  if (count("subagent") > 0) {
+    parts.push({ key: "subagents", value: String(count("subagent")), noun: noun(count("subagent"), "subagent") });
+  }
+  if (failed > 0) parts.push({ key: "failed", value: String(failed), noun: "failed", failed: true });
+
+  // Reasoning and lifecycle entries have no noun worth printing, but a turn
+  // made only of them still happened.
+  if (parts.length === 0) {
+    return [{ key: "steps", value: String(entries.length), noun: noun(entries.length, "step") }];
+  }
+  return parts;
+}
+
+/** The same summary as one string, for accessible names and assertions. */
 export function summariseTimeline(
   entries: readonly TimelineEntry[],
   latencyMs: number | null,
 ): string {
-  const count = (kind: TimelineKind) => entries.filter((entry) => entry.kind === kind).length;
-  const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-  const failed = entries.filter((entry) => entry.status === "failed").length;
-
-  const parts: string[] = [];
-  if (latencyMs !== null) parts.push(`Worked for ${(latencyMs / 1_000).toFixed(1)} s`);
-  if (count("tool") > 0) parts.push(plural(count("tool"), "tool"));
-  if (count("subagent") > 0) parts.push(plural(count("subagent"), "subagent"));
-  if (failed > 0) parts.push(`${failed} failed`);
-
-  // Reasoning and lifecycle entries have no noun worth printing, but a turn
-  // made only of them still happened.
-  if (parts.length === 0) return plural(entries.length, "step");
-  return parts.join(" · ");
+  return timelineSummaryParts(entries, latencyMs)
+    .map((part) => (part.noun ? `${part.value} ${part.noun}` : part.value))
+    .join(" · ");
 }
 
 function kindOf(type: string): TimelineKind {

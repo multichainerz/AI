@@ -22,6 +22,7 @@ export type ActiveView =
   | "Deployment"
   | "Application"
   | "Chat"
+  | "Files"
   | "Models"
   | "Usage"
   | "Agents"
@@ -38,7 +39,7 @@ export type ActiveView =
  * internal routing names and deliberately did not follow: renaming those would
  * churn every view module, test fixture and CSS class for no reader's benefit.
  */
-export type ProductArea = "Dashboard" | "Session" | "Agents" | "Gateway" | "Settings" | "Operations";
+export type ProductArea = "Dashboard" | "Session" | "Files" | "Agents" | "Gateway" | "Settings" | "Operations";
 
 export interface PrimaryNavigationItem {
   area: ProductArea;
@@ -72,6 +73,13 @@ export const primaryNavigationGroups: ReadonlyArray<{
     items: [
       { area: "Dashboard", icon: "overview", target: "Overview", description: "Activity, readiness and next actions" },
       { area: "Session", icon: "chat", target: "Chat", description: "Governed conversations" },
+      /*
+       * Directly after Session, because the first group is "use the product"
+       * -- see activity, converse, run agents -- and Files is what conversing
+       * produces. Putting agent output down among the governance areas would
+       * file the deliverable under the machinery that made it.
+       */
+      { area: "Files", icon: "files", target: "Files", description: "Documents your agents produced" },
       { area: "Agents", icon: "agents", target: "Agents", description: "Profiles and runs, skills, memory and tools" },
     ],
   },
@@ -210,6 +218,7 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
 const areaByView: Record<ActiveView, ProductArea> = {
   Overview: "Dashboard",
   Chat: "Session",
+  Files: "Files",
   Agents: "Agents",
   Skills: "Agents",
   Memory: "Agents",
@@ -227,6 +236,7 @@ const areaByView: Record<ActiveView, ProductArea> = {
 const pathByView: Record<ActiveView, string> = {
   Overview: "#dashboard",
   Chat: "#session",
+  Files: "#files",
   Agents: "#agents/profiles",
   Skills: "#agents/skills",
   Memory: "#agents/memory",
@@ -294,6 +304,8 @@ export function viewFromHash(hash: string): ActiveView {
     case "#session":
     case "#chat":
       return "Chat";
+    case "#files":
+      return "Files";
     case "#operations/audit":
     case "#audit":
       return "Audit";

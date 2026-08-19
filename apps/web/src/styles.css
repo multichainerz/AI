@@ -1301,6 +1301,28 @@ strong, output, time, td, th { font-variant-numeric: tabular-nums; }
   0% { transform: translateX(-140%); }
   55%, 100% { transform: translateX(360%); }
 }
+/*
+ * Truncation that trails off instead of stopping at an ellipsis.
+ *
+ * These lines carry what a tool was called with, and for `execute_code` that is
+ * source: it does not end at a word boundary, so an ellipsis claims a sentence
+ * finished where the cut is in fact arbitrary. A fade says "this continues"
+ * without asserting where.
+ *
+ * It is also the only way to quiet this text that does not cost contrast. The
+ * readable head of the line keeps full ink; only the tail that was already
+ * being discarded loses any. Fading the whole line instead -- the obvious
+ * reading of "make it transparent" -- puts a 10px line at 2.90:1 against this
+ * background, under the 4.5:1 floor, and every weaker alpha fails too.
+ */
+.text-trail {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+}
+
 .anim-live { animation: live-pulse 2s ease-in-out infinite; }
 .anim-shine { animation: ask-shine 5.4s ease-in-out infinite; }
 

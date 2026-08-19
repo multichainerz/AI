@@ -370,14 +370,23 @@ describe("agents", () => {
   });
 
   it("opens a run's bounded activity timeline without leaving the screen", async () => {
-    // A bounded list read as a complete one would make absent tool arguments
-    // look like tool calls that never happened.
+    /*
+     * This asserted the footer's old claim that tool arguments are "never
+     * retained here", and the premise was false: the projection stores what
+     * Hermes reports a call with, and this timeline prints it -- for executed
+     * code, the source. A test pinning that sentence made the screen's most
+     * load-bearing false statement the one thing guaranteed not to change, so
+     * what is pinned now is the disclosure that replaced it.
+     */
     setupApi();
     const user = userEvent.setup();
     await view();
     await user.click(within(ledger()).getByText("What should we check before promoting?"));
     const timeline = await screen.findByLabelText("Safe Hermes activity timeline");
-    expect(within(timeline).getByText(/never retained here/)).toBeTruthy();
+
+    expect(within(timeline).getByText(/an omission is not an absence/)).toBeTruthy();
+    expect(within(timeline).getByText(/Nothing strips a credential/)).toBeTruthy();
+    expect(within(timeline).queryByText(/never retained here/)).toBeNull();
   });
 
   it("tells each Profile row how much recent work it produced", async () => {

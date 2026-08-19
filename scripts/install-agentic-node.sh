@@ -3,13 +3,14 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v9.0.0"
+INSTALLER_VERSION="v9.1.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 CORPUS_SERVICE="orcasynapse-hermes-corpus"
+ARTIFACT_SERVICE="orcasynapse-hermes-artifacts"
 # The handle for all four. Not a fifth job -- a target owns no process; it
 # exists so an operator has one thing to start, stop and read the state of.
 NODE_TARGET="orcasynapse-hermes-node"
@@ -1108,6 +1109,7 @@ Wants=${RUNTIME_SERVICE}.service
 Wants=${HEARTBEAT_SERVICE}.timer
 Wants=${DESIRED_STATE_SERVICE}.timer
 Wants=${CORPUS_SERVICE}.timer
+Wants=${ARTIFACT_SERVICE}.timer
 After=${RUNTIME_SERVICE}.service
 # Proof of ownership for the decommissioner, the same marker the runtime unit
 # carries -- this file is removed by name rather than by the
@@ -1958,6 +1960,82 @@ EOF
   systemctl enable --now "${CORPUS_SERVICE}.timer" >/dev/null
 }
 
+write_artifact_publisher() {
+  local control_plane_url="$1" staged
+  install -d -m 0755 /usr/local/lib/orcasynapse
+  # The conventional artifact root the publisher watches: one directory per
+  # Hermes session, deliverable files beneath it. Group-writable so the Hermes
+  # service account can create session directories while root owns the root.
+  install -d -m 2775 -o root -g "${HERMES_USER}" "${STATE_ROOT}/artifacts"
+  staged="$(mktemp /tmp/orcasynapse-artifact-publisher.XXXXXX)"
+  ui_register_temp_file "${staged}"
+  download_with_progress "Download the governed Hermes artifact publisher" \
+    "${control_plane_url%/}/install/hermes-artifact-publisher.py" "${staged}" \
+    || fail "could not download the Hermes artifact publisher from OrcaSynapse"
+  # Same integrity check, same non-authentication caveat, as the corpus
+  # reconciler download above.
+  local expected_digest actual_digest
+  expected_digest="$(curl --fail --silent --show-error --max-time 30 \
+    "${control_plane_url%/}/install/hermes-artifact-publisher.py.sha256" 2>/dev/null | tr -d '[:space:]')" || expected_digest=""
+  actual_digest="$(sha256sum "${staged}" | cut -d' ' -f1)"
+  if [[ -n "${expected_digest}" ]]; then
+    [[ "${expected_digest}" == "${actual_digest}" ]] \
+      || fail "the downloaded Hermes artifact publisher does not match the digest OrcaSynapse published (expected ${expected_digest}, got ${actual_digest})"
+  else
+    warning "This control plane publishes no digest for the artifact publisher; falling back to a format check."
+    grep -Fq 'orcasynapse-hermes-artifacts/v1' "${staged}" \
+      || fail "the downloaded Hermes artifact publisher is not a recognized OrcaSynapse artifact"
+  fi
+  install -m 0755 -o root -g root "${staged}" /usr/local/lib/orcasynapse/hermes-artifact-publisher.py
+
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${ARTIFACT_SERVICE}.service" <<EOF
+[Unit]
+Description=Publish Hermes run artifacts to OrcaSynapse
+After=network-online.target orcasynapse-hermes.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
+ExecStart=${HERMES_PYTHON} /usr/local/lib/orcasynapse/hermes-artifact-publisher.py --scan
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+# Reads files, hashes them, signs one HTTP request: no capability needed at
+# all, unlike the corpus reconciler whose child must change UID.
+CapabilityBoundingSet=
+ReadWritePaths=${STATE_ROOT}
+EOF
+
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${ARTIFACT_SERVICE}.timer" <<EOF
+[Unit]
+Description=Publish Hermes run artifacts every minute
+# On the timer, never on the oneshot it triggers -- stopping the node target
+# stops scheduling, not an upload that is halfway through a batch.
+PartOf=${NODE_TARGET}.target
+
+[Timer]
+OnBootSec=50s
+OnUnitActiveSec=60s
+RandomizedDelaySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "${ARTIFACT_SERVICE}.timer" >/dev/null
+}
+
 # Repairs the runtime boundary of an already-enrolled node in place. This is
 # deliberately narrower than enrollment: identity, API keys, model policy and
 # control-plane trust remain untouched. It exists because nodes installed by an
@@ -2010,6 +2088,7 @@ repair_runtime_installation() {
   # unavailable forever, even while snapshots arrived.
   write_heartbeat_client
   write_corpus_reconciler "$(<"${STATE_ROOT}/control-plane-url")"
+  write_artifact_publisher "$(<"${STATE_ROOT}/control-plane-url")"
   # After all four units exist, so the target's Wants= name units that are
   # on disk. It is enabled and not started -- each site below starts what it
   # needs, in the order it needs.
@@ -2345,6 +2424,7 @@ EOF
   write_heartbeat_client
   write_desired_state_client
   write_corpus_reconciler "${control_plane_url}"
+  write_artifact_publisher "${control_plane_url}"
   # After all four units exist, so the target's Wants= name units that are
   # on disk. It is enabled and not started -- each site below starts what it
   # needs, in the order it needs.

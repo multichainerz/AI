@@ -30,6 +30,7 @@ import {
 } from "./runtime-nodes/routes.js";
 import { registerInferenceGatewayRoutes } from "./inference/routes.js";
 import { registerAdminCorpusRoutes, registerRuntimeCorpusRoutes } from "./corpus/routes.js";
+import { registerChatArtifactRoutes, registerRuntimeArtifactRoutes } from "./artifacts/routes.js";
 import { checkForPlatformUpdate } from "./platform-updates.js";
 import type { PlatformUpdate } from "@orcasynapse/contracts";
 import { registerAdminUpdateRoutes } from "./updates/routes.js";
@@ -274,6 +275,22 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       ...(runtime.corpusManager ? { manager: runtime.corpusManager } : {}),
     }),
     { prefix: "/api/v1/runtime-nodes" },
+  );
+
+  await app.register(
+    async (runtimeArtifacts) => registerRuntimeArtifactRoutes(runtimeArtifacts, {
+      ...(runtime.artifactManager ? { manager: runtime.artifactManager } : {}),
+    }),
+    { prefix: "/api/v1/runtime-nodes" },
+  );
+
+  await app.register(
+    async (chatArtifacts) => registerChatArtifactRoutes(chatArtifacts, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.identityManager ? { identityManager: runtime.identityManager } : {}),
+      ...(runtime.artifactManager ? { manager: runtime.artifactManager } : {}),
+    }),
+    { prefix: "/api/v1/chat/artifacts" },
   );
 
   await app.register(

@@ -54,6 +54,10 @@ jobs:
         # Root is required to exercise the real VM2 root-to-Hermes credential
         # transition; the test still confines all fixtures to a temporary tree.
         run: sudo python3 scripts/test-hermes-corpus-reconciler.py
+      - name: Hermes artifact publisher safety
+        # No sudo: the publisher never changes UID -- it reads files, hashes
+        # them, and signs one HTTP request.
+        run: python3 scripts/test-hermes-artifact-publisher.py
       # Guards the ceilings that keep the worker's ~2 GB of model weights from
       # handing the host OOM killer a choice, the bind address that makes a host
       # firewall rule on the dashboard port effective, and -- since a `cpus:`

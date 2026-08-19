@@ -5,6 +5,56 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.1.0 — 2026-08-19
+
+Adds run artifacts — files an agent produces are now published, governed, and
+retrievable from a new Files area and from the message that produced them —
+and quiets the Session surface: the activity trail, conversation rail,
+telemetry and closing summary all lose chrome that was restating what the
+text already said.
+
+### Upgrade notes
+
+- **Existing enrolled nodes need `install-agentic-node.sh --repair`** to gain
+  the artifact publisher companion; until then runs produce no retrievable
+  files. New enrollments install it automatically.
+- **Artifacts are visible division-wide.** A file produced in one person's
+  conversation is listed for everyone in the same division, including the
+  conversation's title. Conversations themselves remain owner-private.
+- **The run ledger's footer no longer claims tool arguments are never
+  retained.** They are, and always were: Hermes reports the call it is about
+  to make — for executed code, the source — and the ledger and transcript now
+  show it. The footer now discloses this instead of denying it.
+
+### Changes
+
+- add run artifacts end to end: a node-signed publisher watches
+  `artifacts/<sessionId>/` on VM2, inlines files at or under 4 MiB into
+  Postgres, records larger ones as node-resident metadata, downgrades
+  secret-shaped files to metadata-only, and never follows a symlink or
+  deletes agent output
+- stamp each artifact with the division of the run the control plane authorized;
+  refuse uploads naming a session it never issued, answer cross-division
+  downloads with 404, and serve every download as forced octet-stream
+  attachment with its hash verified on read
+- tell every governed run where deliverables must be saved, in the one place
+  the control plane composes model-visible text
+- add a Files area to the sidebar between Session and Agents, and attach file
+  rows to the transcript message that produced them
+- reconcile node-resident artifact rows with tombstones the publisher sends
+  when a file leaves the disk; inline artifacts survive node cleanup on purpose
+- show what a tool call actually did: read the detail from whichever lifecycle
+  event carries it, so executed code appears instead of "Call 1", trailing off
+  under a fade instead of a mid-expression ellipsis
+- quiet the transcript: success in the activity trail is silent, the
+  telemetry row waits for the pointer and speaks in one voice, the closing
+  summary drops "Worked for" and colours only a failure
+- collapse the conversation rail to one line per conversation, ending error
+  previews rendered as subtitles, and mark selection with ink rather than fill
+- move the conversation menu beside the title it acts on, and remove the
+  left tone stripes that restated status colour a badge already stated in words
+- stop the artifact-publisher timer on decommission by name, like its siblings
+
 ## v9.0.0 — 2026-08-18
 
 Removes SIEM forwarding and OIDC federation, adds scheduled conversation turns,

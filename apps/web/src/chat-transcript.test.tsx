@@ -152,6 +152,18 @@ vi.mock("./api.js", async () => {
     ...actual,
     getChatConversations: vi.fn(async () => ({ items: [{ ...conversation, messages: undefined }] })),
     getChatConversation: vi.fn(async () => conversation),
+    getChatArtifacts: vi.fn(async () => ({
+      items: [{
+        id: "0b54a1de-6f0f-4b7e-9a94-1c2d3e4f5a6b",
+        runId: "c2a4e6f8-1b3d-4f5a-8c7e-9d0b1a2c3e4f",
+        conversationId: conversation.id, messageId: "m2",
+        nodeId: "9de260d7-bc51-4558-9d20-06916d393072", divisionId: null,
+        name: "checklist.md", path: "out/checklist.md", mediaType: "text/markdown",
+        sizeBytes: 2_048, sha256: "a".repeat(64), storage: "INLINE",
+        conversationTitle: "Runbook questions", profileName: "Support agent",
+        observedAt: "2026-08-07T09:14:05.000Z", createdAt: "2026-08-07T09:14:06.000Z",
+      }],
+    })),
     getAgentProfiles: vi.fn(async () => ({ items: [] })),
     getModelDeployments: vi.fn(async () => ({
       items: [{ modelAlias: "qwen3.6-27b", status: "ACTIVE", contextWindowTokens: 16_384 }],
@@ -241,7 +253,9 @@ describe("chat transcript", () => {
     expect(within(telemetry).getByText("902 in / 382 out")).toBeTruthy();
     expect(within(telemetry).getByText("640 ms")).toBeTruthy();
     expect(within(telemetry).getByText("4.12 s")).toBeTruthy();
-    expect(telemetry.querySelectorAll("svg")).toHaveLength(4);
+    // Each figure names its own unit, so the four icons that used to sit beside
+    // them were decoration standing in for labels the values already carry.
+    expect(telemetry.querySelectorAll("svg")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Copy response" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Mark response helpful" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Mark response not helpful" })).toBeNull();
@@ -276,7 +290,7 @@ describe("chat transcript", () => {
     expect(within(activity).queryByText("Agent run accepted")).toBeNull();
   });
 
-  it("renders repeated activity as a compact numbered, expandable step", async () => {
+  it("folds a repeated call into one expandable step", async () => {
     await transcript();
     const activity = screen.getByLabelText("Hermes agent activity");
 
@@ -286,17 +300,47 @@ describe("chat transcript", () => {
     expect(within(repeated).getByText("×2")).toBeTruthy();
     expect(repeated.closest("details")?.querySelectorAll("ol > li")).toHaveLength(2);
     expect(activity.querySelectorAll("section > ol > li")).toHaveLength(2);
-    expect(activity.querySelectorAll("ol.border-dotted")).toHaveLength(2);
     expect(within(activity).queryByText(/events$/)).toBeNull();
+  });
+
+  it("spends ink only on a step that did not simply work", async () => {
+    // Every governed call in this transcript succeeded. A trail that annotates
+    // each of them "Completed" is a column of noise the reader has to scan past
+    // to find the one line that is not -- so success is stated in the
+    // accessible name and nowhere else.
+    await transcript();
+    const activity = screen.getByLabelText("Hermes agent activity");
+
+    expect(within(activity).queryByText("Completed")).toBeNull();
+    expect(within(activity).queryByText("In progress")).toBeNull();
+    expect(within(activity).queryByText("Agent activity")).toBeNull();
   });
 
   it("says what happened while it is folded, including a failure", async () => {
     // The risk of folding is a reader who sees one calm line and never opens
-    // it, so the summary has to carry the bad news itself.
+    // it, so the summary has to carry the bad news itself. The line is built
+    // from parts now rather than one sentence, so the whole of it is asserted
+    // through the accessible name and the figures through the rendered spans.
     await transcript();
     const activity = screen.getByLabelText("Hermes agent activity");
 
-    expect(within(activity).getByText(/^Worked for /)).toBeTruthy();
+    const summary = within(activity).getByLabelText("4.1 s · 2 tools · 1 subagent");
+    expect(summary.tagName).toBe("FOOTER");
+    expect(within(summary).getByText("4.1 s")).toBeTruthy();
+    expect(within(summary).getByText("tools")).toBeTruthy();
+    expect(within(summary).getByText("subagent")).toBeTruthy();
+  });
+
+  it("attaches a produced file to the message that produced it", async () => {
+    await transcript();
+    const files = await screen.findByLabelText("Files from this response");
+
+    // On the answer, not in a sidebar: the deliverable is part of the turn.
+    expect(screen.getByLabelText("Hermes agent activity").compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(files).getByText("checklist.md")).toBeTruthy();
+    const download = within(files).getByRole("link", { name: "Download" }) as HTMLAnchorElement;
+    expect(download.getAttribute("href")).toBe("/api/v1/chat/artifacts/0b54a1de-6f0f-4b7e-9a94-1c2d3e4f5a6b/content");
+    expect(download.getAttribute("download")).toBe("checklist.md");
   });
 
   it("says why a turn failed and offers the way back", async () => {

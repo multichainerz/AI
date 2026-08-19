@@ -298,18 +298,23 @@ describe("operations control room", () => {
     });
 
     /*
-     * A pin, not a fix: the stripe already worked and is the fastest severity
-     * read on the screen, so the restyle had to carry it through rather than
-     * replace it with the badge.
+     * This used to pin a coloured stripe down the card's left edge, on the
+     * argument that it was the fastest severity read on the screen. It was also
+     * the third: the badge states the severity and the fact grid states the
+     * status, both in words. A card that says "Critical" and "Open" does not
+     * additionally need to be red, and one that says "Resolved" while still
+     * wearing a tone stripe is a screen with two vocabularies for the same
+     * fact. What is asserted now is that the words are there to be read.
      */
-    it("keeps the left tone stripe on the card itself", async () => {
+    it("states severity and status in words rather than a tone stripe", async () => {
       await view();
-      const open = screen.getByText("Hermes node vm2-b unreachable").closest("article");
-      const resolved = screen.getByText("Chat latency above budget").closest("article");
-      expect(open).toBeTruthy();
-      expect(resolved).toBeTruthy();
-      expect(open!.className).toContain("border-l-bad");
-      expect(resolved!.className).toContain("border-l-good");
+      const open = screen.getByText("Hermes node vm2-b unreachable").closest("article")!;
+      const resolved = screen.getByText("Chat latency above budget").closest("article")!;
+
+      expect(within(open).getByText("Critical")).toBeTruthy();
+      expect(within(open).getByText("Open")).toBeTruthy();
+      expect(within(resolved).getByText("Resolved")).toBeTruthy();
+      for (const card of [open, resolved]) expect(card.className).not.toMatch(/border-l-/);
     });
   });
 

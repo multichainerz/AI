@@ -195,6 +195,14 @@ class H(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path == "/install/hermes-artifact-publisher.py":
+            body = open(os.environ["ARTIFACT_CLIENT"], "rb").read()
+            self.send_response(200)
+            self.send_header("content-type", "text/x-python")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == DESIRED_STATE_PATH:
             return self._json({
                 "documentBase64": os.environ["DOC_B64"],
@@ -221,6 +229,7 @@ CORPUS_DOC_B64="$(base64 -w0 "${WORK}/corpus-desired.json")" \
 CORPUS_SIG_B64="$(base64 -w0 "${WORK}/corpus-desired.sig")" \
 CP_FINGERPRINT="$(openssl pkey -pubin -in "${WORK}/cp.pub" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')" \
 CORPUS_CLIENT="${ROOT}/scripts/hermes-corpus-reconciler.py" \
+ARTIFACT_CLIENT="${ROOT}/scripts/hermes-artifact-publisher.py" \
 NODE_ID="${NODE_ID}" \
 HEARTBEAT_RECORD="${WORK}/heartbeat.json" \
   python3 "${WORK}/controlplane.py" "${CONTROL_PLANE_PORT}" >/dev/null 2>&1 &
@@ -251,6 +260,13 @@ grep -Fq 'ExecStart=/usr/local/lib/hermes-agent/venv/bin/python /usr/local/lib/o
   /etc/systemd/system/orcasynapse-hermes-corpus.service \
   && pass "corpus companion uses the pinned Hermes Python environment" \
   || bad "corpus companion is detached from the Hermes Python environment"
+grep -Fq 'ExecStart=/usr/local/lib/hermes-agent/venv/bin/python /usr/local/lib/orcasynapse/hermes-artifact-publisher.py --scan' \
+  /etc/systemd/system/orcasynapse-hermes-artifacts.service \
+  && pass "artifact publisher uses the pinned Hermes Python environment" \
+  || bad "artifact publisher is detached from the Hermes Python environment"
+[[ -d /var/lib/orcasynapse-hermes/artifacts ]] \
+  && pass "artifact root exists for session directories" \
+  || bad "artifact root was not created"
 [[ "$(git -C /usr/local/lib/hermes-agent rev-parse HEAD 2>/dev/null)" == "${HERMES_COMMIT}" ]] \
   && pass "installed commit matches the pin" || bad "installed commit does not match the pin"
 curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \

@@ -2,6 +2,7 @@ import type {
   HermesRuntimeCatalogue,
   AgentRunApproval,
   AgentProfile,
+  ChatArtifact,
   ChatConversation,
   ChatConversationSummary,
   ChatMessage,
@@ -18,6 +19,7 @@ import {
   groupConsecutiveTimelineEntries,
   groupRuntimeEvents,
   summariseTimeline,
+  timelineSummaryParts,
   type TimelineEntry,
   type TimelineEntryGroup,
 } from "./chat/timeline.js";
@@ -33,6 +35,7 @@ import {
   BrainCircuit,
   CalendarClock,
   Copy as CopyIcon,
+  Paperclip as PaperclipIcon,
   Layers3 as LayersIcon,
   Monitor as MonitorIcon,
   Network as NodeIcon,
@@ -56,6 +59,8 @@ import {
   streamChatEvents,
   submitChatMessage,
   updateChatConversation,
+  chatArtifactContentUrl,
+  getChatArtifacts,
 } from "./api.js";
 import {
   Alert,
@@ -232,11 +237,18 @@ function activityGroupTitle(entries: readonly TimelineEntry<ChatRuntimeEvent>[])
   return `${running ? "Working through" : "Completed"} ${entries.length} agent action${entries.length === 1 ? "" : "s"}`;
 }
 
-function activityTone(status: TimelineEntry["status"]): string {
-  if (status === "failed") return "bg-bad";
-  if (status === "cancelled") return "bg-warn";
-  if (status === "completed") return "bg-good";
-  return "bg-accent anim-live";
+/*
+ * Success is silent. A completed call used to carry a green rail dot, a second
+ * dot in the row, the word "Completed", a duration, and a count in the header
+ * that said the same thing again -- five ways of reporting that nothing went
+ * wrong. Only a status that changes what the reader should do earns ink, so
+ * the ordinary case returns null and the row reads as one plain line.
+ */
+function activityNotice(status: TimelineEntry["status"]): { tone: string; label: string } | null {
+  if (status === "failed") return { tone: "text-bad", label: "Failed" };
+  if (status === "cancelled") return { tone: "text-warn", label: "Cancelled" };
+  if (status === "running") return { tone: "text-accent anim-live", label: "Working" };
+  return null;
 }
 
 function ActivityKindIcon({ kind, label }: Pick<TimelineEntry<ChatRuntimeEvent>, "kind" | "label">) {
@@ -249,6 +261,29 @@ function ActivityKindIcon({ kind, label }: Pick<TimelineEntry<ChatRuntimeEvent>,
   return <TerminalIcon size={14} />;
 }
 
+/**
+ * The prose a call has to show, wherever in the call it landed.
+ *
+ * Hermes does not agree with itself about which end of a tool call carries it.
+ * `system.status` reports "control plane healthy" on completion; `execute_code`
+ * puts the source it is about to run on the *start* and returns a terminal
+ * event whose summary, preview and text are all null. Reading only the last
+ * event -- which this did -- meant every execute_code call rendered as the bare
+ * label "Call 1" while its own source sat one event earlier in the same group.
+ * Measured against a live run: 7 of 7 TOOL_STARTED events carry a summary, 1 of
+ * 7 TOOL_COMPLETED do.
+ *
+ * The terminal event still wins where it has something, because an outcome
+ * describes a call better than its input does. The search only falls back.
+ */
+function activityDetail(entry: TimelineEntry<ChatRuntimeEvent>): string | null {
+  for (let index = entry.events.length - 1; index >= 0; index -= 1) {
+    const detail = entry.events[index]!.preview ?? entry.events[index]!.summary;
+    if (detail) return detail;
+  }
+  return null;
+}
+
 function ActivityCallDetail({
   entry,
   index,
@@ -257,134 +292,188 @@ function ActivityCallDetail({
   index: number;
 }) {
   const runtimeEvent = entry.events[entry.events.length - 1]!;
-  const detail = runtimeEvent.preview ?? runtimeEvent.summary;
+  const detail = activityDetail(entry);
   const duration = formatRuntimeDuration(entry.durationMs);
+  const notice = activityNotice(entry.status);
   return (
-    <li className="grid min-w-0 grid-cols-[24px_minmax(0,1fr)_auto] items-start gap-2.5 py-2 first:pt-1 last:pb-1">
-      <span className="grid h-6 w-6 place-items-center rounded bg-surface font-mono text-micro tabular-nums text-faint">
-        {index + 1}
-      </span>
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-caption font-medium text-muted">Call {index + 1}</span>
-          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", activityTone(entry.status))} aria-hidden="true" />
-          <small className="text-micro text-faint">{activityStatusLabel(entry.status)}</small>
-        </div>
-        {detail && detail !== entry.label && (
-          <p className="mb-0 mt-0.5 line-clamp-2 text-micro leading-relaxed text-faint">{detail}</p>
-        )}
+    <li className="flex min-w-0 items-baseline gap-2.5 py-1">
+      <span className="w-3 shrink-0 font-mono text-micro tabular-nums text-faint">{index + 1}</span>
+      <span className="min-w-0 flex-1">
+        {/*
+          * One faded line rather than two clamped ones. This row's job is to
+          * say which call it was, not to display the source: `safeEventText`
+          * has already collapsed the newlines, so a second line buys another
+          * stretch of run-on Python rather than readable code. Reading the
+          * whole thing wants a viewer, not a taller clamp.
+          */}
+        <span className="text-trail text-caption leading-relaxed text-muted">
+          {detail && detail !== entry.label ? detail : `Call ${index + 1}`}
+        </span>
         {entry.status === "failed" && runtimeEvent.errorCode && (
           <small className="mt-0.5 block font-mono text-micro text-bad">{runtimeEvent.errorCode}</small>
         )}
-      </div>
-      {duration && <small className="pt-0.5 font-mono text-micro tabular-nums text-faint">{duration}</small>}
+      </span>
+      {notice && <small className={cn("shrink-0 text-micro", notice.tone)}>{notice.label}</small>}
+      {duration && <small className="shrink-0 font-mono text-micro tabular-nums text-faint">{duration}</small>}
     </li>
   );
 }
 
-function ActivityStep({
-  group,
-  index,
-}: {
-  group: TimelineEntryGroup<ChatRuntimeEvent>;
-  index: number;
-}) {
+function ActivityStep({ group }: { group: TimelineEntryGroup<ChatRuntimeEvent> }) {
   const repeated = group.entries.length > 1;
   const lastEntry = group.entries[group.entries.length - 1]!;
-  const runtimeEvent = lastEntry.events[lastEntry.events.length - 1]!;
-  const detail = runtimeEvent.preview ?? runtimeEvent.summary;
+  const detail = activityDetail(lastEntry);
   const duration = formatRuntimeDuration(lastEntry.durationMs);
   const title = activityTitle(group);
+  const notice = activityNotice(group.status);
+
+  /*
+   * The ordinal chip is gone. A numbered list of the agent's own steps reads
+   * as a procedure the reader is meant to follow, which these are not -- they
+   * are a log -- and the order was already carried by the order.
+   */
   const leading = (
     <>
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded border border-border bg-surface font-mono text-micro tabular-nums text-faint">
-        {String(index + 1).padStart(2, "0")}
-      </span>
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-soft text-accent">
+      {/* `mt-0.5` centres a 14px glyph on the 18px line box of `text-label`.
+          Without it -- and with the row centred rather than top-aligned -- the
+          icon drifted to the midpoint of title-plus-detail and sat between the
+          two lines it was meant to label. */}
+      <span className="mt-0.5 shrink-0 text-faint">
         <ActivityKindIcon kind={group.kind} label={group.label} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 items-baseline gap-2">
           <strong className="truncate text-label font-medium text-text">{title}</strong>
           {repeated && (
-            <span className="rounded bg-soft px-1.5 py-0.5 font-mono text-micro font-semibold tabular-nums text-accent">
-              ×{group.entries.length}
-            </span>
+            <span className="shrink-0 font-mono text-micro tabular-nums text-faint">×{group.entries.length}</span>
           )}
         </span>
+        {/*
+          * Full-strength `faint`, and the separation is made above instead.
+          *
+          * What lands here is now source, which is dense in a way the one-clause
+          * summaries this used to carry never were -- brackets, quotes, paths --
+          * so it out-textured its own title. The reflex is to fade it, but on
+          * this background `faint` already sits at 5.25:1 and every useful alpha
+          * lands under the 4.5:1 floor: /85 gives 4.09, /65 gives 2.90. Fading a
+          * 10px line is the one move that cannot pay for itself here.
+          *
+          * The measurement also said why it competed: `muted` reads 5.55:1 and
+          * `faint` 5.25:1, so title and detail were the same brightness and the
+          * denser line won. Widening the gap upward costs no contrast -- both
+          * ends only get further from the background.
+          */}
         {!repeated && detail && detail !== group.label && (
-          <small className="mt-0.5 block truncate text-micro text-faint">{detail}</small>
+          <small className="text-trail mt-0.5 text-micro text-faint">{detail}</small>
         )}
       </span>
-      <span className="flex shrink-0 items-center gap-2">
-        <span className={cn("h-1.5 w-1.5 rounded-full", activityTone(group.status))} aria-hidden="true" />
-        <small className="hidden text-micro text-faint sm:inline">{activityStatusLabel(group.status)}</small>
-        {!repeated && duration && (
-          <small className="font-mono text-micro tabular-nums text-faint">{duration}</small>
-        )}
-      </span>
+      {notice && <small className={cn("mt-0.5 shrink-0 text-micro", notice.tone)}>{notice.label}</small>}
+      {!repeated && duration && (
+        <small className="mt-0.5 shrink-0 font-mono text-micro tabular-nums text-faint">{duration}</small>
+      )}
     </>
   );
 
+  /*
+   * A foldable step and a plain one are the same object at rest: same padding,
+   * same weight, no border or fill until the pointer is on it. Only the
+   * chevron says one of them opens.
+   */
+  /*
+   * `-mx-1.5` cancels the row's own padding so its icon starts on the same
+   * pixel as the sender name, the answer and the closing line -- one spine down
+   * the message rather than four. The padding stays: it is what the hover fill
+   * needs to look like a target rather than a highlight tight against the text.
+   *
+   * `items-start` because a row is two lines whenever it carries a detail, and
+   * `items-center` was ranging the icon and the duration against the pair
+   * instead of against the title.
+   */
+  const row = "-mx-1.5 flex min-w-0 items-start gap-2.5 rounded px-1.5 py-1.5 transition-colors";
+
   return (
-    <li className="relative min-w-0 py-1 first:pt-0 last:pb-0">
-      <span
-        aria-hidden="true"
-        className={cn(
-          "absolute -left-[25px] top-[17px] h-2 w-2 rounded-full ring-4 ring-bg",
-          activityTone(group.status),
-        )}
-      />
+    <li className="min-w-0">
       {repeated ? (
-        <details className="group rounded border border-transparent bg-raised/35 transition-colors open:border-border open:bg-raised/70">
+        <details className="group/step">
           <summary
-            className="flex min-w-0 cursor-pointer list-none items-center gap-2.5 px-2.5 py-2.5 select-none [&::-webkit-details-marker]:hidden"
+            className={cn(row, "cursor-pointer list-none select-none hover:bg-raised/60 [&::-webkit-details-marker]:hidden")}
             aria-label={`${title}, ${group.entries.length} calls, ${activityStatusLabel(group.status)}`}
           >
             {leading}
             <svg
               aria-hidden="true"
-              className="h-3.5 w-3.5 shrink-0 text-faint transition-transform duration-200 group-open:rotate-180"
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-faint transition-transform duration-200 group-open/step:rotate-180"
               viewBox="0 0 16 16"
               fill="none"
             >
               <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </summary>
-          <ol className="m-0 ml-[74px] list-none border-t border-border/70 px-3 py-1 pr-4">
+          <ol className="m-0 ml-[30px] list-none p-0 pb-1">
             {group.entries.map((entry, callIndex) => (
               <ActivityCallDetail entry={entry} index={callIndex} key={entry.key} />
             ))}
           </ol>
         </details>
       ) : (
-        <div className="flex min-w-0 items-center gap-2.5 rounded border border-transparent px-2.5 py-2 transition-colors hover:border-border hover:bg-raised/50">
-          {leading}
-        </div>
+        <div className={row}>{leading}</div>
       )}
     </li>
   );
 }
 
+/*
+ * No header, no rail, no counter. The block used to open with an icon chip, the
+ * words "Agent activity", a hairline rule and "2 steps · 3 calls" -- a title
+ * bar over a list whose own rows already said what they were, and a tally the
+ * closing line beneath the answer states once more. What is left is the list.
+ * The accessible name still carries the summary for a reader who cannot see
+ * that the rows are adjacent.
+ */
 function AgentActivityTrail({ entries }: { entries: readonly TimelineEntry<ChatRuntimeEvent>[] }) {
   const groups = groupConsecutiveTimelineEntries(entries);
-  const toolCalls = entries.filter(({ kind }) => kind === "tool").length;
   return (
-    <section className="my-3" aria-label={activityGroupTitle(entries)}>
-      <header className="mb-2 flex min-w-0 items-center gap-2.5 px-0.5 text-caption text-muted">
-        <span className="grid h-6 w-6 shrink-0 place-items-center rounded bg-soft text-accent">
-          <TerminalIcon size={13} />
-        </span>
-        <strong className="truncate font-medium text-muted">Agent activity</strong>
-        <span className="h-px min-w-4 flex-1 bg-border" aria-hidden="true" />
-        <small className="shrink-0 font-mono text-micro tabular-nums text-faint">
-          {groups.length} step{groups.length === 1 ? "" : "s"}{toolCalls > 0 ? ` · ${toolCalls} call${toolCalls === 1 ? "" : "s"}` : ""}
-        </small>
-      </header>
-      <ol className="relative m-0 ml-[11px] grid list-none gap-0 border-l border-dotted border-border-strong p-0 pl-5">
-        {groups.map((group, index) => <ActivityStep group={group} index={index} key={group.key} />)}
+    <section className="my-2.5" aria-label={activityGroupTitle(entries)}>
+      <ol className="m-0 grid list-none gap-0.5 p-0">
+        {groups.map((group) => <ActivityStep group={group} key={group.key} />)}
       </ol>
     </section>
+  );
+}
+
+/**
+ * The files a governed turn produced, on the message that produced them. The
+ * list is division-bounded by the server and fetched per conversation; this
+ * renders the slice whose messageId matches. Same quiet register as the
+ * activity trail: a deliverable is part of the answer, not a banner over it.
+ */
+function MessageArtifacts({ items }: { items: readonly ChatArtifact[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul aria-label="Files from this response" className="m-0 mt-3 grid list-none gap-1 p-0">
+      {items.map((artifact) => (
+        <li className="flex min-w-0 items-center gap-2.5 rounded border border-border bg-raised/40 px-3 py-2" key={artifact.id}>
+          <PaperclipIcon size={14} className="shrink-0 text-faint" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-label font-medium text-text">{artifact.name}</span>
+            <span className="block font-mono text-micro tabular-nums text-faint">
+              {artifact.sizeBytes < 1024 * 1024
+                ? `${Math.max(1, Math.round(artifact.sizeBytes / 1024))} KB`
+                : `${(artifact.sizeBytes / (1024 * 1024)).toFixed(1)} MB`}
+            </span>
+          </span>
+          {artifact.storage === "INLINE" ? (
+            <Button asChild size="sm" variant="ghost" className="shrink-0">
+              <a href={chatArtifactContentUrl(artifact.id)} download={artifact.name}>Download</a>
+            </Button>
+          ) : (
+            <small className="shrink-0 text-micro text-warn" title="Larger than the retention limit; the file remains on its runtime node.">
+              On node
+            </small>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -439,10 +528,25 @@ function AgentResponseFlow({
         </div>
       )}
 
+      {/*
+        * Figures in tabular mono, nouns in prose, and the middot chain gone --
+        * spacing groups them without a third glyph per pair. A failure is the
+        * only part that takes colour, because it is the only part that changes
+        * what the reader does next; the rest is a receipt.
+        */}
       {message.status === "COMPLETED" && entries.length > 0 && (
-        <footer className="mt-3 flex items-center gap-2 text-caption text-faint">
-          <NodeIcon size={14} />
-          <span>{summariseTimeline(entries, message.latencyMs)}</span>
+        <footer
+          className="mt-3 flex flex-wrap items-baseline gap-x-3.5 gap-y-1 text-caption text-faint"
+          aria-label={summariseTimeline(entries, message.latencyMs)}
+        >
+          {timelineSummaryParts(entries, message.latencyMs).map((part) => (
+            /* A real space, not a flex gap: `gap-1` looks identical and copies
+               as "4tools". The figure is the only part set in mono. */
+            <span className={cn(part.failed && "text-bad")} key={part.key}>
+              <span className="font-mono tabular-nums">{part.value}</span>
+              {part.noun ? ` ${part.noun}` : null}
+            </span>
+          ))}
         </footer>
       )}
     </div>
@@ -471,14 +575,6 @@ export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[
   ];
 }
 
-function ChatTelemetryIcon({ metric }: { metric: ChatTelemetryMetric["key"] }) {
-  const props = { size: 13, className: "text-faint" } as const;
-  if (metric === "throughput") return <MonitorIcon {...props} />;
-  if (metric === "tokens") return <LayersIcon {...props} />;
-  if (metric === "first-token") return <NodeIcon {...props} />;
-  return <BrainCircuit {...props} />;
-}
-
 export function ChatView({
   unlocked,
   displayName,
@@ -497,6 +593,23 @@ export function ChatView({
   const [catalogue, setCatalogue] = useState<HermesRuntimeCatalogue | null>(null);
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
   const [active, setActive] = useState<ChatConversation | null>(null);
+  // The active conversation's files, keyed for the transcript. Fetched when
+  // the conversation opens and again when a turn completes, because a turn is
+  // the only thing that can mint one.
+  const [messageArtifacts, setMessageArtifacts] = useState<ChatArtifact[]>([]);
+
+  const activeId = active?.id ?? null;
+  const completedTurns = active?.messages.filter((message) => message.status === "COMPLETED").length ?? 0;
+  useEffect(() => {
+    if (!activeId) { setMessageArtifacts([]); return; }
+    let cancelled = false;
+    getChatArtifacts({ conversationId: activeId })
+      .then((list) => { if (!cancelled) setMessageArtifacts(list.items); })
+      // Silent on purpose: the transcript must not grow an error banner
+      // because an auxiliary listing failed; the Files screen reports loudly.
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [activeId, completedTurns]);
   const [draft, setDraft] = useState("");
   const [suggestions, setSuggestions] = useState(() => pickChatSuggestions());
   const [busy, setBusy] = useState(false);
@@ -1321,7 +1434,19 @@ export function ChatView({
             </div>
           )}
           {groupConversationsByDate(visibleConversations, new Date()).map((group) => (
-            <section key={group.key} className="grid content-start gap-1.5">
+            <section key={group.key} className="grid grid-cols-[minmax(0,1fr)] content-start gap-0.5">
+              {/*
+                * `grid-cols-[minmax(0,1fr)]`, not a bare `grid`. An implicit
+                * column is `auto`, which sizes to max-content -- and since the
+                * Button base sets `whitespace-nowrap`, max-content is the
+                * longest title in the group unwrapped. The column then outgrows
+                * the rail, the timestamp rides off the right edge and the title
+                * clips with no ellipsis, because `min-w-0` on the title cannot
+                * claw back a column that was already too wide. The rows used to
+                * be `grid-cols-1` buttons, which Tailwind emits as
+                * `minmax(0,1fr)`, so the clamp was there by accident and left
+                * with the two-line layout.
+                */}
               {/*
                 * Level 3, deliberately. The sr-only h1 in this rail is what
                 * closes an open menu when clicked, and a second level-1 heading
@@ -1331,75 +1456,70 @@ export function ChatView({
                 <span>{group.label}</span>
                 <span aria-hidden="true" className="h-px flex-1 bg-border" />
               </h3>
-          {group.items.map((conversation) => (
-            <Button
-              variant="ghost"
-              key={conversation.id}
-              /*
-               * `size="auto"` is what makes this row two lines tall, and it was
-               * missing. The default size is `h-9`, height and padding are
-               * different properties, so no `py-*` written here ever competed
-               * with it: the row stayed clamped at 36px while its title and
-               * preview needed ~67px, and the rail read as cramped because the
-               * rows were clipped rather than because they were tight. That is
-               * exactly the case the `auto` size exists for -- see its comment
-               * in `components/ui/button.tsx` -- and it is invisible to both a
-               * diff and the suite, since jsdom implements no layout and
-               * reports the padding as applied.
-               */
-              size="auto"
-              aria-current={active?.id === conversation.id ? "true" : undefined}
-              className={cn(
-                "relative grid w-full grid-cols-1 items-start gap-1.5 rounded-card border px-2.5 py-3 text-left transition-all duration-150",
-                active?.id === conversation.id
-                  ? "border-accent/30 bg-soft shadow-card"
-                  : "border-transparent hover:border-border hover:bg-raised/70",
-              )}
-              onClick={() => void selectConversation(conversation.id)}
-            >
-              {/*
-                * Title and time share the first line, preview owns the second.
-                *
-                * This rail is narrow, and the row used to spend 40px of it on a
-                * 30px speech-bubble that was `aria-hidden` and identical on every
-                * item -- decoration priced in the one dimension the content was
-                * short of. The title truncated at roughly two dozen characters,
-                * and the line beneath it packed a fixed-width timestamp, a dot
-                * and the preview into what was left, so the preview arrived at
-                * about twenty. Two truncated strings, stacked, neither readable.
-                *
-                * The timestamp is the only fixed-width thing here, so it goes to
-                * the end of the title line where it costs the title a known
-                * amount and costs the preview nothing.
-                *
-                * The vertical rhythm is set in four places at once -- row
-                * padding, the row's own line gap, the gap between rows and the
-                * date heading -- because raising any one of them alone changes
-                * a proportion rather than the density. Padding on its own makes
-                * taller rows no further apart; gap on its own spreads rows that
-                * are each still cramped. All four move together, so a row goes
-                * from ~55px to ~66px and the distance between two rows from
-                * 20px to 30px while the 5:1 ratio between them is preserved.
-                *
-                * The proportion is what an unselected row has instead of a
-                * border: it draws `border-transparent`, so nothing marks where
-                * one conversation ends except the fact that its two lines sit
-                * closer to each other than to anything else.
-                */}
-              <span className="flex min-w-0 items-baseline gap-2">
-                <strong className={cn(
-                  "min-w-0 flex-1 truncate text-[12.5px] text-text",
-                  active?.id === conversation.id ? "font-semibold" : "font-medium",
-                )}>{conversation.title}</strong>
-                <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-faint">
-                  {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
-                </span>
-              </span>
-              <span className="min-w-0 truncate text-[10.5px] leading-[1.5] text-faint">
-                {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
-              </span>
-            </Button>
-          ))}
+              {group.items.map((conversation) => {
+                const current = active?.id === conversation.id;
+                return (
+                  <Button
+                    variant="ghost"
+                    key={conversation.id}
+                    /*
+                     * `size="auto"` because every named size carries its own
+                     * height, and this row's height is its padding plus one
+                     * line -- `h-9` would set a floor the content does not
+                     * reach and quietly re-space the rail.
+                     */
+                    size="auto"
+                    aria-current={current ? "true" : undefined}
+                    className={cn(
+                      "flex w-full items-baseline gap-2.5 px-2.5 py-2 text-left text-label hover:bg-raised/60 hover:text-text",
+                      current ? "font-medium text-text" : "font-normal text-muted",
+                    )}
+                    onClick={() => void selectConversation(conversation.id)}
+                  >
+                    {/*
+                      * One line: the title, and the time it was last spoken in.
+                      *
+                      * The second line used to carry `lastMessagePreview`, and
+                      * on a failed turn that is the runtime's error -- rails in
+                      * production showed "HTTP 530 - Cloudflare Tunnel error |
+                      * <tunnel host> - Ray <id>" as a conversation's subtitle.
+                      * That is the worst case but not the odd one: a preview is
+                      * the assistant's last reply, which describes the answer
+                      * rather than the thread, so even when it worked it spent
+                      * the rail's scarcest dimension restating something the
+                      * title had already said better. Two strings truncating in
+                      * ~200px produced two ellipses and no more recognition
+                      * than one.
+                      *
+                      * Dropping it halves the row, so roughly twice as much
+                      * history is reachable without scrolling -- which is the
+                      * only thing a rail is actually for. Search still reads
+                      * the preview; it is indexed, just not displayed.
+                      *
+                      * Selection is the title at full contrast and one step
+                      * heavier -- no fill. The border, tint and `shadow-card` it
+                      * used to draw lifted one list item into a card floating
+                      * above its own list.
+                      *
+                      * The fill has to go to the pointer rather than to the
+                      * selection, and only one of them can have it: if hover
+                      * tints a row and selection tints a row, then hovering any
+                      * row makes it look at least as chosen as the one that
+                      * actually is. So hover is the tint, selection is the ink.
+                      * Weight is carrying real work here rather than decorating
+                      * -- it is what separates "the pointer is here" from "this
+                      * is the open conversation". It costs a character or two of
+                      * title, because the span is `flex-1` and so keeps its box
+                      * while the glyphs inside it widen, moving only where the
+                      * ellipsis falls.
+                      */}
+                    <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
+                    <span className="shrink-0 font-mono text-caption tabular-nums text-faint">
+                      {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
+                    </span>
+                  </Button>
+                );
+              })}
             </section>
           ))}
         </div>
@@ -1442,9 +1562,86 @@ export function ChatView({
                 </Button>
               </form>
             ) : (
-              <strong className="block truncate font-display text-[15px] font-semibold tracking-[-0.02em] text-text">
-                {active?.title ?? "New conversation"}
-              </strong>
+              /*
+                * Rename, Fork, Export, Archive and Delete all act on the
+                * conversation, so the control that opens them sits with the
+                * conversation's name. In the runtime cluster it read as a third
+                * runtime control beside "Ready" and Skills -- which is what
+                * that cluster is for, and none of these are that.
+                */
+              <div className="flex min-w-0 items-center gap-1">
+                <strong className="min-w-0 truncate font-display text-[15px] font-semibold tracking-[-0.02em] text-text">
+                  {active?.title ?? "New conversation"}
+                </strong>
+                {active && (
+                  <div className="relative shrink-0" ref={moreMenu}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      /* 28px, not the toolbar's 36: beside a 15px title the
+                         larger square outweighs the name it belongs to. */
+                      className="h-7 w-7 p-0"
+                      aria-haspopup="menu"
+                      aria-expanded={moreOpen}
+                      aria-label="More conversation actions"
+                      title="More actions"
+                      disabled={working || loading}
+                      onClick={() => setMoreOpen((open) => !open)}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                        <circle cx="3" cy="8" r="1.2" />
+                        <circle cx="8" cy="8" r="1.2" />
+                        <circle cx="13" cy="8" r="1.2" />
+                      </svg>
+                    </Button>
+                    {/* Opens leftward now that it hangs off the header's left
+                        end; `right-0` would throw it off the viewport. */}
+                    {moreOpen && (
+                      <div
+                        className="absolute left-0 top-[calc(100%+6px)] z-40 grid min-w-[176px] gap-0.5 rounded border border-border-strong bg-raised p-1.5 shadow-overlay"
+                        role="menu"
+                      >
+                        {[
+                          { label: "Rename", run: () => { setTitleDraft(active.title); setRenaming(true); } },
+                          { label: "Schedule", run: () => setSchedulesOpen(true) },
+                          { label: "Fork", run: () => void forkConversation() },
+                          { label: "Export", run: () => exportConversation() },
+                          {
+                            label: active.status === "ARCHIVED" ? "Restore" : "Archive",
+                            run: () => void setArchiveStatus(active.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED"),
+                          },
+                        ].map((item) => (
+                          <Button
+                            key={item.label}
+                            variant="ghost"
+                            size="sm"
+                            role="menuitem"
+                            className="justify-start"
+                            onClick={() => {
+                              setMoreOpen(false);
+                              item.run();
+                            }}
+                          >
+                            {item.label}
+                          </Button>
+                        ))}
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          role="menuitem"
+                          className="justify-start"
+                          onClick={() => {
+                            setMoreOpen(false);
+                            setConfirmDelete(true);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
             {/* Only when there is a conversation to describe. Without one this
                 line read "Start a governed Hermes conversation" -- an invitation
@@ -1515,7 +1712,7 @@ export function ChatView({
             )}
 
           {active && !renaming && (
-            <div className="relative ml-0.5 flex items-center gap-0.5 border-l border-border pl-1" ref={moreMenu}>
+            <div className="ml-0.5 flex items-center gap-0.5 border-l border-border pl-1">
               <Button
                 variant="ghost"
                 size="sm"
@@ -1526,66 +1723,6 @@ export function ChatView({
                 <LayersIcon size={14} />
                 Skills
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-9 w-9 p-0"
-                aria-haspopup="menu"
-                aria-expanded={moreOpen}
-                aria-label="More conversation actions"
-                title="More actions"
-                disabled={working || loading}
-                onClick={() => setMoreOpen((open) => !open)}
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                  <circle cx="3" cy="8" r="1.2" />
-                  <circle cx="8" cy="8" r="1.2" />
-                  <circle cx="13" cy="8" r="1.2" />
-                </svg>
-              </Button>
-              {moreOpen && (
-                <div
-                  className="absolute right-0 top-[calc(100%+6px)] z-40 grid min-w-[176px] gap-0.5 rounded border border-border-strong bg-raised p-1.5 shadow-overlay"
-                  role="menu"
-                >
-                  {[
-                    { label: "Rename", run: () => { setTitleDraft(active.title); setRenaming(true); } },
-                    { label: "Schedule", run: () => setSchedulesOpen(true) },
-                    { label: "Fork", run: () => void forkConversation() },
-                    { label: "Export", run: () => exportConversation() },
-                    {
-                      label: active.status === "ARCHIVED" ? "Restore" : "Archive",
-                      run: () => void setArchiveStatus(active.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED"),
-                    },
-                  ].map((item) => (
-                    <Button
-                      key={item.label}
-                      variant="ghost"
-                      size="sm"
-                      role="menuitem"
-                      className="justify-start"
-                      onClick={() => {
-                        setMoreOpen(false);
-                        item.run();
-                      }}
-                    >
-                      {item.label}
-                    </Button>
-                  ))}
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    role="menuitem"
-                    className="justify-start"
-                    onClick={() => {
-                      setMoreOpen(false);
-                      setConfirmDelete(true);
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              )}
             </div>
           )}
           </div>
@@ -1698,7 +1835,10 @@ export function ChatView({
                        * `max-w-[940px]` was here too and never bound -- the
                        * measure wrapper is 46rem -- so it only misled.
                        */
-                      : "grid w-full grid-cols-[30px_minmax(0,1fr)] gap-3.5 pb-8",
+                      /* 32px, matching the mark's own `h-8 w-8`. At 30 the
+                         avatar overflowed its column and every message hung two
+                         pixels left of where the grid said it did. */
+                      : "grid w-full grid-cols-[32px_minmax(0,1fr)] gap-3.5 pb-8",
                   )}
                   key={message.id}
                 >
@@ -1755,6 +1895,9 @@ export function ChatView({
                           busy={busy}
                           elapsedMs={streamElapsedMs}
                         />}
+                    {message.role === "ASSISTANT" && (
+                      <MessageArtifacts items={messageArtifacts.filter((artifact) => artifact.messageId === message.id)} />
+                    )}
                     {message.role === "ASSISTANT" && message.approvals.map((approval) => (
                       /*
                        * The one block on the transcript that is warn-toned on
@@ -1806,7 +1949,12 @@ export function ChatView({
                       </section>
                     ))}
                     {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+                      /*
+                       * Measurements are for the reader who goes looking, not
+                       * for everyone scrolling past, so the row waits for the
+                       * pointer -- and stays put on touch, where nothing hovers.
+                       */
+                      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1817,26 +1965,30 @@ export function ChatView({
                         >
                           <CopyIcon size={14} />
                         </Button>
+                        {/*
+                          * Four figures, one voice. Speed used to be violet and
+                          * the other three grey, which ranks them -- and the
+                          * ranking is not actionable: nobody reads tok/s and
+                          * does something they would not have done reading the
+                          * latency beside it. Semibold did the same job twice.
+                          * `ml-auto` is gone with them: pinning the numbers to
+                          * the far edge made a two-part strip out of a footnote
+                          * that is one thought. Mono and tabular stay, because
+                          * every figure in this app is set that way and one row
+                          * of proportional digits would be the odd thing.
+                          */}
                         <dl
                           aria-label="Response telemetry"
-                          className="m-0 ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1"
+                          className="m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 font-mono text-micro tabular-nums text-faint"
                         >
                           {chatMessageTelemetry(message).map((metric) => (
                             <div
-                              className="flex min-w-0 items-center gap-1.5"
+                              className="flex min-w-0 items-center"
                               key={metric.key}
                               title={`${metric.label}: ${metric.value}`}
                             >
-                              <ChatTelemetryIcon metric={metric.key} />
                               <dt className="sr-only">{metric.label}</dt>
-                              <dd
-                                className={cn(
-                                  "m-0 whitespace-nowrap font-mono text-micro font-semibold tabular-nums",
-                                  metric.key === "throughput" ? "text-accent" : "text-muted",
-                                )}
-                              >
-                                {metric.value}
-                              </dd>
+                              <dd className="m-0 whitespace-nowrap">{metric.value}</dd>
                             </div>
                           ))}
                         </dl>

@@ -162,7 +162,7 @@ describe("summariseTimeline", () => {
       8_240,
     );
 
-    expect(summary).toBe("Worked for 8.2 s · 2 tools");
+    expect(summary).toBe("8.2 s · 2 tools");
   });
 
   it("names a failure, so a closed list never hides one", () => {
@@ -178,12 +178,11 @@ describe("summariseTimeline", () => {
       1_000,
     );
 
-    expect(summary).toBe("Worked for 1.0 s · 1 tool · 1 failed");
+    expect(summary).toBe("1.0 s · 1 tool · 1 failed");
   });
 
   it("omits a duration the runtime never reported", () => {
-    // Rather than printing "Worked for 0.0 s", which is a claim the log does
-    // not make.
+    // Rather than printing "0.0 s", which is a claim the log does not make.
     const summary = summariseTimeline(
       entries(event({ type: "SUBAGENT_STARTED", toolCallKey: "s#1" })),
       null,
