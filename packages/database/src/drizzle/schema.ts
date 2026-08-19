@@ -1526,7 +1526,13 @@ export const localUser = pgTable("LocalUser", {
 export const chatArtifact = pgTable("ChatArtifact", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	runId: uuid().notNull(),
-	/** Null after the conversation is deleted: the evidence outlives the chat. */
+	/**
+	 * Deleting the conversation deletes its files, inline bytes included via
+	 * the content table's own cascade. This began as `set null` — "the
+	 * evidence outlives the chat" — and was reversed by an operator ruling:
+	 * a deleted chat leaves nothing behind. The audit trail, not the artifact
+	 * store, is the record that something once existed.
+	 */
 	conversationId: uuid(),
 	messageId: uuid(),
 	nodeId: uuid().notNull(),
@@ -1556,7 +1562,7 @@ export const chatArtifact = pgTable("ChatArtifact", {
 			columns: [table.conversationId],
 			foreignColumns: [chatConversation.id],
 			name: "ChatArtifact_conversationId_fkey"
-		}).onUpdate("cascade").onDelete("set null"),
+		}).onUpdate("cascade").onDelete("cascade"),
 	foreignKey({
 			columns: [table.messageId],
 			foreignColumns: [chatMessage.id],

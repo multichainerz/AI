@@ -344,7 +344,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
       <PanelHeading
         className="mb-2 shrink-0"
         title="Session tools"
-        description="Each row is a group. The switch is this installation's decision; the runtime decides whether it is on."
+        description="Each row is a group. The switch is this installation's decision; Hermes decides whether it is on."
         /* "0 of 0 allowed" beside a row that reads "Always allowed" is a
            fraction with nothing in it, so it is drawn only once there is
            something to count. */

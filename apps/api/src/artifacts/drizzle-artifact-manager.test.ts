@@ -232,6 +232,24 @@ describe("DrizzleChatArtifactManager", () => {
     const [row] = await context.database.select().from(chatArtifact);
     expect(row).toMatchObject({ runId: RUN_ID, conversationId: null, messageId: null, divisionId: DIVISION_ID });
   });
+
+  it("deletes a conversation's files with the conversation, bytes included", async () => {
+    /*
+     * An operator ruling, reversing the original `set null`: a deleted chat
+     * leaves nothing behind in the artifact store. The cascade chain is
+     * conversation -> artifact -> content, so the inline bytes cannot survive
+     * their own metadata row.
+     */
+    const { conversationId } = await seed();
+    const { artifacts } = manager();
+    await artifacts.ingest(NODE_ID, headers, upload());
+    expect(await context.database.select().from(chatArtifactContent)).toHaveLength(1);
+
+    await context.database.delete(chatConversation).where(eq(chatConversation.id, conversationId!));
+
+    expect(await context.database.select().from(chatArtifact)).toHaveLength(0);
+    expect(await context.database.select().from(chatArtifactContent)).toHaveLength(0);
+  });
 });
 
 describe("division-scoped reads", () => {
