@@ -18,7 +18,7 @@
 # so `orcasynapse-agent status` works in a script or a cron line unchanged.
 set -Eeuo pipefail
 
-CLI_VERSION="v9.5.0"
+CLI_VERSION="v9.5.1"
 
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_USER="${ORCASYNAPSE_HERMES_USER:-orcasynapse-hermes}"

@@ -132,13 +132,24 @@ export async function registerInferenceGatewayRoutes(
         : parsed.error.issues[0]?.message ?? "Invalid request.";
       return reply.code(400).send({ error: { type: "invalid_request_error", message } });
     }
+    /*
+     * Reasoning traces come back out of every history round-trip — Hermes
+     * echoes assistant messages exactly as the model returned them — and the
+     * upstreams that produce them reject them on the way back in. Accepted by
+     * the schema so the request parses, removed here so the upstream only
+     * ever receives what it accepts.
+     */
+    const outbound = {
+      ...parsed.data,
+      messages: parsed.data.messages.map(({ reasoning_content, reasoning, ...message }) => message),
+    };
     const abort = new AbortController();
     const abortOnDisconnect = () => { if (!reply.raw.writableEnded) abort.abort(); };
     request.raw.once("aborted", abortOnDisconnect);
     reply.raw.once("close", abortOnDisconnect);
     let handedOff = false;
     try {
-      const result = await gateway.chat(bearer(request), parsed.data, abort.signal);
+      const result = await gateway.chat(bearer(request), outbound, abort.signal);
       void reply.code(result.response.status);
       void reply.header("content-type", result.response.headers.get("content-type") ?? (parsed.data.stream ? "text/event-stream" : "application/json"));
       void reply.header("cache-control", "no-store");

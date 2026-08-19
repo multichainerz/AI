@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/worker",
-  "version": "9.5.0",
+  "version": "9.5.1",
   "description": "OrcaSynapse worker: agent run execution and background processing",
   "license": "BUSL-1.1",
   "private": true,

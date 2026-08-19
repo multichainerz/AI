@@ -9,6 +9,20 @@ export const inferenceGatewayMessageSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   tool_call_id: z.string().min(1).max(500).optional(),
   tool_calls: z.array(extensionObjectSchema).max(128).optional(),
+  /*
+   * What a reasoning model attaches to its assistant messages, accepted
+   * because history round-trips: Hermes stores the assistant turn exactly as
+   * the model returned it and echoes it in the next request, so the second
+   * turn of every conversation against a reasoning model carried a field the
+   * first turn's strict allowlist had never seen — and failed with a version-
+   * skew message that pointed at the wrong cause. Accepted here, and STRIPPED
+   * by the gateway route before forwarding: reasoning-model APIs reject their
+   * own reasoning coming back, so tolerating it inbound and never sending it
+   * upstream is the one behavior that works on both sides.
+   */
+  reasoning_content: z.union([z.string().max(400_000), z.null()]).optional(),
+  /** The same trace under OpenRouter's field name. Same tolerance, same strip. */
+  reasoning: z.union([z.string().max(400_000), z.null()]).optional(),
 }).strict();
 
 export const inferenceGatewayChatRequestSchema = z.object({

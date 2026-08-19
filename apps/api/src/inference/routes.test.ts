@@ -104,4 +104,38 @@ describe("internal inference gateway routes", () => {
     expect(response.statusCode).toBe(400);
     expect(gateway.chat).not.toHaveBeenCalled();
   });
+
+  it("accepts a round-tripped reasoning trace and strips it before forwarding", async () => {
+    /*
+     * The second turn of every conversation against a reasoning model: Hermes
+     * echoes the assistant message exactly as the model returned it,
+     * reasoning trace included. The old strict allowlist failed that request
+     * with a version-skew message — a total outage of turns two onward, per
+     * conversation, while the node reported ONLINE. The trace is accepted so
+     * history round-trips, and stripped because the upstreams that produce
+     * reasoning reject it coming back.
+     */
+    const { app, gateway } = await gatewayApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/internal/v1/chat/completions",
+      headers: { authorization: "Bearer runtime-key" },
+      payload: {
+        model: "caller-choice",
+        messages: [
+          { role: "user", content: "what" },
+          { role: "assistant", content: "an answer", reasoning_content: "chain of thought", reasoning: "same, OpenRouter spelling" },
+          { role: "user", content: "and then?" },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    // The mock's declared signature carries only the token; the body is read
+    // back through unknown because the assertion is about the wire shape.
+    const forwarded = (gateway.chat.mock.calls.at(-1) as unknown as [unknown, { messages: Array<Record<string, unknown>> }])[1];
+    expect(forwarded.messages).toHaveLength(3);
+    expect(forwarded.messages[1]).toEqual({ role: "assistant", content: "an answer" });
+    expect(JSON.stringify(forwarded)).not.toContain("chain of thought");
+  });
 });
