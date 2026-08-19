@@ -406,6 +406,19 @@ EOF
     || fail "the update timer could not be enabled"
 }
 
+# The operator CLI, installed from the same release tree the way the update
+# agent is, so both are replaced together on every upgrade. It owns no logic:
+# it reads state and starts the update unit, which is why installing it is one
+# copy and nothing else.
+install_operator_cli() {
+  local source="${ORCASYNAPSE_ROOT}/scripts/orcasynapse-cli.sh"
+  if [[ ! -r "${source}" ]]; then
+    warning "This release carries no operator CLI; 'orcasynapse' was not installed."
+    return 0
+  fi
+  replace_managed_file 0755 /usr/local/bin/orcasynapse < "${source}"
+}
+
 provision_local_administrator() {
   local temporary_password result
   temporary_password="$(openssl rand -base64 24 | tr -d '\n=' | tr '+/' '-_')"
@@ -506,6 +519,8 @@ main() {
   # never came up.
   run_with_progress "Install the in-dashboard update agent" install_update_agent \
     || fail "the in-dashboard update agent could not be installed"
+  run_with_progress "Install the orcasynapse operator CLI" install_operator_cli \
+    || fail "the orcasynapse operator CLI could not be installed"
 
   step 6 "${TOTAL_STEPS}" "Provision administrator access"
   provision_local_administrator
@@ -540,6 +555,7 @@ main() {
   orcasynapse_report_public_scheme
   orcasynapse_report_http_bind
   write_completion_marker "${release_version}" "${source_commit:-unknown}"
+  info "Run 'orcasynapse' any time on this host for status, updates and diagnosis."
   ui_next "Open the dashboard, change the temporary password, then connect AI Inference."
 }
 

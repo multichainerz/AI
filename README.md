@@ -56,6 +56,7 @@ VM2 installs vanilla Hermes at the approved commit, applies the managed native-m
 - **Gateway:** everything on the governed inference path — the routes a deployment may serve (Models), the input rules it enforces (Guardrails), and what it consumed (Usage). System text for a run comes from the active Agent Profile, not a separate prompt catalogue.
 - **Operations:** health and incidents, and the audit trail.
 - **Settings:** bring-up and Hermes enrollment (Setup), administrators and the divisions they belong to (Access), encrypted connections and application updates (System).
+- **Operator CLIs:** each installer leaves a host-side front door — `orcasynapse` on the control plane, `orcasynapse-agent` on the Agentic System node — for status, updates, logs and diagnosis. Both only execute commands the product already ships; see *Operating the hosts* in [deploy/BOOTSTRAP.md](deploy/BOOTSTRAP.md).
 
 ## Memory and audit
 

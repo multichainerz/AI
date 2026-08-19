@@ -75,6 +75,31 @@ remover_version="$(sed -nE 's/^INSTALLER_VERSION="([^"]+)"$/\1/p' scripts/remove
 [[ "${remover_version}" == "v${version}" ]] \
   || fail "scripts/remove-agentic-node.sh INSTALLER_VERSION is '${remover_version}', expected 'v${version}'"
 
+# --- the operator CLIs travel with the release --------------------------------
+for cli in scripts/orcasynapse-cli.sh scripts/orcasynapse-agent-cli.sh; do
+  cli_version="$(sed -nE 's/^CLI_VERSION="([^"]+)"$/\1/p' "${cli}")"
+  [[ "${cli_version}" == "v${version}" ]] \
+    || fail "${cli} CLI_VERSION is '${cli_version}', expected 'v${version}'"
+  bash -n "${cli}" || fail "${cli} does not parse"
+done
+bash -n scripts/install-agentic-node.sh || fail "scripts/install-agentic-node.sh does not parse"
+bash -n scripts/install-orcasynapse.sh || fail "scripts/install-orcasynapse.sh does not parse"
+
+# The node CLI's status/update depend on the breadcrumb both installer paths
+# write; losing either call site strands `orcasynapse-agent update` at
+# "missing" forever.
+breadcrumb_calls="$(grep -c '^  record_installer_version$' scripts/install-agentic-node.sh)"
+[[ "${breadcrumb_calls}" -ge 2 ]] \
+  || fail "install-agentic-node.sh must record the installer version on both the install and repair paths (found ${breadcrumb_calls})"
+
+# The dashboard's Maintenance block and the node CLI must hand the operator the
+# same maintenance command; two spellings of it is how one of them rots.
+repair_fragment='agentic-node.sh | sudo bash -s -- --repair'
+grep -Fq "${repair_fragment}" apps/web/src/runtime-nodes-panel.tsx \
+  || fail "runtime-nodes-panel.tsx no longer offers the --repair maintenance command"
+grep -Fq "${repair_fragment}" scripts/orcasynapse-agent-cli.sh \
+  || fail "orcasynapse-agent-cli.sh no longer prints the --repair maintenance command"
+
 # --- every script the API serves ships in its image --------------------------
 # apps/api reads these off disk at request time. Development serves them from
 # the repo tree, so a script missing from Dockerfile.api works everywhere

@@ -151,6 +151,21 @@ export function agenticNodeRemovalCommand(controlPlaneUrl: string): string {
 }
 
 /**
+ * The maintenance command for a node that is already enrolled.
+ *
+ * `--repair`, not `--connect`: on a host whose enrollment completed, the
+ * installer refuses `--connect` outright and tells the operator to
+ * decommission. Repair is the arm built for this case -- it revalidates the
+ * enrollment, rewrites the managed service boundary, and restarts Hermes in
+ * place, from local state alone. The API keeps the installer downloadable
+ * after enrollment for exactly this rerun; this is the command that uses it.
+ */
+export function agenticNodeRepairCommand(controlPlaneUrl: string): string {
+  const origin = controlPlaneUrl.replace(/\/+$/, "");
+  return `curl -fsSL ${origin}/install/agentic-node.sh | sudo bash -s -- --repair`;
+}
+
+/**
  * The Hermes revision a fresh invitation offers, matching the contract's own
  * default. Exported because the wizard states the production artifact
  * requirements before this form is opened, and a second literal would let the
@@ -492,6 +507,40 @@ export function RuntimeNodesPanel({
       </article>)}
         </div>
       ) : null}
+
+      {/*
+        * How to update the node once it exists. The install command lives in
+        * the enrollment tile, which leaves the screen the moment the node
+        * heartbeats -- and generating a new installer is then correctly
+        * blocked, because the deployment holds one execution boundary. So an
+        * enrolled node had no visible path to a runtime update at all: the
+        * backend serves the installer after enrollment for exactly this rerun,
+        * and no pixel said so. This is that pixel.
+        */}
+      {activeRuntimeExists && (
+        <Tile as="article" pad="lg" className="grid gap-3" aria-label="Runtime maintenance">
+          <div className="min-w-0">
+            <MicroLabel className="block">Maintenance</MicroLabel>
+            <strong className="mt-1 block font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
+              Update or repair the enrolled runtime
+            </strong>
+          </div>
+          <code className="block overflow-x-auto rounded border border-border bg-bg px-3 py-2.5 font-mono text-caption text-muted">
+            {agenticNodeRepairCommand(defaultControlPlaneUrl())}
+          </code>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => void navigator.clipboard.writeText(agenticNodeRepairCommand(defaultControlPlaneUrl()))}>
+              Copy command
+            </Button>
+          </div>
+          <p className="m-0 text-caption leading-relaxed text-muted">
+            Safe to re-run on the enrolled node: it revalidates the enrollment, rewrites the managed
+            service boundary from the current release, and restarts Hermes in place. Identity, keys and
+            policy are untouched, and the command carries no credential. Update OrcaSynapse first — the
+            node downloads this script from it.
+          </p>
+        </Tile>
+      )}
     </section>
 
     {/*

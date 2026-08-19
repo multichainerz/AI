@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v9.2.3"
+INSTALLER_VERSION="v9.3.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -2044,6 +2044,41 @@ EOF
   systemctl enable --now "${ARTIFACT_SERVICE}.timer" >/dev/null
 }
 
+# The node's operator CLI: status, update, sync, doctor, logs, decommission.
+# Distributed exactly like the artifact publisher — downloaded from the control
+# plane, digest-verified, root-owned — and refreshed on enrollment and on every
+# --repair, so the CLI a node carries is the one its control plane serves.
+install_operator_cli() {
+  local control_plane_url="$1" staged
+  staged="$(mktemp /tmp/orcasynapse-agent-cli.XXXXXX)"
+  ui_register_temp_file "${staged}"
+  download_with_progress "Download the orcasynapse-agent operator CLI" \
+    "${control_plane_url%/}/install/orcasynapse-agent" "${staged}" \
+    || fail "could not download the orcasynapse-agent CLI from OrcaSynapse"
+  local expected_digest actual_digest
+  expected_digest="$(curl --fail --silent --show-error --max-time 30 \
+    "${control_plane_url%/}/install/orcasynapse-agent.sha256" 2>/dev/null | tr -d '[:space:]')" || expected_digest=""
+  actual_digest="$(sha256sum "${staged}" | cut -d' ' -f1)"
+  if [[ -n "${expected_digest}" ]]; then
+    [[ "${expected_digest}" == "${actual_digest}" ]] \
+      || fail "the downloaded orcasynapse-agent CLI does not match the digest OrcaSynapse published (expected ${expected_digest}, got ${actual_digest})"
+  else
+    warning "This control plane publishes no digest for the operator CLI; falling back to a format check."
+    grep -Fq 'orcasynapse-agent-cli/v1' "${staged}" \
+      || fail "the downloaded orcasynapse-agent CLI is not a recognized OrcaSynapse artifact"
+  fi
+  install -m 0755 -o root -g root "${staged}" /usr/local/bin/orcasynapse-agent
+}
+
+# The release this node was installed or repaired with. Read by
+# `orcasynapse-agent status` and compared against the control plane's own
+# version, which the release-consistency gate keeps equal to the installer's.
+# Required, not optional: a node without this breadcrumb is a broken install.
+record_installer_version() {
+  printf '%s\n' "${INSTALLER_VERSION}" > "${STATE_ROOT}/installer-version"
+  chmod 0644 "${STATE_ROOT}/installer-version"
+}
+
 # Repairs the runtime boundary of an already-enrolled node in place. This is
 # deliberately narrower than enrollment: identity, API keys, model policy and
 # control-plane trust remain untouched. It exists because nodes installed by an
@@ -2101,6 +2136,8 @@ repair_runtime_installation() {
   write_heartbeat_client
   write_corpus_reconciler "$(<"${STATE_ROOT}/control-plane-url")"
   write_artifact_publisher "$(<"${STATE_ROOT}/control-plane-url")"
+  install_operator_cli "$(<"${STATE_ROOT}/control-plane-url")"
+  record_installer_version
   # After all four units exist, so the target's Wants= name units that are
   # on disk. It is enabled and not started -- each site below starts what it
   # needs, in the order it needs.
@@ -2115,6 +2152,7 @@ repair_runtime_installation() {
   ui_complete "AGENTIC SYSTEM RUNTIME REPAIRED"
   ui_panel_kv "Service account home" "${HERMES_HOME_DIR}"
   ui_panel_kv "Runtime workspace" "${HERMES_HOME_DIR}"
+  ui_panel_kv "Operator CLI" "orcasynapse-agent (status · update · doctor)"
   ui_next "Return to Agents > Corpus and confirm this node has synchronized."
 }
 
@@ -2441,6 +2479,8 @@ EOF
   write_desired_state_client
   write_corpus_reconciler "${control_plane_url}"
   write_artifact_publisher "${control_plane_url}"
+  install_operator_cli "${control_plane_url}"
+  record_installer_version
   # After all four units exist, so the target's Wants= name units that are
   # on disk. It is enabled and not started -- each site below starts what it
   # needs, in the order it needs.
@@ -2489,6 +2529,7 @@ EOF
   info "OrcaSynapse now monitors this node without SSH or any remote execution channel."
   info "Toolset changes made in the dashboard reach this node within five minutes."
   info "Hermes memory and skill changes appear in Agents > Corpus within one minute."
+  info "Run 'orcasynapse-agent' any time on this host for status, updates and diagnosis."
   warning "Before production, allow OrcaSynapse to reach TCP/8642 and restrict VM2 egress to OrcaSynapse HTTPS plus approved inference and MCP destinations."
   ui_next "Return to OrcaSynapse and confirm this node reports Healthy."
 }

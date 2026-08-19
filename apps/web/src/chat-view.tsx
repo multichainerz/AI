@@ -489,11 +489,13 @@ function AgentResponseFlow({
 
   return (
     <div aria-label={entries.length > 0 ? "Hermes agent activity" : undefined}>
+      {/*
+        * A pending turn with nothing to show yet renders nothing here: the
+        * LoadingState below is already saying "working" with motion, and a
+        * static "Thinking…" above it was a second voice for the same fact.
+        */}
       {empty ? (
-        <MarkdownMessage
-          content={message.status === "PENDING" ? "Thinking…" : "No content returned."}
-          streaming={message.status === "PENDING"}
-        />
+        message.status === "PENDING" ? null : <MarkdownMessage content="No content returned." streaming={false} />
       ) : blocks.map((block, index) => block.kind === "text" ? (
         <MarkdownMessage
           content={block.text}

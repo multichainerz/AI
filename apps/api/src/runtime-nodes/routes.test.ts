@@ -152,6 +152,17 @@ describe("Hermes runtime-node routes", () => {
     expect(corpusReconciler.headers["cache-control"]).toBe("no-store");
     expect(corpusReconciler.body).toContain("orcasynapse-hermes-corpus-snapshot/v1");
     expect(corpusReconciler.body).toContain("apply_skill_pending");
+    const operatorCli = await app.inject({ method: "GET", url: "/install/orcasynapse-agent" });
+    expect(operatorCli.statusCode, operatorCli.body).toBe(200);
+    expect(operatorCli.headers["content-disposition"]).toBe("inline; filename=orcasynapse-agent");
+    expect(operatorCli.headers["cache-control"]).toBe("no-store");
+    expect(operatorCli.body).toContain("orcasynapse-agent-cli/v1");
+    // The maintenance arm, pinned: a CLI that drifted to --connect would refuse
+    // to run on every enrolled node it is installed on.
+    expect(operatorCli.body).toContain("bash -s -- --repair");
+    const operatorCliDigest = await app.inject({ method: "GET", url: "/install/orcasynapse-agent.sha256" });
+    expect(operatorCliDigest.statusCode).toBe(200);
+    expect(operatorCliDigest.body).toMatch(/^[0-9a-f]{64}\n$/);
     const remover = await app.inject({ method: "GET", url: "/install/remove-agentic-node.sh" });
     expect(remover.statusCode, remover.body).toBe(200);
     expect(remover.headers["content-disposition"]).toBe("inline; filename=remove-agentic-node.sh");

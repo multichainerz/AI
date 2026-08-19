@@ -101,9 +101,17 @@ If the retained Installation Key must be replaced, a customer with local root au
 sudo ./scripts/rotate-installation-key.sh --confirm-revoke-recovery-sessions
 ```
 
-This replaces the root-owned key file, immediately revokes recovery sessions, and recreates the API. The next recovery use records the new verifier in PostgreSQL. Local-password and federated OIDC sessions are otherwise independent. Routine administration uses the local account or mapped OIDC groups, including Microsoft Entra ID; the Installation Key remains the on-premises break-glass path.
+This replaces the root-owned key file, immediately revokes recovery sessions, and recreates the API. The next recovery use records the new verifier in PostgreSQL. Routine administration uses the local account; the Installation Key remains the on-premises break-glass path. (Federated OIDC sign-in was removed at v9.0.0.)
 
 Rotation also recreates the web container, so it reports the public scheme it is about to bring the proxy back on and takes the same `--public-scheme` flag. On an installation that recorded `https` it reads that back and keeps `Secure` on the session cookies; add the flag only to declare a scheme that was never recorded, or to change one.
+
+## Operating the hosts
+
+Each installer leaves an operator CLI on its host, and the CLI is the host's front door for day-two work. Both open a menu when run bare on a terminal and take subcommands non-interactively; both only ever execute the same commands the product already ships, printing each one before running it.
+
+On VM1, `orcasynapse` reports service and release state (`status`), applies the release target approved in **Settings → System** by starting the update agent (`update` — it cannot choose a version itself), tails compose logs (`logs api|web|worker|postgres|agent`), restarts one service (`restart`), and checks docker, readiness, the database, the update timer and disk (`doctor`). A failed update's block marker — and the reason it recorded — appears in `status`, with re-approval in the dashboard as the deliberate retry.
+
+On VM2, `orcasynapse-agent` reports the unit family, Hermes health, heartbeat and release drift (`status`), repairs the node in place from the release its control plane serves (`update` — the `--repair` arm; update OrcaSynapse first, since the node downloads the script from it), runs the desired-state, corpus and artifact publishers immediately (`sync`), checks the clock against the signed channel's ±5-minute window, connectivity, units, the deliverable-file path and disk (`doctor`), tails journals (`logs`), and hands off to the decommissioner (`decommission`, confirmed). The CLI itself is downloaded from the control plane and digest-verified on enrollment and on every repair, so the node always carries the CLI its control plane distributes.
 
 ## Manual development flow
 

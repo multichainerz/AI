@@ -441,3 +441,44 @@ describe("the node poll", () => {
     }
   });
 });
+
+describe("the enrolled runtime's maintenance path", () => {
+  /*
+   * The install command lives in the enrollment tile, which leaves the screen
+   * the moment the node heartbeats — and a fresh installer is then correctly
+   * refused, because the deployment holds one execution boundary. The backend
+   * keeps the installer downloadable after enrollment for exactly the repair
+   * rerun, and until this block no pixel said so: an operator with an enrolled
+   * node had no visible way to update it.
+   */
+  it("offers the repair command once a node is enrolled", async () => {
+    api.getHermesRuntimeNodes.mockResolvedValue({ items: [runtimeNode()] });
+    await panel();
+
+    const maintenance = within(screen.getByRole("article", { name: "Runtime maintenance" }));
+    // --repair, not --connect: on a completed enrollment the installer refuses
+    // --connect outright and tells the operator to decommission.
+    const command = maintenance.getByText(/curl -fsSL .*\/install\/agentic-node\.sh \| sudo bash -s -- --repair/);
+    expect(command.textContent).not.toContain("--connect");
+    expect(maintenance.getByRole("button", { name: "Copy command" })).toBeTruthy();
+    // The ordering that bit tonight's deployment twice: the node downloads
+    // this script from the control plane, so a stale control plane silently
+    // hands out the stale fix.
+    expect(maintenance.getByText(/Update OrcaSynapse first/)).toBeTruthy();
+  });
+
+  it("offers nothing to maintain before a node exists", async () => {
+    await panel();
+    expect(screen.queryByRole("article", { name: "Runtime maintenance" })).toBeNull();
+  });
+
+  it("retires the block with the boundary, not with the row", async () => {
+    // A revoked node still renders in the fleet list (its Remove action lives
+    // there), but there is no runtime left to repair.
+    api.getHermesRuntimeNodes.mockResolvedValue({
+      items: [runtimeNode({ status: "REVOKED", revokedAt: "2026-08-16T00:00:00.000Z" })],
+    });
+    await panel();
+    expect(screen.queryByRole("article", { name: "Runtime maintenance" })).toBeNull();
+  });
+});

@@ -35,6 +35,7 @@ const AGENTIC_NODE_INSTALLER_PATH = new URL("../../../../scripts/install-agentic
 const AGENTIC_NODE_REMOVER_PATH = new URL("../../../../scripts/remove-agentic-node.sh", import.meta.url);
 const HERMES_CORPUS_RECONCILER_PATH = new URL("../../../../scripts/hermes-corpus-reconciler.py", import.meta.url);
 const HERMES_ARTIFACT_PUBLISHER_PATH = new URL("../../../../scripts/hermes-artifact-publisher.py", import.meta.url);
+const AGENT_OPERATOR_CLI_PATH = new URL("../../../../scripts/orcasynapse-agent-cli.sh", import.meta.url);
 
 function managerOrLocked(options: RuntimeNodeRouteOptions, reply: FastifyReply): HermesRuntimeNodeManager | null {
   if (options.manager) return options.manager;
@@ -188,6 +189,29 @@ export async function registerRuntimeNodeInstallerRoutes(
       .header("content-disposition", "inline; filename=hermes-artifact-publisher.py")
       .type("text/x-python; charset=utf-8")
       .send(publisher);
+  });
+
+  /*
+   * The node's operator CLI, distributed exactly like the publisher: the
+   * installer downloads it on enrollment and on every --repair, verifies the
+   * digest below, and installs it to /usr/local/bin/orcasynapse-agent — so the
+   * CLI a node carries is always the one its control plane serves.
+   */
+  app.get("/orcasynapse-agent", async (_request, reply) => {
+    const cli = await readFile(AGENT_OPERATOR_CLI_PATH, "utf8");
+    return reply
+      .header("cache-control", "no-store")
+      .header("content-disposition", "inline; filename=orcasynapse-agent")
+      .type("text/x-shellscript; charset=utf-8")
+      .send(cli);
+  });
+
+  app.get("/orcasynapse-agent.sha256", async (_request, reply) => {
+    const cli = await readFile(AGENT_OPERATOR_CLI_PATH);
+    return reply
+      .header("cache-control", "no-store")
+      .type("text/plain; charset=utf-8")
+      .send(`${createHash("sha256").update(cli).digest("hex")}\n`);
   });
 
   // Same integrity-not-authentication caveat as the reconciler digest above.

@@ -203,6 +203,14 @@ class H(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path == "/install/orcasynapse-agent":
+            body = open(os.environ["AGENT_CLI"], "rb").read()
+            self.send_response(200)
+            self.send_header("content-type", "text/x-shellscript")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == DESIRED_STATE_PATH:
             return self._json({
                 "documentBase64": os.environ["DOC_B64"],
@@ -230,6 +238,7 @@ CORPUS_SIG_B64="$(base64 -w0 "${WORK}/corpus-desired.sig")" \
 CP_FINGERPRINT="$(openssl pkey -pubin -in "${WORK}/cp.pub" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')" \
 CORPUS_CLIENT="${ROOT}/scripts/hermes-corpus-reconciler.py" \
 ARTIFACT_CLIENT="${ROOT}/scripts/hermes-artifact-publisher.py" \
+AGENT_CLI="${ROOT}/scripts/orcasynapse-agent-cli.sh" \
 NODE_ID="${NODE_ID}" \
 HEARTBEAT_RECORD="${WORK}/heartbeat.json" \
   python3 "${WORK}/controlplane.py" "${CONTROL_PLANE_PORT}" >/dev/null 2>&1 &
@@ -267,6 +276,21 @@ grep -Fq 'ExecStart=/usr/local/lib/hermes-agent/venv/bin/python /usr/local/lib/o
 [[ -d /var/lib/orcasynapse-hermes/artifacts ]] \
   && pass "artifact root exists for session directories" \
   || bad "artifact root was not created"
+# The runtime writes deliverables here from inside ProtectSystem=strict, so the
+# sandbox grant is as load-bearing as the directory: v9.2.x shipped the
+# directory without the grant and every deliverable write failed with EROFS.
+grep -Eq 'ReadWritePaths=.*(/var/lib/orcasynapse-hermes|\$\{STATE_ROOT\})/artifacts' \
+  "/etc/systemd/system/${RUNTIME_SERVICE}.service" \
+  && pass "runtime sandbox grants the artifacts subtree" \
+  || bad "runtime sandbox does not grant the artifacts subtree"
+[[ -x /usr/local/bin/orcasynapse-agent ]] \
+  && pass "operator CLI is installed and executable" \
+  || bad "operator CLI was not installed"
+bash -n /usr/local/bin/orcasynapse-agent \
+  && pass "operator CLI parses" || bad "operator CLI does not parse"
+[[ -s "${STATE_ROOT}/installer-version" ]] \
+  && pass "installer version breadcrumb was recorded" \
+  || bad "installer version breadcrumb is missing"
 [[ "$(git -C /usr/local/lib/hermes-agent rev-parse HEAD 2>/dev/null)" == "${HERMES_COMMIT}" ]] \
   && pass "installed commit matches the pin" || bad "installed commit does not match the pin"
 curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
