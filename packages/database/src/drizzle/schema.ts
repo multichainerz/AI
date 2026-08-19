@@ -32,6 +32,7 @@ export const chatFeedbackRating = pgEnum("ChatFeedbackRating", ['HELPFUL', 'NOT_
 export const chatMessageRole = pgEnum("ChatMessageRole", ['USER', 'ASSISTANT'])
 export const chatMessageStatus = pgEnum("ChatMessageStatus", ['PENDING', 'COMPLETED', 'FAILED', 'CANCELLED'])
 export const chatArtifactStorage = pgEnum("ChatArtifactStorage", ['INLINE', 'NODE'])
+export const chatArtifactOrigin = pgEnum("ChatArtifactOrigin", ['AGENT', 'UPLOADED'])
 export const componentCompatibilityStatus = pgEnum("ComponentCompatibilityStatus", ['NOT_TESTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED'])
 export const connectionStatus = pgEnum("ConnectionStatus", ['NOT_TESTED', 'HEALTHY', 'DEGRADED', 'UNREACHABLE', 'DISABLED'])
 export const deploymentEnvironment = pgEnum("DeploymentEnvironment", ['DEVELOPMENT', 'STAGING', 'PRODUCTION'])
@@ -1525,7 +1526,8 @@ export const localUser = pgTable("LocalUser", {
  */
 export const chatArtifact = pgTable("ChatArtifact", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
-	runId: uuid().notNull(),
+	/** Null on an uploaded file: no governed run produced it. */
+	runId: uuid(),
 	/**
 	 * Deleting the conversation deletes its files, inline bytes included via
 	 * the content table's own cascade. This began as `set null` — "the
@@ -1535,7 +1537,10 @@ export const chatArtifact = pgTable("ChatArtifact", {
 	 */
 	conversationId: uuid(),
 	messageId: uuid(),
-	nodeId: uuid().notNull(),
+	/** Null on an uploaded file: the bytes never lived on a runtime node. */
+	nodeId: uuid(),
+	/** AGENT: saved by a governed run on its node. UPLOADED: attached by a person. */
+	origin: chatArtifactOrigin().default('AGENT').notNull(),
 	divisionId: uuid(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	/** The path's basename, bounded for display; `path` stays authoritative. */

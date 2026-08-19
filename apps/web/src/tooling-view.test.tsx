@@ -254,55 +254,63 @@ describe("tool sets", () => {
 });
 
 describe("the toggle", () => {
-  it("turns a tool on with one switch and a reason", async () => {
+  it("stages toggles as a draft and records the batch under one reason", async () => {
     const user = userEvent.setup();
-    await view({ catalogue: catalogue({ name: "code_execution", enabled: false }) });
+    await view({
+      catalogue: catalogue({ name: "code_execution", enabled: false }, { name: "web_search", enabled: true }),
+      admissions: [{ toolsetName: "web_search", admitted: true, reason: "Reviewed." }],
+    });
 
-    const row = screen.getByLabelText("code_execution");
-    await user.click(within(row).getByRole("switch"));
-    await user.type(within(row).getByLabelText(/why/i), "Reviewed with the data owner.");
-    await user.click(within(row).getByRole("button", { name: /^Allow$/ }));
+    // Switches move freely; nothing is recorded yet.
+    await user.click(within(screen.getByLabelText("code_execution")).getByRole("switch"));
+    await user.click(within(screen.getByLabelText("web_search")).getByRole("switch"));
+    expect(api.decideToolsetAdmission).not.toHaveBeenCalled();
+
+    const bar = screen.getByRole("form", { name: "Pending tool decisions" });
+    // The reason is a governance requirement the API enforces with a 400; the
+    // save is dead until one is written, and it is written once for the batch.
+    const save = within(bar).getByRole("button", { name: "Save 2 decisions" });
+    expect(save.hasAttribute("disabled")).toBe(true);
+    await user.type(within(bar).getByLabelText(/why/i), "Quarterly tooling review.");
+    expect(save.hasAttribute("disabled")).toBe(false);
+    await user.click(save);
 
     await waitFor(() => expect(api.decideToolsetAdmission).toHaveBeenCalledWith(
       "code_execution",
       true,
-      "Reviewed with the data owner.",
+      "Quarterly tooling review.",
     ));
-  });
-
-  it("turns an allowed tool off the same way", async () => {
-    const user = userEvent.setup();
-    await view({
-      catalogue: catalogue({ name: "web_search", enabled: true }),
-      admissions: [{ toolsetName: "web_search", admitted: true, reason: "Reviewed." }],
-    });
-
-    const row = screen.getByLabelText("web_search");
-    expect(within(row).getByRole("switch").getAttribute("aria-checked")).toBe("true");
-    await user.click(within(row).getByRole("switch"));
-    await user.type(within(row).getByLabelText(/why/i), "Withdrawn pending review.");
-    await user.click(within(row).getByRole("button", { name: /^Block$/ }));
-
-    await waitFor(() => expect(api.decideToolsetAdmission).toHaveBeenCalledWith(
+    expect(api.decideToolsetAdmission).toHaveBeenCalledWith(
       "web_search",
       false,
-      "Withdrawn pending review.",
-    ));
+      "Quarterly tooling review.",
+    );
   });
 
-  it("will not record a decision without a reason", async () => {
-    // The reason is a governance requirement the API enforces with a 400. It is
-    // asked for at the moment of the decision so it reads as the decision
-    // rather than as a form to fill in before any control works.
+  it("un-stages a switch flipped back to the recorded value, leaving nothing to save", async () => {
     const user = userEvent.setup();
     await view({ catalogue: catalogue({ name: "code_execution", enabled: false }) });
 
-    const row = screen.getByLabelText("code_execution");
-    await user.click(within(row).getByRole("switch"));
-    const confirm = within(row).getByRole("button", { name: /^Allow$/ });
-    expect(confirm.hasAttribute("disabled")).toBe(true);
-    await user.type(within(row).getByLabelText(/why/i), "Reviewed with the data owner.");
-    expect(confirm.hasAttribute("disabled")).toBe(false);
+    const toggle = () => within(screen.getByLabelText("code_execution")).getByRole("switch");
+    await user.click(toggle());
+    expect(screen.getByRole("form", { name: "Pending tool decisions" })).toBeTruthy();
+    await user.click(toggle());
+    expect(screen.queryByRole("form", { name: "Pending tool decisions" })).toBeNull();
+    expect(api.decideToolsetAdmission).not.toHaveBeenCalled();
+  });
+
+  it("discards the draft without recording anything", async () => {
+    const user = userEvent.setup();
+    await view({ catalogue: catalogue({ name: "code_execution", enabled: false }) });
+
+    await user.click(within(screen.getByLabelText("code_execution")).getByRole("switch"));
+    const bar = screen.getByRole("form", { name: "Pending tool decisions" });
+    await user.click(within(bar).getByRole("button", { name: "Discard" }));
+
+    expect(screen.queryByRole("form", { name: "Pending tool decisions" })).toBeNull();
+    expect(api.decideToolsetAdmission).not.toHaveBeenCalled();
+    // And the switch is back on the recorded value.
+    expect(within(screen.getByLabelText("code_execution")).getByRole("switch").getAttribute("aria-checked")).toBe("false");
   });
 
   it("offers no decision on built-in memory, which the boundary always permits", async () => {

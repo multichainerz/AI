@@ -1,4 +1,4 @@
-import { chatArtifactListSchema, hermesArtifactReceiptSchema, hermesArtifactUploadSchema } from "@orcasynapse/contracts";
+import { chatArtifactListSchema, chatArtifactSchema, hermesArtifactReceiptSchema, hermesArtifactUploadSchema, uploadChatArtifactSchema } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AdminSessionManager } from "../auth/admin-session.js";
 import { requireChatPrincipal } from "../chat/routes.js";
@@ -79,6 +79,26 @@ export async function registerChatArtifactRoutes(app: FastifyInstance, options: 
       return reply.code(400).send({ error: "INVALID_ARTIFACT_QUERY", message: "conversationId must be a UUID." });
     }
     return chatArtifactListSchema.parse(await options.manager.list(principal, conversationId ? { conversationId } : undefined));
+  });
+
+  /*
+   * The person-facing sibling of the node ingest: same 4 MiB file in base64
+   * inside JSON, so the same one-route body-limit raise. Owner and division
+   * come from the session; the request names only the conversation and the
+   * file.
+   */
+  app.post("/uploads", { bodyLimit: 6 * 1024 * 1024 }, async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return reply;
+    if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Artifact services are not ready." });
+    const input = uploadChatArtifactSchema.safeParse(request.body);
+    if (!input.success) return reply.code(400).send({ error: "INVALID_ARTIFACT_UPLOAD", message: input.error.issues[0]?.message });
+    try {
+      return reply.code(201).send(chatArtifactSchema.parse(await options.manager.upload(principal, input.data)));
+    } catch (error) {
+      if (error instanceof ArtifactNotFoundError) return reply.code(404).send({ error: "CONVERSATION_NOT_FOUND", message: error.message });
+      return sendError(error, reply);
+    }
   });
 
   app.get<{ Params: { artifactId: string } }>("/:artifactId/content", async (request, reply) => {

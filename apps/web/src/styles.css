@@ -1160,8 +1160,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
    as loud as the label they are explaining. */
 .ops-form label > small { color: var(--muted); font-size: 10px; line-height: 1.55; }
 
-.runtime-alert { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 13px; color: var(--bad); border: 1px solid rgb(var(--bad-rgb) / 0.4); border-radius: var(--radius-component); background: rgb(var(--bad-rgb) / 0.12); font-size: 10px; }
-.runtime-alert button { color: inherit; border: 0; background: transparent; cursor: pointer; font-size: 9px; font-weight: 650; }
 .runtime-status { display: inline-flex; align-items: center; padding: 0; color: var(--faint); border: 0; border-radius: 0; background: none; font: 9px/1.5 var(--mono); font-weight: 500; letter-spacing: .09em; text-transform: uppercase; white-space: nowrap; }
 .runtime-status.ready { color: var(--good); }
 .runtime-status.failed { color: var(--bad); }
@@ -1267,20 +1265,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 .runtime-node-list dd { overflow: hidden; margin: 5px 0 0; color: var(--muted); font-family: var(--mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-node-actions { display: flex; justify-content: flex-end; gap: 9px; white-space: nowrap; }
 .runtime-node-actions .danger { color: var(--bad); }
-.runtime-development-note { padding: 9px 11px; color: var(--faint); border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--raised); font-size: 8px; line-height: 1.5; }
-.runtime-removal-warning { padding: 13px; border: 1px solid rgb(var(--bad-rgb) / 0.4); border-radius: var(--radius-component); background: rgb(var(--bad-rgb) / 0.12); }
-.runtime-removal-warning strong { color: var(--bad); font-size: 10px; }
-.runtime-removal-warning p { margin: 5px 0 0; color: var(--bad); font-size: 8px; line-height: 1.55; }
-.runtime-removal-steps { display: grid; gap: 14px; padding: 0; margin: 0; list-style: none; }
-.runtime-removal-steps > li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; }
-.runtime-removal-steps > li > span { width: 24px; height: 24px; display: grid; place-items: center; color: var(--bad); border: 1px solid rgb(var(--bad-rgb) / 0.4); border-radius: 50%; background: rgb(var(--bad-rgb) / 0.12); font-size: 8px; font-weight: 700; }
-.runtime-removal-steps strong, .runtime-removal-steps small { display: block; }
-.runtime-removal-steps strong { font-size: 9px; }
-.runtime-removal-steps small { margin-top: 4px; color: var(--faint); font-size: 8px; line-height: 1.5; }
-.runtime-removal-steps code { display: block; overflow-x: auto; padding: 10px; margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); line-height: 1.6; white-space: pre; }
-.runtime-removal-steps button { margin-top: 8px; }
-.runtime-removal-attestation { grid-template-columns: auto minmax(0, 1fr) !important; align-items: start; gap: 8px !important; padding: 10px; margin-top: 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-component); background: var(--raised); cursor: pointer; }
-.runtime-removal-attestation span { color: var(--muted); font-size: 8px; font-weight: 500; line-height: 1.45; }@media (max-width: 980px) {
+@media (max-width: 980px) {
   .runtime-nodes-layout { grid-template-columns: 1fr; }
   .runtime-node-list > article { grid-template-columns: auto minmax(0, 1fr) auto; }
   .runtime-node-list dl { grid-column: 2; }

@@ -128,7 +128,7 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
       <WorkspaceIntro
         icon={<ScrollText className="size-4" aria-hidden="true" />}
         title="Audit trail"
-        actions={<Button className="shrink-0" size="sm" onClick={() => void load(applied, false)} disabled={busy}><SyncIcon size={14} />Refresh</Button>}
+        actions={<Button className="shrink-0" onClick={() => void load(applied, false)} disabled={busy}><SyncIcon size={16} />Refresh</Button>}
       >
       </WorkspaceIntro>
 

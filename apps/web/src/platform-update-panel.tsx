@@ -1,9 +1,9 @@
 import type { PlatformUpdate } from "@orcasynapse/contracts";
+import { RefreshCw as SyncIcon } from "lucide-react";
 import { useState } from "react";
 import { approveReleaseTarget, clearReleaseTarget, getPlatformUpdate } from "./api.js";
 import { PlatformUpdateActivityPanel } from "./platform-update-activity.js";
-import { Button, MicroLabel, Panel, StatusText } from "./ui/index.js";
-import { CopyIcon } from "./ui/relay-icons.js";
+import { Button, CopyButton, MicroLabel, Panel, StatusText } from "./ui/index.js";
 
 type UpdateState =
   | { status: "idle" }
@@ -32,7 +32,6 @@ interface PlatformUpdatePanelProps {
 
 export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpdatePanelProps) {
   const [state, setState] = useState<UpdateState>({ status: "idle" });
-  const [copied, setCopied] = useState(false);
   /*
    * Which decision is in flight, kept apart from the check's own state so a
    * refused approval does not throw away the release the operator just looked
@@ -53,7 +52,6 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
   const [activityToken, setActivityToken] = useState(0);
 
   const check = async () => {
-    setCopied(false);
     setDecisionError(null);
     setState({ status: "checking" });
     try {
@@ -79,11 +77,6 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
     } finally {
       setPending(null);
     }
-  };
-
-  const copyCommand = async (command: string) => {
-    await navigator.clipboard.writeText(command);
-    setCopied(true);
   };
 
   const available = state.status === "ready" && state.update.updateAvailable;
@@ -150,7 +143,11 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
               {pending === "approve" ? "Approving…" : `Approve ${approvable.latestVersion}`}
             </Button>
           )}
+          {/* The same glyph every Refresh control carries: this button is the
+              System page's refresh, and it was the one member of the family
+              without the icon. */}
           <Button onClick={() => void check()} disabled={state.status === "checking" || busy}>
+            <SyncIcon size={16} />
             {state.status === "checking" ? "Checking…" : "Check for updates"}
           </Button>
         </div>
@@ -198,13 +195,12 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
                 * to the approve button that had already made it unnecessary,
                 * which sent operators looking for a shell they no longer need.
                 */}
-              <Button
+              <CopyButton
                 variant={state.update.updateAvailable && !state.update.automaticUpdateSupported ? "primary" : "ghost"}
-                onClick={() => void copyCommand(state.update.updateCommand)}
+                value={state.update.updateCommand}
               >
-                <CopyIcon size={16} />
-                {copied ? "Copied" : "Copy update command"}
-              </Button>
+                Copy update command
+              </CopyButton>
             </div>
           </div>
           <code className="mt-3 block overflow-x-auto rounded border border-border bg-bg px-3 py-2.5 font-mono text-caption text-muted">

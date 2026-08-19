@@ -44,6 +44,7 @@ export function StepList({
   onSelect,
   label,
   className,
+  orientation = "vertical",
 }: {
   items: readonly StepListItem[];
   activeKey: string;
@@ -51,9 +52,25 @@ export function StepList({
   /** Names the rail for assistive technology; it is a navigation region. */
   label: string;
   className?: string;
+  /**
+   * `horizontal` lays the run across the top of whatever it introduces, one
+   * equal column per step — and falls back to the vertical rail below `sm`,
+   * where three titled columns cannot fit. Captions are a vertical-only
+   * luxury for the same reason: in a row they made every cell as tall as the
+   * wordiest blocker.
+   */
+  orientation?: "vertical" | "horizontal";
 }) {
+  const horizontal = orientation === "horizontal";
   return (
-    <ol className={cn("m-0 grid list-none gap-0 p-0", className)} aria-label={label}>
+    <ol
+      className={cn(
+        "m-0 grid list-none gap-0 p-0",
+        horizontal && "sm:grid-flow-col sm:auto-cols-fr",
+        className,
+      )}
+      aria-label={label}
+    >
       {items.map((item, index) => {
         const active = item.key === activeKey;
         return (
@@ -71,7 +88,25 @@ export function StepList({
               express it.
             */}
             {index < items.length - 1 && (
-              <span aria-hidden="true" className="absolute -bottom-3 left-7 top-11 w-px bg-border-strong" />
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute -bottom-3 left-7 top-11 w-px bg-border-strong",
+                  horizontal && "sm:hidden",
+                )}
+              />
+            )}
+            {/*
+              The same chain, turned on its side: from the right edge of this
+              marker (12px pad + 32px marker = left-11) across the cell
+              boundary into the next cell's padding (-right-3), at the
+              marker's vertical centre (top-7 = 12px pad + half of 32px).
+            */}
+            {horizontal && index < items.length - 1 && (
+              <span
+                aria-hidden="true"
+                className="absolute -right-3 left-11 top-7 hidden h-px bg-border-strong sm:block"
+              />
             )}
             <Button
               variant="ghost"
@@ -127,7 +162,12 @@ export function StepList({
                   looking straight at.
                 */}
                 {item.caption && !active ? (
-                  <span className="mt-1 block whitespace-normal text-micro font-normal normal-case leading-relaxed text-faint">
+                  <span
+                    className={cn(
+                      "mt-1 block whitespace-normal text-micro font-normal normal-case leading-relaxed text-faint",
+                      horizontal && "sm:hidden",
+                    )}
+                  >
                     {item.caption}
                   </span>
                 ) : null}

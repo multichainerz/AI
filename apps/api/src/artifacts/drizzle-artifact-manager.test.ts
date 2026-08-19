@@ -316,4 +316,62 @@ describe("division-scoped reads", () => {
     await expect(artifacts.download(member(DIVISION_ID), receipt.results[0]!.artifactId))
       .rejects.toThrow(ArtifactNotRetainedError);
   });
+
+  it("stores a person's upload inline, labelled and stamped from the session", async () => {
+    const { conversationId } = await seed();
+    const { artifacts } = manager();
+    const owner: ChatPrincipal = {
+      id: randomUUID(), subject: "operator@example.test", identityMode: "ENTERPRISE", scopes: ["chat:use"], divisionId: DIVISION_ID,
+    };
+    const bytes = Buffer.from("quarterly notes", "utf8");
+
+    const stored = await artifacts.upload(owner, {
+      conversationId: conversationId!,
+      name: "notes.txt",
+      mediaType: "text/plain",
+      contentBase64: bytes.toString("base64"),
+    });
+
+    // Origin is a labelled fact; run and node are honestly absent, and the
+    // division is the uploader's own — never anything the request asserted.
+    expect(stored).toMatchObject({
+      origin: "UPLOADED", runId: null, nodeId: null, storage: "INLINE",
+      divisionId: DIVISION_ID, name: "notes.txt", sizeBytes: bytes.byteLength,
+    });
+    const { bytes: fetched } = await artifacts.download(owner, stored.id);
+    expect(fetched.toString("utf8")).toBe("quarterly notes");
+    // And the node path keeps its own label.
+    await artifacts.ingest(NODE_ID, headers, upload());
+    const listed = await artifacts.list(owner);
+    expect(listed.items.map((item) => item.origin).sort()).toEqual(["AGENT", "UPLOADED"]);
+  });
+
+  it("answers a conversation the principal does not own with NOT FOUND", async () => {
+    const { conversationId } = await seed();
+    const { artifacts } = manager();
+    const stranger: ChatPrincipal = {
+      id: randomUUID(), subject: "someone-else@example.test", identityMode: "ENTERPRISE", scopes: ["chat:use"], divisionId: DIVISION_ID,
+    };
+
+    await expect(artifacts.upload(stranger, {
+      conversationId: conversationId!, name: "notes.txt", mediaType: "text/plain",
+      contentBase64: Buffer.from("x").toString("base64"),
+    })).rejects.toThrow(ArtifactNotFoundError);
+  });
+
+  it("refuses an upload past the inline limit instead of storing a truncation", async () => {
+    const { conversationId } = await seed();
+    const { artifacts } = manager();
+    const owner: ChatPrincipal = {
+      id: randomUUID(), subject: "operator@example.test", identityMode: "ENTERPRISE", scopes: ["chat:use"], divisionId: DIVISION_ID,
+    };
+
+    await expect(artifacts.upload(owner, {
+      conversationId: conversationId!, name: "too-big.bin", mediaType: "application/octet-stream",
+      contentBase64: Buffer.alloc(4 * 1024 * 1024 + 1, 7).toString("base64"),
+    })).rejects.toThrow(/4 MiB/);
+    await expect(artifacts.upload(owner, {
+      conversationId: conversationId!, name: "empty.txt", mediaType: "text/plain", contentBase64: "",
+    })).rejects.toThrow(/empty/);
+  });
 });

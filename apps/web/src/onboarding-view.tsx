@@ -264,17 +264,18 @@ export function OnboardingView({
     {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
 
     {/*
-      * `items-start`, so each column is as tall as what is in it.
-      *
-      * Both columns used to stretch to the viewport: three steps sat in a rail
-      * box 600px tall, the step itself in another, and the rest of the screen
-      * was two empty boxes. Setup is the first thing anyone sees on a new
-      * installation, and it was mostly a picture of nothing.
+      * The run of steps lies across the top of the step it introduces, not in
+      * a side rail: the wizard reads top-to-bottom as "where am I, then the
+      * work", and the form below gets the full width a connection table and
+      * an enrollment panel actually need. Below `sm` the run stacks back into
+      * the vertical rail, which is the only shape three titled steps fit at
+      * phone width.
       */}
-    <div className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-y-auto lg:grid-cols-[264px_minmax(0,1fr)]">
+    <div className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-y-auto">
       <Panel className="p-3">
       <StepList
         label="Setup steps"
+        orientation="horizontal"
         activeKey={active?.key ?? ""}
         items={steps.map((step) => ({
           key: step.key,

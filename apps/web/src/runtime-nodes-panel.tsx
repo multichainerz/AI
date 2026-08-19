@@ -14,7 +14,7 @@ import {
   mutateHermesRuntimeNode,
   removeHermesRuntimeNode,
 } from "./api.js";
-import { Alert, Button, Dialog, Field, Input, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
+import { Alert, Button, CopyButton, Dialog, Field, Input, Mark, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
 import { Switch } from "@/components/ui/switch";
 
 /**
@@ -442,8 +442,8 @@ export function RuntimeNodesPanel({
           {agenticNodeInstallCommand(invitation.bundle.controlPlaneUrl)}
         </code>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => void navigator.clipboard.writeText(agenticNodeInstallCommand(invitation.bundle.controlPlaneUrl))}>Copy command</Button>
-          <Button size="sm" onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</Button>
+          <CopyButton size="sm" value={() => agenticNodeInstallCommand(invitation.bundle.controlPlaneUrl)}>Copy command</CopyButton>
+          <CopyButton size="sm" value={() => invitation.bundle.token}>Copy claim</CopyButton>
           <Button size="sm" variant="ghost" onClick={() => { setInvitation(null); setIssuedAt(null); }}>Stop watching</Button>
         </div>
         <p className="m-0 text-caption text-muted">
@@ -529,9 +529,9 @@ export function RuntimeNodesPanel({
             {agenticNodeRepairCommand(defaultControlPlaneUrl())}
           </code>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => void navigator.clipboard.writeText(agenticNodeRepairCommand(defaultControlPlaneUrl()))}>
+            <CopyButton size="sm" value={() => agenticNodeRepairCommand(defaultControlPlaneUrl())}>
               Copy command
-            </Button>
+            </CopyButton>
           </div>
           <p className="m-0 text-caption leading-relaxed text-muted">
             Safe to re-run on the enrolled node: it revalidates the enrollment, rewrites the managed
@@ -640,7 +640,7 @@ export function RuntimeNodesPanel({
             {invitation.bundle.token}
           </code>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</Button>
+            <CopyButton size="sm" value={() => invitation.bundle.token}>Copy claim</CopyButton>
             <Button size="sm" variant="ghost" onClick={downloadBundle}>Download JSON fallback</Button>
           </div>
           <p className="m-0 text-caption leading-relaxed text-muted">
@@ -651,13 +651,19 @@ export function RuntimeNodesPanel({
       </div>
     </Dialog>}
 
+    {/*
+      * The decommission dialog, on the same primitives as every other form:
+      * Dialog + Field + Mark-numbered steps. It carried its own stylesheet-era
+      * classes (`.runtime-removal-*`, `.runtime-alert`) — 8px type and bespoke
+      * circles from three design systems ago — deleted with this rebuild.
+      */}
     {removalNode && <Dialog
       open
       icon={Trash2}
       kicker="Permanent decommission"
       title={`Remove ${removalNode.displayName}`}
+      description="Revocation stopped future trust. Decommissioning destroys the VM2 runtime, then erases its control-plane identity, enrollment history, nonces, and generated Hermes connection. The audit record remains."
       onClose={() => { if (busy === null) setRemovalNode(null); }}
-      className="ops-form"
       footer={<div className="flex justify-end gap-2">
         <Button disabled={busy !== null} onClick={() => setRemovalNode(null)}>Cancel</Button>
         <Button
@@ -669,13 +675,51 @@ export function RuntimeNodesPanel({
         </Button>
       </div>}
     >
-      <div className="runtime-removal-warning"><strong>This cannot be undone</strong><p>Revocation stopped future trust. Decommissioning now destroys the VM2 runtime and then erases its control-plane identity, enrollment history, nonces, and generated Hermes connection. The audit record remains.</p></div>
-      {removalNode.enrolledAt ? <ol className="runtime-removal-steps">
-        <li><span>1</span><div><strong>Run the purge on the enrolled VM2</strong><small>The script shows its exact scope and requires typing <code>DESTROY</code>. It leaves Ubuntu packages, unrelated services, and external backups untouched.</small><code>{agenticNodeRemovalCommand(typeof window === "undefined" ? "https://orcasynapse.internal" : window.location.origin)}</code><Button onClick={() => void navigator.clipboard.writeText(agenticNodeRemovalCommand(window.location.origin))}>Copy command</Button></div></li>
-        <li><span>2</span><div><strong>Confirm the host-side result</strong><small>OrcaSynapse deliberately has no standing SSH access or remote execution channel on VM2, so this confirmation is your administrative attestation.</small><label className="runtime-removal-attestation"><Switch checked={hostDestructionConfirmed} onCheckedChange={setHostDestructionConfirmed} /><span>The remover reported “Agentic System removed from this VM,” or the VM was destroyed.</span></label></div></li>
-      </ol> : <div className="runtime-development-note">This record never completed enrollment, so there is no managed VM2 installation to purge.</div>}
-      <label><span>Type {removalNode.slug} to remove it permanently</span><Input autoComplete="off" spellCheck={false} value={removalConfirmation} onChange={(event) => setRemovalConfirmation(event.target.value)} /></label>
-      {error && <div className="runtime-alert" role="alert"><span>{error}</span><Button variant="ghost" size="sm" onClick={() => setError(null)}>Dismiss</Button></div>}
+      <div className="grid gap-4">
+      <Alert>This cannot be undone.</Alert>
+
+      {removalNode.enrolledAt ? <ol className="m-0 grid list-none gap-4 p-0">
+        <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3">
+          <Mark size="sm" className="border border-bad/40 bg-bad/10 text-bad">1</Mark>
+          <div className="grid gap-1.5">
+            <strong className="text-label font-semibold text-text">Run the purge on the enrolled VM2</strong>
+            <p className="m-0 text-caption leading-relaxed text-muted">
+              The script shows its exact scope and requires typing <code className="font-mono">DESTROY</code>.
+              It leaves Ubuntu packages, unrelated services, and external backups untouched.
+            </p>
+            <code className="block overflow-x-auto rounded border border-border bg-bg px-3 py-2.5 font-mono text-caption text-muted">
+              {agenticNodeRemovalCommand(typeof window === "undefined" ? "https://orcasynapse.internal" : window.location.origin)}
+            </code>
+            <div><CopyButton size="sm" value={() => agenticNodeRemovalCommand(window.location.origin)}>Copy command</CopyButton></div>
+          </div>
+        </li>
+        <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3">
+          <Mark size="sm" className="border border-bad/40 bg-bad/10 text-bad">2</Mark>
+          <div className="grid gap-1.5">
+            <strong className="text-label font-semibold text-text">Confirm the host-side result</strong>
+            <p className="m-0 text-caption leading-relaxed text-muted">
+              OrcaSynapse deliberately has no standing SSH access or remote execution channel on VM2, so this
+              confirmation is your administrative attestation.
+            </p>
+            <label className="flex cursor-pointer items-start gap-2.5 rounded border border-border-strong bg-raised px-3 py-2.5">
+              <Switch checked={hostDestructionConfirmed} onCheckedChange={setHostDestructionConfirmed} />
+              <span className="text-caption leading-snug text-muted">
+                The remover reported “Agentic System removed from this VM,” or the VM was destroyed.
+              </span>
+            </label>
+          </div>
+        </li>
+      </ol> : (
+        <p className="m-0 rounded border border-border bg-raised px-3 py-2.5 text-caption leading-relaxed text-muted">
+          This record never completed enrollment, so there is no managed VM2 installation to purge.
+        </p>
+      )}
+
+      <Field label={`Type ${removalNode.slug} to remove it permanently`}>
+        <Input autoComplete="off" spellCheck={false} value={removalConfirmation} onChange={(event) => setRemovalConfirmation(event.target.value)} />
+      </Field>
+      {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
+      </div>
     </Dialog>}
   </div>;
 }

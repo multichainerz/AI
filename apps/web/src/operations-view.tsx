@@ -561,7 +561,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             description={overview?.runtime
               ? `Queued and running agent work, and the workers processing it. Read ${relativeTime(overview.runtime.capturedAt)}.`
               : "No worker has reported, so there is nothing to say about queued work."}
-            actions={<Button size="sm" onClick={() => void refresh()} disabled={busy}><SyncIcon size={14} />Refresh state</Button>}
+            actions={<Button onClick={() => void refresh()} disabled={busy}><SyncIcon size={16} />Refresh</Button>}
           />
           <div className="overflow-hidden rounded border border-border">
             <Table className="min-w-[560px]">

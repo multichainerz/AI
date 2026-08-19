@@ -19,7 +19,11 @@ import {
 } from "./api.js";
 import { ConfigurationSetsPanel } from "./configuration-sets-panel.js";
 import { ScopedMemoryPanel } from "./scoped-memory-panel.js";
-import { SnapshotIcon, StorageIcon, SyncIcon, TerminalIcon } from "./ui/relay-icons.js";
+// The Refresh control carries lucide's RefreshCw like every other Refresh in
+// the product; the relay set's SyncIcon looked like a sibling but was the one
+// spinner drawn from a different family.
+import { RefreshCw as SyncIcon } from "lucide-react";
+import { SnapshotIcon, StorageIcon, TerminalIcon } from "./ui/relay-icons.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, MicroLabel,
   Panel, PanelHeading, Select, StatusText, Textarea, Tile, WorkspaceDock, WorkspaceIntro, cn,

@@ -1,13 +1,14 @@
-import type {
-  HermesRuntimeCatalogue,
-  AgentRunApproval,
-  AgentProfile,
-  ChatArtifact,
-  ChatConversation,
-  ChatConversationSummary,
-  ChatMessage,
-  ChatStreamEvent,
-  ModelDeployment,
+import {
+  CHAT_ARTIFACT_INLINE_LIMIT_BYTES,
+  type HermesRuntimeCatalogue,
+  type AgentRunApproval,
+  type AgentProfile,
+  type ChatArtifact,
+  type ChatConversation,
+  type ChatConversationSummary,
+  type ChatMessage,
+  type ChatStreamEvent,
+  type ModelDeployment,
 } from "@orcasynapse/contracts";
 import { ChatSchedules } from "./chat-schedules.js";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
@@ -34,7 +35,6 @@ import {
   Bot as RobotIcon,
   BrainCircuit,
   CalendarClock,
-  Copy as CopyIcon,
   Paperclip as PaperclipIcon,
   Layers3 as LayersIcon,
   Monitor as MonitorIcon,
@@ -61,12 +61,14 @@ import {
   updateChatConversation,
   chatArtifactContentUrl,
   getChatArtifacts,
+  uploadChatArtifact,
 } from "./api.js";
 import {
   Alert,
   Button,
   Dialog,
   Input,
+  CopyButton,
   LockedScreen,
   MicroLabel,
   Select,
@@ -578,6 +580,16 @@ export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[
   ];
 }
 
+/** A File's bytes as the base64 the upload contract carries. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("The file could not be read."));
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.readAsDataURL(file);
+  });
+}
+
 export function ChatView({
   unlocked,
   displayName,
@@ -645,6 +657,8 @@ export function ChatView({
   // Whether a submit is in flight, held where a same-tick second submit can
   // see it. See `submit` for why the state flag beside it is not enough.
   const sending = useRef(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const messageScroller = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDivElement>(null);
 
@@ -1036,6 +1050,47 @@ export function ChatView({
     }
     if (event.type === "failed") setError(event.error);
   }
+
+  /*
+   * A person's file, attached from the composer. It rides the same store the
+   * agent's deliverables use, labelled UPLOADED, so the Files screen carries
+   * both with their provenance stated. Starting a conversation on first
+   * attach mirrors what the first message does: the file needs a
+   * conversation to belong to before anything else can reference it.
+   */
+  const attachFile = async (file: File) => {
+    if (!chatReady || uploading) return;
+    if (file.size === 0) { setError(`"${file.name}" is empty.`); return; }
+    if (file.size > CHAT_ARTIFACT_INLINE_LIMIT_BYTES) {
+      setError(`"${file.name}" is larger than the 4 MB upload limit.`);
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      let conversation = active;
+      if (!conversation) {
+        if (!selectedProfileId) throw new Error("Activate an Agent Profile before starting a Session.");
+        const created = await createChatConversation({ profileId: selectedProfileId });
+        conversation = await getChatConversation(created.id);
+        setConversations((items) => [created, ...items]);
+        setActive(conversation);
+      }
+      const stored = await uploadChatArtifact({
+        conversationId: conversation.id,
+        name: file.name.slice(0, 160),
+        mediaType: file.type || "application/octet-stream",
+        contentBase64: await fileToBase64(file),
+      });
+      setMessageArtifacts((items) => [stored, ...items]);
+    } catch (cause) {
+      handleError(cause, "The file could not be uploaded.");
+    } finally {
+      setUploading(false);
+      // Cleared so choosing the same file again re-fires the change event.
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1958,16 +2013,16 @@ export function ChatView({
                        * pointer -- and stays put on touch, where nothing hovers.
                        */
                       <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
-                        <Button
+                        <CopyButton
                           variant="ghost"
                           size="sm"
                           className="h-7 w-7 shrink-0 p-0"
                           aria-label="Copy response"
                           title="Copy response"
-                          onClick={() => void navigator.clipboard?.writeText(message.content)}
-                        >
-                          <CopyIcon size={14} />
-                        </Button>
+                          value={message.content}
+                          iconSize={14}
+                          children={null}
+                        />
                         {/*
                           * Four figures, one voice. Speed used to be violet and
                           * the other three grey, which ranks them -- and the
@@ -2140,6 +2195,26 @@ export function ChatView({
                 aria-label="Chat message"
               />
             </div>
+            {/*
+              * The conversation's uploads, worn by the composer that added
+              * them. Provenance chips, not controls: files live and die with
+              * the conversation, and the Files screen is where they download.
+              */}
+            {messageArtifacts.some((artifact) => artifact.origin === "UPLOADED") && (
+              <ul aria-label="Files attached to this conversation" className="m-0 flex list-none flex-wrap gap-1.5 px-3 pt-1">
+                {messageArtifacts.filter((artifact) => artifact.origin === "UPLOADED").map((artifact) => (
+                  <li key={artifact.id} className="flex min-w-0 items-center gap-1.5 rounded border border-border bg-raised/60 px-2 py-1 text-micro text-muted">
+                    <PaperclipIcon size={11} aria-hidden="true" className="shrink-0 text-faint" />
+                    <span className="max-w-[12rem] truncate font-medium">{artifact.name}</span>
+                    <span className="shrink-0 font-mono tabular-nums text-faint">
+                      {artifact.sizeBytes < 1024 * 1024
+                        ? `${Math.max(1, Math.round(artifact.sizeBytes / 1024))} KB`
+                        : `${(artifact.sizeBytes / (1024 * 1024)).toFixed(1)} MB`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
             {/* `pl-3` puts the agent name on the same left edge as the first
                 character of the draft: the field's own inset is 12px and the
                 shell adds 6px, so anything less reads as a second margin. */}
@@ -2180,6 +2255,28 @@ export function ChatView({
                 </span>
               </div>
               <div className="flex shrink-0 items-center gap-2.5">
+                <input
+                  ref={fileInput}
+                  type="file"
+                  className="hidden"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void attachFile(file);
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 text-muted"
+                  aria-label="Attach a file"
+                  title="Attach a file (up to 4 MB). It is kept with this conversation and listed in Files as uploaded."
+                  disabled={!chatReady || uploading}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <PaperclipIcon size={16} aria-hidden="true" className={uploading ? "animate-pulse" : undefined} />
+                </Button>
                 {/*
                   * A cap nobody is near is not information. The old counter sat
                   * on every draft reading "0 / 32,000"; this one appears for

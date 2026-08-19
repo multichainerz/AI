@@ -532,7 +532,7 @@ export function DashboardHero(props: DashboardHeroProps) {
         */}
         <div className="workspace-intro-field flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-1 py-1.5">
           <h1 className="m-0 min-w-0 font-display text-[25px] font-semibold leading-[1.12] tracking-[-0.025em] text-text sm:text-[29px]">
-            OrcaSynapse control center
+            Control Center
           </h1>
           <div className="flex shrink-0 flex-wrap items-center gap-2.5">
             <div className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2">

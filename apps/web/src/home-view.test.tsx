@@ -225,7 +225,9 @@ describe("Home", () => {
   it("names the next blocking step rather than a generic welcome", () => {
     render(<HomeView {...props()} />);
 
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("OrcaSynapse control center");
+    // "Control Center", not "OrcaSynapse control center": the sidebar wordmark
+    // already says whose product this is, and the title stopped repeating it.
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Control Center");
     expect(screen.queryByText(/Finish your private AI workspace/)).toBeNull();
     expect(screen.queryByText(/required capabilities are ready/)).toBeNull();
     // The unready capability is an attention row, marked as the next step.

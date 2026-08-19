@@ -1,4 +1,4 @@
-import type { ChatArtifact, ChatArtifactList, HermesArtifactReceipt, HermesArtifactUpload } from "@orcasynapse/contracts";
+import type { ChatArtifact, ChatArtifactList, HermesArtifactReceipt, HermesArtifactUpload, UploadChatArtifact } from "@orcasynapse/contracts";
 import type { ChatPrincipal } from "../chat/chat-manager.js";
 import type { NodeSignatureHeaders } from "../runtime-nodes/runtime-node-manager.js";
 
@@ -24,6 +24,14 @@ export interface ChatArtifactManager {
    * division's files cannot be confirmed to exist by probing ids.
    */
   download(principal: ChatPrincipal, artifactId: string): Promise<{ artifact: ChatArtifact; bytes: Buffer }>;
+  /**
+   * A person's file from the composer, stored inline and labelled
+   * `origin: UPLOADED`. The conversation must be the principal's own; owner
+   * and division come from the authenticated session, never the request. A
+   * conversation another principal owns answers NOT FOUND for the same
+   * probing reason as `download`.
+   */
+  upload(principal: ChatPrincipal, input: UploadChatArtifact): Promise<ChatArtifact>;
 }
 
 export class ArtifactNotFoundError extends Error {

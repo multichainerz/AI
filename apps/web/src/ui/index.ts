@@ -12,4 +12,5 @@ export { HeroBanner, Mark, Metric, MetricRow, MicroLabel, PageHeader, Panel, Pan
 export { Alert, EmptyState, LockedScreen, StatusText, toneFor, type Tone } from "./feedback.js";
 export { Dialog, Drawer } from "./overlay.js";
 export { StepList, type StepListItem, type StepListStatus } from "./step-list.js";
+export { CopyButton, copyToClipboard } from "./copy-button.js";
 export { Field, Input, Select, Textarea } from "./field.js";

@@ -86,8 +86,17 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
   const [catalogueRead, setCatalogueRead] = useState(true);
   const [mcpTools, setMcpTools] = useState<GovernedTool[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [editing, setEditing] = useState<{ name: string; next: boolean } | null>(null);
-  const [reason, setReason] = useState("");
+  /*
+   * Decisions staged, not yet recorded. Flipping a switch used to open its own
+   * reason form, so allowing three groups meant writing three justifications
+   * mid-flow — which is how governance paperwork trains people to write
+   * "asdf". Here the switches move freely, the pending set is visible as one
+   * batch, and a single reason is written once and recorded on every decision
+   * in the save. A switch flipped back to the server's value simply leaves
+   * the draft.
+   */
+  const [draft, setDraft] = useState<Record<string, boolean>>({});
+  const [draftReason, setDraftReason] = useState("");
   const [stagedName, setStagedName] = useState("");
   const [stagedReason, setStagedReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -255,17 +264,31 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     finally { setBusy(null); }
   };
 
-  const decide = async (event: FormEvent) => {
+  const saveDraft = async (event: FormEvent) => {
     event.preventDefault();
-    if (!editing || reason.trim().length < 3) return;
-    const { name, next } = editing;
-    await action(name, async () => {
-      await decideToolsetAdmission(name, next, reason.trim());
-      setEditing(null);
-      setReason("");
-    }, next
-      ? `${name} is allowed. The runtime still decides whether to switch it on.`
-      : `${name} is blocked. Any run made while the runtime still has it on is refused.`);
+    const entries = Object.entries(draft);
+    const reason = draftReason.trim();
+    if (entries.length === 0 || reason.length < 3 || busy) return;
+    setBusy("draft"); setError(null); setNotice(null);
+    // Recorded one decision at a time — the audited API stays per-decision —
+    // and a failure keeps what it could not record staged rather than lost.
+    const remaining = { ...draft };
+    try {
+      for (const [name, admitted] of entries) {
+        await decideToolsetAdmission(name, admitted, reason);
+        delete remaining[name];
+      }
+      setDraft({});
+      setDraftReason("");
+      await load();
+      setNotice(`${entries.length === 1 ? "1 decision" : `${entries.length} decisions`} recorded. The runtime still decides whether an allowed group is on.`);
+    } catch (cause) {
+      setDraft(remaining);
+      await load().catch(() => undefined);
+      fail(cause);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const stage = async (event: FormEvent) => {
@@ -355,10 +378,51 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
           : undefined}
       />
 
+      {Object.keys(draft).length > 0 && (
+        <form
+          className="mb-2 grid shrink-0 gap-3 rounded border border-accent/50 bg-soft/50 p-3"
+          aria-label="Pending tool decisions"
+          onSubmit={(event) => void saveDraft(event)}
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <strong className="text-label font-semibold text-text">
+              {Object.keys(draft).length === 1 ? "1 pending decision" : `${Object.keys(draft).length} pending decisions`}
+            </strong>
+            <span className="min-w-0 truncate font-mono text-micro text-muted">
+              {Object.entries(draft).map(([name, admitted]) => `${name} → ${admitted ? "allow" : "block"}`).join(" · ")}
+            </span>
+          </div>
+          <div className="grid gap-2.5 sm:flex sm:items-end">
+            {/* One reason for the batch, recorded on every decision in it: the
+                API's governance requirement is unchanged — only where the
+                writing happens moved, from mid-flow to the moment of commit. */}
+            <Field className="min-w-0 flex-1" label="Why — recorded on every decision in this save">
+              <Input
+                value={draftReason}
+                minLength={3}
+                maxLength={500}
+                placeholder="Reviewed with the data owner"
+                onChange={(event) => setDraftReason(event.target.value)}
+              />
+            </Field>
+            <div className="flex shrink-0 gap-2">
+              <Button variant="primary" type="submit" disabled={busy !== null || draftReason.trim().length < 3}>
+                {busy === "draft"
+                  ? "Saving…"
+                  : Object.keys(draft).length === 1 ? "Save decision" : `Save ${Object.keys(draft).length} decisions`}
+              </Button>
+              <Button variant="ghost" disabled={busy !== null} onClick={() => { setDraft({}); setDraftReason(""); }}>
+                Discard
+              </Button>
+            </div>
+          </div>
+        </form>
+      )}
+
       <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
         {rows.map((row) => {
           const drifting = row.enabled && !row.permitted;
-          const open = editing?.name === row.name;
+          const pending = draft[row.name];
           return (
             <Tile
               as="article"
@@ -367,7 +431,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
               className={cn(
                 "grid gap-3",
                 drifting ? "border-bad/50 bg-bad/10" : null,
-                open ? "border-accent/60" : null,
+                pending !== undefined ? "border-accent/50" : null,
               )}
             >
               <div className="flex flex-wrap items-start justify-between gap-x-5 gap-y-3">
@@ -401,61 +465,34 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
                   ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-2.5">
-                  <span className="text-caption text-muted">
-                    {row.baseline ? "Always allowed" : row.permitted ? "Allowed" : "Blocked"}
+                  <span className={cn("text-caption", pending !== undefined ? "font-medium text-accent" : "text-muted")}>
+                    {row.baseline
+                      ? "Always allowed"
+                      : pending !== undefined
+                        ? pending ? "Allow — pending" : "Block — pending"
+                        : row.permitted ? "Allowed" : "Blocked"}
                   </span>
                   {/*
-                    * The switch states the decision and opens the reason beneath
-                    * the row rather than flipping straight away. It stays where
-                    * it is until the decision is recorded, because until then it
-                    * has not been made.
+                    * The switch moves freely and stages the decision; nothing
+                    * is recorded until the batch above is saved with its
+                    * reason. Flipping back to the server's value un-stages it.
                     */}
                   <Switch
                     aria-label={`Allow ${row.name}`}
-                    checked={row.permitted}
+                    checked={pending ?? row.permitted}
                     disabled={row.baseline || !canManage || busy !== null}
                     onCheckedChange={(next) => {
-                      setEditing({ name: row.name, next });
-                      setReason("");
+                      setDraft((current) => {
+                        const changed = { ...current };
+                        if (next === row.permitted) delete changed[row.name];
+                        else changed[row.name] = next;
+                        return changed;
+                      });
                     }}
                   />
                 </div>
               </div>
 
-              {open && (
-                <form
-                  className="grid gap-2.5 border-t border-border pt-3 sm:flex sm:items-end"
-                  onSubmit={(event) => void decide(event)}
-                >
-                  {/* A reason is a governance requirement the API enforces with
-                      a 400. Asked for here, at the moment of the decision, it
-                      reads as the decision — the single shared box this screen
-                      used to carry disabled every button on the page until it
-                      was filled in, which is what made it feel like paperwork. */}
-                  <Field
-                    className="min-w-0 flex-1"
-                    label={editing.next ? `Why ${row.name} is allowed` : `Why ${row.name} is blocked`}
-                  >
-                    <Input
-                      value={reason}
-                      minLength={3}
-                      maxLength={500}
-                      placeholder="Reviewed with the data owner"
-                      onChange={(event) => setReason(event.target.value)}
-                    />
-                  </Field>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      variant={editing.next ? "primary" : "danger"}
-                      type="submit"
-                      disabled={busy !== null || reason.trim().length < 3}
-                    >
-                      {busy === row.name ? "Saving…" : editing.next ? "Allow" : "Block"}
-                    </Button>
-                    <Button variant="ghost" onClick={() => { setEditing(null); setReason(""); }}>Cancel</Button>
-                  </div>
-                </form>
-              )}
             </Tile>
           );
         })}

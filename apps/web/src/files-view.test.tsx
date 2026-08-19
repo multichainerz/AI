@@ -19,6 +19,7 @@ const artifact = (over: Record<string, unknown>) => ({
   conversationId: "8a1c2e3d-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
   messageId: null,
   nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
+  origin: "AGENT",
   divisionId: null,
   name: "findings.md",
   path: "out/findings.md",
@@ -40,6 +41,12 @@ const list: ChatArtifactList = {
       id: "1c65b2ef-7a1a-4c8f-8ba5-2d3e4f5a6b7c",
       name: "export.zip", path: "export.zip", mediaType: "application/zip",
       sizeBytes: 48 * 1024 * 1024, storage: "NODE", conversationTitle: "Data pull",
+    }),
+    artifact({
+      id: "2d76c3fa-8b2b-4d9a-9cb6-3e4f5a6b7c8d",
+      runId: null, nodeId: null, origin: "UPLOADED",
+      name: "notes.txt", path: "notes.txt", mediaType: "text/plain",
+      sizeBytes: 512, conversationTitle: "Release review", profileName: null,
     }),
   ],
 } as ChatArtifactList;
@@ -68,23 +75,25 @@ async function view() {
 describe("files view", () => {
   it("renders each file with its origin, and downloads via a plain navigation", async () => {
     await view();
-    const rows = within(screen.getByLabelText("Agent-produced files"));
+    const rows = within(screen.getByLabelText("Files"));
 
     expect(rows.getByText("findings.md")).toBeTruthy();
-    expect(rows.getByText("Release review")).toBeTruthy();
+    // Twice: the agent file and the upload both belong to this conversation.
+    expect(rows.getAllByText("Release review")).toHaveLength(2);
     expect(rows.getByText("2.0 KB")).toBeTruthy();
 
-    const download = rows.getByRole("link", { name: "Download" }) as HTMLAnchorElement;
+    const download = rows.getAllByRole("link", { name: "Download" })
+      .find((link) => link.getAttribute("download") === "findings.md") as HTMLAnchorElement;
     expect(download.getAttribute("href")).toBe("/api/v1/chat/artifacts/0b54a1de-6f0f-4b7e-9a94-1c2d3e4f5a6b/content");
-    expect(download.getAttribute("download")).toBe("findings.md");
   });
 
   it("says a node-resident file is on its node instead of offering a dead download", async () => {
     await view();
-    const rows = within(screen.getByLabelText("Agent-produced files"));
+    const rows = within(screen.getByLabelText("Files"));
 
     expect(rows.getByText("On node")).toBeTruthy();
-    expect(rows.getAllByRole("link", { name: "Download" })).toHaveLength(1);
+    // Two inline files download; the node-resident one is the row that must not.
+    expect(rows.getAllByRole("link", { name: "Download" })).toHaveLength(2);
     expect(rows.getByText("48.0 MB")).toBeTruthy();
   });
 
@@ -100,6 +109,24 @@ describe("files view", () => {
     await user.clear(screen.getByLabelText("Search files"));
     await user.type(screen.getByLabelText("Search files"), "no such file");
     expect(screen.getByText("Nothing matches")).toBeTruthy();
+  });
+
+  it("labels provenance on every row and narrows by it without a server round trip", async () => {
+    await view();
+    const user = userEvent.setup();
+    const rows = () => within(screen.getByLabelText("Files"));
+
+    // Words, not colour: Uploaded and Agent are stated on the row.
+    expect(rows().getByText("Uploaded")).toBeTruthy();
+    expect(rows().getAllByText("Agent")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "Uploaded" }));
+    expect(rows().getByText("notes.txt")).toBeTruthy();
+    expect(screen.queryByText("findings.md")).toBeNull();
+    expect(getChatArtifacts).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(rows().getByText("findings.md")).toBeTruthy();
   });
 
   it("renders a failed load as a failure, never as an empty library", async () => {

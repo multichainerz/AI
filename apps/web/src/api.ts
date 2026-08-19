@@ -1,6 +1,9 @@
 import {
   chatArtifactListSchema,
+  chatArtifactSchema,
+  type ChatArtifact,
   type ChatArtifactList,
+  type UploadChatArtifact,
   auditEventListSchema,
   usageReportSchema,
   type UsageReport,
@@ -505,6 +508,17 @@ export async function getChatArtifacts(filter: { conversationId?: string } = {})
  */
 export function chatArtifactContentUrl(artifactId: string): string {
   return `/api/v1/chat/artifacts/${encodeURIComponent(artifactId)}/content`;
+}
+
+/** A person's file from the composer, stored inline and labelled UPLOADED. */
+export async function uploadChatArtifact(input: UploadChatArtifact): Promise<ChatArtifact> {
+  const response = await fetch("/api/v1/chat/artifacts/uploads", {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return chatArtifactSchema.parse(await parsedResponse(response));
 }
 
 export async function getChatConversations(): Promise<ChatConversationList> {

@@ -5,6 +5,7 @@ import {
   type ChatArtifactList,
   type HermesArtifactReceipt,
   type HermesArtifactUpload,
+  type UploadChatArtifact,
 } from "@orcasynapse/contracts";
 import {
   agentProfile,
@@ -130,6 +131,61 @@ export class DrizzleChatArtifactManager implements ChatArtifactManager {
 
     return { accepted: true, results, removed, serverTime: new Date().toISOString() };
   }
+
+  async upload(principal: ChatPrincipal, input: UploadChatArtifact): Promise<ChatArtifact> {
+    /*
+     * The conversation must be the principal's own. An administrator preview
+     * can read every division's files, but an upload is authorship, not
+     * operation — it lands in a conversation as that conversation's owner, so
+     * only the owner writes. Not-owned and nonexistent are one answer, for
+     * the same probing reason the download route gives.
+     */
+    const [conversation] = await this.database.select({
+      id: chatConversation.id,
+      ownerSubject: chatConversation.ownerSubject,
+      title: chatConversation.title,
+      profileName: chatConversation.profileName,
+    }).from(chatConversation).where(eq(chatConversation.id, input.conversationId)).limit(1);
+    if (!conversation || conversation.ownerSubject !== principal.subject) {
+      throw new ArtifactNotFoundError("The conversation does not exist.");
+    }
+
+    const bytes = Buffer.from(input.contentBase64, "base64");
+    if (bytes.byteLength === 0) throw new ArtifactValidationError("The uploaded file is empty.");
+    if (bytes.byteLength > CHAT_ARTIFACT_INLINE_LIMIT_BYTES) {
+      // Refused, not stored as metadata: an upload has no runtime node for
+      // the bytes to remain on, so past the limit there is nothing honest
+      // to retain.
+      throw new ArtifactValidationError("Uploads are limited to 4 MiB.");
+    }
+
+    const now = new Date();
+    const artifact = await this.database.transaction(async (transaction) => {
+      const [created] = await transaction.insert(chatArtifact).values({
+        runId: null,
+        conversationId: conversation.id,
+        messageId: null,
+        nodeId: null,
+        origin: "UPLOADED",
+        // The uploader's own division, the same stamp their reads are bounded
+        // by — so a file uploaded by a division member is visible to exactly
+        // the principals who can see that conversation's other files.
+        divisionId: principal.divisionId ?? null,
+        ownerSubject: principal.subject,
+        name: input.name,
+        path: input.name,
+        mediaType: input.mediaType,
+        sizeBytes: bytes.byteLength,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        storage: "INLINE" as const,
+        observedAt: now,
+      }).returning();
+      await transaction.insert(chatArtifactContent).values({ artifactId: created!.id, bytes });
+      return created!;
+    });
+    return DrizzleChatArtifactManager.toWire(artifact, conversation.title, conversation.profileName);
+  }
+
   /** The rows a principal may see, as a WHERE clause -- never a UI filter. */
   private visibility(principal: ChatPrincipal) {
     if (principal.identityMode === "ADMINISTRATOR_PREVIEW") return undefined;
@@ -144,7 +200,7 @@ export class DrizzleChatArtifactManager implements ChatArtifactManager {
   private static toWire(row: typeof chatArtifact.$inferSelect, conversationTitle: string | null, profileName: string | null): ChatArtifact {
     return {
       id: row.id, runId: row.runId, conversationId: row.conversationId, messageId: row.messageId,
-      nodeId: row.nodeId, divisionId: row.divisionId,
+      nodeId: row.nodeId, origin: row.origin, divisionId: row.divisionId,
       name: row.name, path: row.path, mediaType: row.mediaType,
       sizeBytes: row.sizeBytes, sha256: row.sha256, storage: row.storage,
       conversationTitle, profileName,

@@ -44,6 +44,34 @@ const artifactPathSchema = z.string().trim().min(1).max(1_024).refine(
 
 export const chatArtifactStorageSchema = z.enum(CHAT_ARTIFACT_STORAGE);
 
+/**
+ * Where a file came from, said on every row: `AGENT` is a deliverable a
+ * governed run saved on its node, `UPLOADED` is a file a person attached from
+ * the composer. The two share one store and one Files screen because they are
+ * both "files that belong to this conversation" — but a reader deciding
+ * whether to trust a file needs to know which hands touched it, so the origin
+ * is a labelled fact rather than an inference from null columns.
+ */
+export const CHAT_ARTIFACT_ORIGINS = ["AGENT", "UPLOADED"] as const;
+export const chatArtifactOriginSchema = z.enum(CHAT_ARTIFACT_ORIGINS);
+
+/**
+ * A person's upload from the composer. Unlike the node path there is no
+ * signed envelope and no session: the conversation is named directly, the
+ * owner and division come from the authenticated principal, and the bytes are
+ * required — an upload past the inline limit is refused, because there is no
+ * runtime node for it to remain on.
+ */
+export const uploadChatArtifactSchema = z.object({
+  conversationId: z.uuid(),
+  name: z.string().trim().min(1).max(160).refine(
+    (value) => !value.includes("/") && !value.includes("\\") && value !== "." && value !== "..",
+    "Upload names must be bare file names.",
+  ),
+  mediaType: z.string().trim().min(1).max(160).default("application/octet-stream"),
+  contentBase64: z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/).min(1).max(CHAT_ARTIFACT_CONTENT_BASE64_MAX),
+}).strict();
+
 export const hermesArtifactUploadEntrySchema = z.object({
   path: artifactPathSchema,
   mediaType: z.string().trim().min(1).max(160),
@@ -110,10 +138,13 @@ export const hermesArtifactReceiptSchema = z.object({
 /** The read side: what a list or a download's metadata reports. */
 export const chatArtifactSchema = z.object({
   id: z.uuid(),
-  runId: z.uuid(),
+  /** Null on an uploaded file: no governed run produced it. */
+  runId: z.uuid().nullable(),
   conversationId: z.uuid().nullable(),
   messageId: z.uuid().nullable(),
-  nodeId: z.uuid(),
+  /** Null on an uploaded file: the bytes never lived on a runtime node. */
+  nodeId: z.uuid().nullable(),
+  origin: chatArtifactOriginSchema,
   divisionId: z.uuid().nullable(),
   name: z.string().min(1).max(160),
   path: artifactPathSchema,
@@ -132,6 +163,8 @@ export const chatArtifactListSchema = z.object({
 }).strict();
 
 export type ChatArtifactStorage = z.infer<typeof chatArtifactStorageSchema>;
+export type ChatArtifactOrigin = z.infer<typeof chatArtifactOriginSchema>;
+export type UploadChatArtifact = z.infer<typeof uploadChatArtifactSchema>;
 export type HermesArtifactUploadEntry = z.infer<typeof hermesArtifactUploadEntrySchema>;
 export type HermesArtifactUpload = z.infer<typeof hermesArtifactUploadSchema>;
 export type HermesArtifactReceipt = z.infer<typeof hermesArtifactReceiptSchema>;
