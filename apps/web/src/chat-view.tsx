@@ -134,7 +134,7 @@ function formatCompactTokenCount(value: number): string {
  * are the last fifth and the last twentieth of the allowance — the span where
  * the figure changes what someone does next.
  */
-const COMPOSER_LIMIT = 32_000;
+const COMPOSER_LIMIT = 128_000;
 const COMPOSER_COUNTER_FROM = Math.round(COMPOSER_LIMIT * 0.2);
 const COMPOSER_COUNTER_WARN = Math.round(COMPOSER_LIMIT * 0.05);
 

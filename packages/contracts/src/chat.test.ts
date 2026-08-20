@@ -17,7 +17,7 @@ describe("chat contracts", () => {
 
   it("rejects unknown controls and oversized prompts", () => {
     expect(createChatConversationSchema.safeParse({ unrestrictedModel: true }).success).toBe(false);
-    expect(sendChatMessageSchema.safeParse({ content: "x".repeat(32_001) }).success).toBe(false);
+    expect(sendChatMessageSchema.safeParse({ content: "x".repeat(128_001) }).success).toBe(false);
   });
 
   it("validates typed streaming events", () => {

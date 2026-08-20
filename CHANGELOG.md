@@ -5,6 +5,24 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.5.6 — 2026-08-20
+
+Raises the guardrail ceilings an operator may configure: typed input up to
+128,000 characters, output up to 256,000. Defaults are unchanged — these are
+upper bounds on the dial, and every deployment keeps the values its active
+policy states.
+
+### Changes
+
+- raise the writable `maxInputCharacters` bound to 128,000 across the policy
+  contract, the composer, schedule prompts and direct run input
+- raise the writable `maxOutputCharacters` bound to 256,000, and the
+  `submitRun` platform clamp with it
+- raise the gateway's per-message text cap to 400,000 characters and the
+  chat-completions body limit to 8 MiB, so transcripts carrying what the
+  ceilings permit survive the replay instead of dying on a schema or 413
+  error no policy screen explains
+
 ## v9.5.5 — 2026-08-20
 
 Stops a conversation from being poisoned by its own history: the inference

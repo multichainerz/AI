@@ -236,7 +236,7 @@ export const agentProfileListSchema = z.object({
 
 export const submitAgentRunSchema = z.object({
   profileId: z.uuid(),
-  input: z.string().trim().min(1).max(32_000),
+  input: z.string().trim().min(1).max(128_000),
 }).strict();
 
 export const agentRunSchema = z.object({
@@ -247,7 +247,7 @@ export const agentRunSchema = z.object({
   profileVersion: z.number().int().positive(),
   profileDistributionDigest: sha256Schema.nullable(),
   status: agentRunStatusSchema,
-  input: z.string().max(32_000),
+  input: z.string().max(128_000),
   output: z.string().nullable(),
   partialOutput: z.string(),
   modelAlias: z.string().max(200).nullable(),

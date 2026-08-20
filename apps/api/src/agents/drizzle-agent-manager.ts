@@ -627,7 +627,7 @@ export class DrizzleAgentManager implements AgentManager {
      */
     const policy = await this.activePolicy();
     const outputCharacterLimit = Math.min(
-      200_000,
+      256_000,
       Math.max(1_000, options.outputCharacterLimit ?? policy.maxOutputCharacters),
     );
     /*

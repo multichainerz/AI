@@ -629,6 +629,31 @@ describe("DrizzleInferenceGateway rate-limit counter", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("honours a raised input ceiling end to end", async () => {
+    // 125k characters: over the old 32k policy bound and over the old 120k
+    // message-schema cap, so this passes only if both moved together.
+    const { gateway, fetcher } = await harness();
+    await context.database.insert(guardrailPolicy).values({
+      slug: `policy-${randomUUID().slice(0, 8)}`,
+      displayName: "Wide input ceiling",
+      description: "Allows long typed input.",
+      version: "1",
+      status: "ACTIVE",
+      maxInputCharacters: 128_000,
+      maxOutputCharacters: 256_000,
+      firstActivatedAt: new Date(),
+      rules: [],
+    });
+
+    await gateway.chat(
+      "runtime-key",
+      { ...request, messages: [{ role: "user", content: "u".repeat(125_000) }] },
+      new AbortController().signal,
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses an assistant echo past the output ceiling its policy grants", async () => {
     // A tighter-than-default policy, because the contract already caps one
     // string body at 120k: the policy ceiling is what an operator tunes.

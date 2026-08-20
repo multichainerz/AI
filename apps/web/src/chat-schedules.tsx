@@ -112,7 +112,7 @@ export function ChatSchedules({ conversationId }: { conversationId: string }) {
           <Textarea
             rows={3}
             value={prompt}
-            maxLength={32_000}
+            maxLength={128_000}
             placeholder="Summarise anything that changed overnight."
             onChange={(event) => setPrompt(event.target.value)}
           />

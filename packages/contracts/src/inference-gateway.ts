@@ -10,9 +10,17 @@ const extensionObjectSchema = z.record(z.string(), z.unknown());
  * bounded extension object the way tool definitions always have, with the
  * route's own bodyLimit as the real size ceiling.
  */
+/*
+ * 400k, matching the reasoning-trace bound below, and chosen from the policy
+ * ceilings rather than invented: an operator may allow 128k characters of
+ * typed input and 256k of output, and every one of those messages comes back
+ * through this schema when Hermes replays the transcript. A cap below the
+ * ceilings the policy itself grants would poison a conversation on echo with
+ * a schema error the guardrail screen never mentioned.
+ */
 const textContentPartSchema = z.object({
   type: z.literal("text"),
-  text: z.string().max(120_000),
+  text: z.string().max(400_000),
   cache_control: extensionObjectSchema.optional(),
 }).strict();
 const opaqueContentPartSchema = z.object({ type: z.string().min(1).max(40) })
@@ -21,7 +29,7 @@ const opaqueContentPartSchema = z.object({ type: z.string().min(1).max(40) })
 export const inferenceGatewayContentPartSchema = z.union([textContentPartSchema, opaqueContentPartSchema]);
 
 const messageContentSchema = z.union([
-  z.string().max(120_000),
+  z.string().max(400_000),
   z.null(),
   z.array(inferenceGatewayContentPartSchema).max(64),
 ]);

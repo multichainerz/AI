@@ -124,7 +124,7 @@ export const updateChatConversationSchema = z
 
 export const sendChatMessageSchema = z
   .object({
-    content: z.string().trim().min(1).max(32_000),
+    content: z.string().trim().min(1).max(128_000),
   })
   .strict();
 
@@ -164,7 +164,7 @@ export const chatScheduleOutcomeSchema = z.enum(CHAT_SCHEDULE_OUTCOMES);
 export const chatScheduleSchema = z.object({
   id: z.uuid(),
   conversationId: z.uuid(),
-  prompt: z.string().min(1).max(32_000),
+  prompt: z.string().min(1).max(128_000),
   intervalSeconds: z.number().int(),
   nextRunAt: z.iso.datetime(),
   lastRunAt: z.iso.datetime().nullable(),
@@ -190,7 +190,7 @@ export const chatScheduleListSchema = z.object({
  */
 export const createChatScheduleSchema = z
   .object({
-    prompt: z.string().trim().min(1).max(32_000),
+    prompt: z.string().trim().min(1).max(128_000),
     intervalSeconds: z.number().int()
       .min(CHAT_SCHEDULE_MIN_INTERVAL_SECONDS)
       .max(CHAT_SCHEDULE_MAX_INTERVAL_SECONDS),
@@ -202,7 +202,7 @@ export const createChatScheduleSchema = z
 
 export const updateChatScheduleSchema = z
   .object({
-    prompt: z.string().trim().min(1).max(32_000).optional(),
+    prompt: z.string().trim().min(1).max(128_000).optional(),
     intervalSeconds: z.number().int()
       .min(CHAT_SCHEDULE_MIN_INTERVAL_SECONDS)
       .max(CHAT_SCHEDULE_MAX_INTERVAL_SECONDS)

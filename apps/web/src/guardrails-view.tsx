@@ -536,7 +536,7 @@ export function GuardrailsView({
                 type="number"
                 required
                 min={control.kind === "INPUT_CEILING" ? 256 : 1_024}
-                max={control.kind === "INPUT_CEILING" ? 32_000 : 1_000_000}
+                max={control.kind === "INPUT_CEILING" ? 128_000 : 256_000}
                 value={control.amount}
                 onChange={(event) => setControl({ ...control, amount: Number(event.target.value) })}
               />

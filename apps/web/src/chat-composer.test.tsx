@@ -195,11 +195,11 @@ describe("the chat composer", () => {
     const field = await composer();
 
     fireEvent.change(field, { target: { value: "Short enough that a counter is only noise" } });
-    expect(screen.queryByText(/32,000/)).toBeNull();
+    expect(screen.queryByText(/128,000/)).toBeNull();
     expect(screen.queryByText(/left$/)).toBeNull();
 
-    // The last thousand characters of a 32,000-character cap.
-    fireEvent.change(field, { target: { value: "x".repeat(31_000) } });
+    // The last thousand characters of a 128,000-character cap.
+    fireEvent.change(field, { target: { value: "x".repeat(127_000) } });
     const remaining = screen.getByLabelText("1,000 characters left before the message limit");
     expect(remaining.textContent).toContain("1,000 left");
     expect(remaining.className).toContain("text-warn");

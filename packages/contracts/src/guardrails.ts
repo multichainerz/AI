@@ -61,14 +61,14 @@ const guardrailRuleListSchema = z.array(guardrailRuleSchema).max(100);
  * The output ceiling an operator may *write*.
  *
  * Deliberately smaller than the bound `guardrailPolicySchema` will *read*, and
- * the asymmetry is the point. `submitRun` clamps with `Math.min(200_000, …)`,
+ * the asymmetry is the point. `submitRun` clamps with `Math.min(256_000, …)`,
  * so anything above this was never honoured -- but the read schema validates
  * rows on the way out of `GET /api/v1/admin/guardrails`, and tightening it
  * there would turn every deployment holding an older, larger value into a 500
  * on a screen that works today. So the write bound moves and the read bound
  * stays. Do not "tidy" them into agreement.
  */
-const writableOutputCharactersSchema = z.number().int().min(1_024).max(200_000);
+const writableOutputCharactersSchema = z.number().int().min(1_024).max(256_000);
 
 export const guardrailPolicySchema = z.object({
   id: z.uuid(),
@@ -77,7 +77,7 @@ export const guardrailPolicySchema = z.object({
   description: z.string().trim().min(3).max(500),
   version: z.string().trim().min(1).max(120),
   status: guardrailPolicyStatusSchema,
-  maxInputCharacters: z.number().int().min(256).max(32_000),
+  maxInputCharacters: z.number().int().min(256).max(128_000),
   // The wide bound, on the read path only. See `writableOutputCharactersSchema`.
   maxOutputCharacters: z.number().int().min(1_024).max(1_000_000),
   blockControlCharacters: z.boolean(),
@@ -102,7 +102,7 @@ export const createGuardrailPolicySchema = z.object({
   displayName: z.string().trim().min(2).max(120),
   description: z.string().trim().min(3).max(500),
   version: z.string().trim().min(1).max(120),
-  maxInputCharacters: z.number().int().min(256).max(32_000),
+  maxInputCharacters: z.number().int().min(256).max(128_000),
   maxOutputCharacters: writableOutputCharactersSchema,
   blockControlCharacters: z.boolean(),
   blockCredentialPatterns: z.boolean(),
@@ -113,7 +113,7 @@ export const updateGuardrailPolicySchema = z.object({
   displayName: z.string().trim().min(2).max(120).optional(),
   description: z.string().trim().min(3).max(500).optional(),
   version: z.string().trim().min(1).max(120).optional(),
-  maxInputCharacters: z.number().int().min(256).max(32_000).optional(),
+  maxInputCharacters: z.number().int().min(256).max(128_000).optional(),
   maxOutputCharacters: writableOutputCharactersSchema.optional(),
   blockControlCharacters: z.boolean().optional(),
   blockCredentialPatterns: z.boolean().optional(),
