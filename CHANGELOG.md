@@ -5,6 +5,20 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.1 — 2026-08-20
+
+Makes the attachment announcement honest on nodes that cannot reach the
+governed tool plane.
+
+### Changes
+
+- tell the run that attached files live on the control plane and that a
+  missing `read_file` tool should be said out loud — not answered by
+  searching the node's filesystem for files that were never there. Enrolled
+  nodes currently pin `no_mcp` (see docs/MCP_ENABLEMENT_PLAN.md), so every
+  governed tool is unreachable from runs until that increment lands; the
+  instructions now fail toward a plain sentence instead of a hunt.
+
 ## v9.6.0 — 2026-08-20
 
 Renames the attached-file tool's slug to what the tooling contract permits.
