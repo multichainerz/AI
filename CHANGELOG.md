@@ -5,6 +5,17 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.7 — 2026-08-20
+
+Says the ceilings the guardrail form actually enforces.
+
+### Changes
+
+- correct the ceiling hints on the Guardrails control editor to the writable
+  bounds — input between 256 and 128,000 characters, output between 1,024
+  and 256,000 — matching the form's own limits and the contract, instead of
+  the pre-v9.5.6 numbers
+
 ## v9.6.6 — 2026-08-20
 
 Keeps a bulk tool review readable while it is still a draft.

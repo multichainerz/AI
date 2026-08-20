@@ -531,7 +531,11 @@ export function GuardrailsView({
       {control?.kind && (
         <form className="grid content-start gap-3" id="guardrail-control-editor" onSubmit={(event) => void saveControl(event)}>
           {(control.kind === "INPUT_CEILING" || control.kind === "OUTPUT_CEILING") && (
-            <Field label="Characters" hint={control.kind === "INPUT_CEILING" ? "Between 256 and 32,000." : "Between 1,024 and 1,000,000."}>
+            /* The hint states the WRITABLE bounds — what the save will accept.
+               The read schema tolerates larger legacy output values, but
+               telling an operator "up to 1,000,000" here described a number
+               the form's own max and the contract both refuse. */
+            <Field label="Characters" hint={control.kind === "INPUT_CEILING" ? "Between 256 and 128,000." : "Between 1,024 and 256,000."}>
               <Input
                 type="number"
                 required

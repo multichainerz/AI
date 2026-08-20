@@ -2287,7 +2287,7 @@ export function ChatView({
                 </Button>
                 {/*
                   * A cap nobody is near is not information. The old counter sat
-                  * on every draft reading "0 / 32,000"; this one appears for
+                  * on every draft reading "0 / 128,000"; this one appears for
                   * the last fifth of the allowance and turns amber for the last
                   * twentieth, which is the only span where it changes anything.
                   */}

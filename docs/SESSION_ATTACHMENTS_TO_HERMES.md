@@ -5,7 +5,7 @@
 | Author | TBD |
 | Date | 2026-08-20 |
 | Status | Draft |
-| Product | OrcaSynapse v9.6.2 (`2ce955b`) → sequential `v9.6.3+` on `main` |
+| Product | OrcaSynapse v9.6.5 (`81af534`) → sequential `v9.6.6+` on `main` |
 | Repo | `/home/sivali/Documents/GitHub/AI` |
 
 ## Overview
@@ -51,9 +51,9 @@ Wire cap: `packages/contracts/src/artifacts.ts` lines 23–25 (`CHAT_ARTIFACT_CO
 
 **Bind-on-send (v9.6.2) is attribution, not delivery.** `DrizzleChatManager.submitMessage` stamps every still-pending `UPLOADED` + null `messageId` artifact onto the new user message inside the submit transaction (`apps/api/src/chat/drizzle-chat-manager.ts` 758–775). The composer shows unbound uploads; bound files render on the bubble. Bytes stay in PostgreSQL.
 
-**Guardrails scan the typed prompt.** `inspectInput` runs on `requested` in `submitMessage` (line 664) and again on `input.input` in `submitRun` (`apps/api/src/agents/drizzle-agent-manager.ts` 723). Redacted text is stored as `AgentRun.input` and `ChatMessage.content` (lines 681, 834–837). File `bytea` is not on that path today; this design keeps it that way.
+**Guardrails scan the typed prompt.** `inspectInput` runs on `requested` in `submitMessage` (line 664) and again on `input.input` in `submitRun` (`apps/api/src/agents/drizzle-agent-manager.ts` 771). Redacted text is stored as `ChatMessage.content` (681) and `AgentRun.input` (`guardedInput` at 885). File `bytea` is not on that path today; this design keeps it that way.
 
-**Worker → Hermes is a string.** `DrizzleAgentProcessor` loads metadata via `conversationUploads` and starts Hermes with `input: run.input` (the typed prompt) plus `hardenedInstructions` including `ATTACHED FILES`. `HermesRunSubmission.input` is `string` (`packages/runtime-clients/src/hermes-client.ts` 326–334). `consumeNativeSession` POSTs `{ message: input.input, instructions, model }` (745–749). Chat session id is the conversation UUID (`submitRun` `sessionId: conversationId`, `drizzle-chat-manager.ts` 788). Direct runs default `sessionId` to the run UUID (`drizzle-agent-manager.ts` 834).
+**Worker → Hermes is a string.** `DrizzleAgentProcessor` loads metadata via `conversationUploads` and starts Hermes with `input: run.input` (the typed prompt) plus `hardenedInstructions` including `ATTACHED FILES`. `HermesRunSubmission.input` is `string` (`packages/runtime-clients/src/hermes-client.ts` 326–334). `consumeNativeSession` POSTs `{ message: input.input, instructions, model }` (745–749). Chat session id is the conversation UUID (`submitRun` `sessionId: conversationId`, `drizzle-chat-manager.ts` 788). Direct runs default `sessionId` to the run UUID (`drizzle-agent-manager.ts` 882).
 
 **`ATTACHED FILES` currently names a tool the node cannot call.**
 
@@ -96,7 +96,7 @@ function attachedFilesSection(uploads: readonly ConversationUpload[]): string {
 
 **Inference gateway already round-trips `image_url` parts and inspects only text.** `isTextPart` (`apps/api/src/inference/inference-gateway.ts` 105–107) and the content-parts walk (515–528) forward non-text parts unchanged. Tests pin this (`inference-gateway.test.ts` 339–351). The Fastify route body limit is **8 MiB** (`apps/api/src/inference/routes.ts` 115) — tighter than Hermes’ 10 MB, and it applies to the **replayed transcript**, not just the new turn.
 
-**Nginx is a tighter ceiling than Fastify, and it is still the default 1 m.** Production path is VM2 → public origin → Nginx → API. `deploy/nginx/default.conf` `location /internal/v1/` (105–114) and `location /api/` (93–103) have **no** `client_max_body_size`. There is no `client_max_body_size` anywhere in this repository (verified). Nginx’s default is 1 m. Fastify `app.inject()` never hits it. A real screenshot ≳ ~700 KB 413s at the proxy on replay; the composer’s 4 MiB / 6 MiB JSON upload (`apps/api/src/artifacts/routes.ts` 90) is already on the wrong side of `location /api/`. Worker → Hermes `:8642` is local and fine. `apps/web/src/vite-proxy-routes.test.ts` already asserts the `/internal/v1/chat/completions` location exists (line 12) and is the pin for the new directives.
+**Nginx is a tighter ceiling than Fastify, and it is still the default 1 m.** Production path is VM2 → public origin → Nginx → API. `deploy/nginx/default.conf` `location /internal/v1/` (105–114) and `location /api/` (93–103) have **no** `client_max_body_size`. There is no `client_max_body_size` anywhere in this repository (verified). Nginx’s default is 1 m. Fastify `app.inject()` never hits it. A real screenshot ≳ ~700 KB 413s at the proxy on replay; the composer’s 4 MiB / 6 MiB JSON upload (`apps/api/src/artifacts/routes.ts` 90) is already on the wrong side of `location /api/`. Worker → Hermes uses the enrolled node's `baseUrl` (VM1 worker → VM2 `:8642`); that POST is not behind control-plane Nginx. `apps/web/src/vite-proxy-routes.test.ts` already asserts the `/internal/v1/chat/completions` location exists (line 12) and is the pin for the new directives.
 
 ### Pain
 
@@ -111,7 +111,7 @@ The product already stores the file, attributes it, announces it, and has a tool
 3. Text-only Sessions (no uploads, and uploads with no injectable images) produce the **same** Hermes POST shape as today: `{ message: <string>, instructions, model }`.
 4. `inspectInput` / character limits never see file base64.
 5. Direct agent runs and scheduled runs whose `sessionId` is not a conversation that owns `UPLOADED` rows no-op the new path.
-6. Forked conversations still inject **this turn’s** attachments. They do not skip inject on the assumption Hermes history already has the pixels. A successful native fork **does** copy multimodal history (`replace_messages`); this design must not re-POST those copied `data:image` parts on the fork’s first start. Pre-v9.6.3 source turns have no image parts in that copy — those historical screenshots are a documented residual, not re-injected.
+6. Forked conversations still inject **this turn’s** attachments. They do not skip inject on the assumption Hermes history already has the pixels. A successful native fork **does** copy multimodal history (`replace_messages`); this design must not re-POST those copied `data:image` parts on the fork’s first start. Pre-v9.6.6 source turns have no image parts in that copy — those historical screenshots are a documented residual, not re-injected.
 7. Each increment is an independently shippable `vX.Y.Z` commit on `main` matching this repo’s release flow (`CHANGELOG.md` header, `CONTRIBUTING.md` 103–115, `scripts/test-release-consistency.sh`). Each commit is **tagged** `vX.Y.Z` (lightweight, per CONTRIBUTING). This design does not itself `git push` the tags (user non-goal), but it does not skip creating them; Settings release-awareness compares the GitHub tag list (`docs/ARCHITECTURE.md` “Release awareness”).
 
 ### Non-goals
@@ -155,11 +155,11 @@ After this ships:
 
 8. **Do not put user files in `artifacts/<sessionId>/` even with a skip, as the primary layout.** A skip bug would mis-attribute user bytes as `origin: AGENT` (see Alternatives B). Sibling + skip is belt and suspenders; the belt is the sibling.
 
-9. **This-turn image inject only.** `UPLOADED` rows bound to this run’s user message, then the byte/count budget. Later turns rely on Hermes history. A successful native fork copies that history (`api_server.py` 3319–3320), so “no `externalRunId` on this session” is **not** a proxy for “Hermes is blind” — using it would re-POST the same `data:image` parts and double gateway body size. Pre-v9.6.3 forks inherit text-only history; those old screenshots are not re-injected (residual). Fork still copies artifact **rows** so Files/inbox work on the new conversationId; that is not an inject signal.
+9. **This-turn image inject only.** `UPLOADED` rows bound to this run’s user message, then the byte/count budget. Later turns rely on Hermes history. A successful native fork copies that history (`api_server.py` 3319–3320), so “no `externalRunId` on this session” is **not** a proxy for “Hermes is blind” — using it would re-POST the same `data:image` parts and double gateway body size. Pre-v9.6.6 forks inherit text-only history; those old screenshots are not re-injected (residual). Fork still copies artifact **rows** so Files/inbox work on the new conversationId; that is not an inject signal.
 
-10. **Raise every ceiling on the replay path, not only Fastify.** In v9.6.3: Fastify `POST /internal/v1/chat/completions` `bodyLimit` 8 MiB → 16 MiB **and** Nginx `client_max_body_size` 16 m on `location /internal/v1/` plus 8 m on `location /api/` (composer 4 MiB upload). One 4 MiB PNG ≈ 5.59 MiB base64; two such images are ~11.2 MiB and often still fit 16 MiB; the **third** full-size image in history is the realistic 413. Do not revert these raises while any Session may still replay `data:image` history.
+10. **Raise every ceiling on the replay path, not only Fastify.** In v9.6.6: Fastify `POST /internal/v1/chat/completions` `bodyLimit` 8 MiB → 16 MiB **and** Nginx `client_max_body_size` 16 m on `location /internal/v1/` plus 8 m on `location /api/` (composer 4 MiB upload). One 4 MiB PNG ≈ 5.59 MiB base64; two such images are ~11.2 MiB and often still fit 16 MiB; the **third** full-size image in history is the realistic 413. Do not revert these raises while any Session may still replay `data:image` history.
 
-11. **One injectable-image allowlist in `packages/contracts`.** Worker and inbox API import it. Shipped in v9.6.3 even though the API does not call it until the inbox routes exist.
+11. **One injectable-image allowlist in `packages/contracts`.** Worker and inbox API import it. Shipped in v9.6.6 even though the API does not call it until the inbox routes exist.
 
 12. **Inbox GC never treats a truncated page as a tombstone.** Manifest is complete per included session; global 200 is a page assembled from whole sessions. Deletes require `filesComplete: true` or `truncated: false`. Explicit `User-Agent: orcasynapse-hermes-inbox/1.0` on every companion request (Cloudflare 1010).
 
@@ -303,7 +303,7 @@ LIMIT 1;
 2. `storage === "INLINE"` (no bytes on VM1 otherwise).
 3. `messageId === thisTurnUserMessageId`.
 
-Scheduled fires go through `submitMessage` (`schedule-runtime.ts` 161). Bind-on-send therefore stamps any still-pending composer uploads onto that scheduled user message, and image inject **honors** them as this-turn attachments. Direct runs keep `sessionId = run.id` (`drizzle-agent-manager.ts` 834); the UUID guard returns `[]` and `images` is omitted. Do **not** also inject “all conversation images on first `externalRunId` for this session” — that duplicates Hermes-forked history (Decision 9).
+Scheduled fires go through `submitMessage` (`schedule-runtime.ts` 161). Bind-on-send therefore stamps any still-pending composer uploads onto that scheduled user message, and image inject **honors** them as this-turn attachments. Direct runs keep `sessionId = run.id` (`drizzle-agent-manager.ts` 882); the UUID guard returns `[]` and `images` is omitted. Do **not** also inject “all conversation images on first `externalRunId` for this session” — that duplicates Hermes-forked history (Decision 9).
 
 **Budget, newest first** (`createdAt` desc among candidates):
 
@@ -316,15 +316,15 @@ Scheduled fires go through `submitMessage` (`schedule-runtime.ts` 161). Bind-on-
 
 #### Inference gateway and Nginx body limits
 
-Hermes replays session history, including prior `data:image` parts, through `POST /internal/v1/chat/completions`. Two ceilings, both in v9.6.3:
+Hermes replays session history, including prior `data:image` parts, through `POST /internal/v1/chat/completions`. Two ceilings, both in v9.6.6:
 
-| Ceiling | Today | v9.6.3 |
+| Ceiling | Today | v9.6.6 |
 | --- | --- | --- |
 | Fastify `bodyLimit` on that route (`apps/api/src/inference/routes.ts` 115) | `8 * 1_048_576` | `16 * 1_048_576` |
 | Nginx `location /internal/v1/` (`deploy/nginx/default.conf` 105) | default 1 m (unset) | `client_max_body_size 16m;` |
 | Nginx `location /api/` (line 93) | default 1 m (unset) | `client_max_body_size 8m;` |
 
-The `/api/` raise covers the existing composer upload (`bodyLimit: 6 * 1024 * 1024` at `artifacts/routes.ts` 90; 4 MiB file ≈ 5.59 MiB JSON). Worker → Hermes `:8642` is not behind this Nginx.
+The `/api/` raise covers the existing composer upload (`bodyLimit: 6 * 1024 * 1024` at `artifacts/routes.ts` 90; 4 MiB file ≈ 5.59 MiB JSON). Worker → Hermes (enrolled node `baseUrl`, typically VM2 `:8642`) is not behind this Nginx.
 
 Pin in `apps/web/src/vite-proxy-routes.test.ts`: the `/internal/v1/` block contains `client_max_body_size 16m` and the `/api/` block contains `client_max_body_size 8m`. Fastify `app.inject()` tests are not sufficient.
 
@@ -356,7 +356,7 @@ Import `chatArtifact` and `chatArtifactContent` in the fork path. Extend `apps/a
 - A non-image bound to a copied USER row has a **new** artifact id and a **new** `messageId` whose `chatMessage.conversationId` is the fork (not the source).
 - An unbound source upload stays `messageId` null on the fork.
 
-This copy is **not** an inject signal. Native history already carries post-v9.6.3 image parts; the worker injects this-turn only.
+This copy is **not** an inject signal. Native history already carries post-v9.6.6 image parts; the worker injects this-turn only.
 
 ### 2. Text / non-image inbox (VM2 companion)
 
@@ -529,7 +529,7 @@ Doctor: hermes user can **read** a probe file and **cannot write** one; companio
 
 Replace `attachedFilesSection` so it describes what this design delivers. Pin in `apps/worker/src/hardened-instructions.test.ts`. **Never mention `read_file`.** That word is both the governed slug and Hermes’ native file tool (`toolsets.py` 218–222 vs seeded `read_file`); v9.6.1 exists because the model hunted VM2 (`CHANGELOG.md` v9.6.1). Saying “do not call a governed `read_file`” still puts the hunt token in the prompt.
 
-v9.6.3 (and later, whenever the node does **not** report `session-inbox-v1`):
+v9.6.6 (and later, whenever the node does **not** report `session-inbox-v1`):
 
 ```
 ATTACHED FILES
@@ -560,7 +560,7 @@ export function hardenedInstructions(
 ): string
 ```
 
-`attachedFilesSection(uploads, options.sessionInbox === true)` emits the path copy only when `sessionInbox` is true. Default `sessionInbox: false` so existing tests keep the v9.6.3 “on the control plane” copy.
+`attachedFilesSection(uploads, options.sessionInbox === true)` emits the path copy only when `sessionInbox` is true. Default `sessionInbox: false` so existing tests keep the v9.6.6 “on the control plane” copy.
 
 In `process()`, next to `conversationUploads` (not by overloading `boundaryState`’s failure return):
 
@@ -575,7 +575,7 @@ instructions: hardenedInstructions(run, memory, uploads, { sessionInbox }),
 
 `sessionInboxAvailable()`: select `capabilities` from the single enrolled non-revoked `hermesRuntimeNode` (same predicate as `boundaryState` 1171–1173). True iff the JSON array includes `"session-inbox-v1"`. Heartbeat already replaces `capabilities` on every beat (`drizzle-runtime-node-manager.ts` 1122). Enrollment-time `installerVersion` is **not** the gate (written only at enroll, line 877; not on `hermesNodeHeartbeatSchema` 234–240).
 
-v9.6.6 worker, **only if** `sessionInbox === true`:
+v9.6.9 worker, **only if** `sessionInbox === true`:
 
 ```
 Other attachments are on this machine at the path shown. Open the path with a
@@ -595,7 +595,7 @@ Custom `STATE_ROOT` deployments: derive the inbox prefix from the same enrollmen
 
 ### 4. Classification helper (shared)
 
-One exported function in `packages/contracts/src/artifacts.ts` (next to the artifact media-type field), imported by the worker and the inbox manager. **Add it in v9.6.3** even though the API does not call it until v9.6.5. Two copies drifting (`image/jpg` mapping, `image/webp`, SVG) would either double-copy a PNG onto VM2 or drop it from both channels.
+One exported function in `packages/contracts/src/artifacts.ts` (next to the artifact media-type field), imported by the worker and the inbox manager. **Add it in v9.6.6** even though the API does not call it until v9.6.8. Two copies drifting (`image/jpg` mapping, `image/webp`, SVG) would either double-copy a PNG onto VM2 or drop it from both channels.
 
 ```ts
 const INJECTABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -751,7 +751,7 @@ VM2 changes land via `orcasynapse-agent update` / installer `--repair`, which al
 - Publisher skip: harmless if left in.
 - Companion: `systemctl disable --now orcasynapse-hermes-inbox.timer`; inbox tree can remain. The heartbeat script advertises `session-inbox-v1` only while the inbox directory exists **and** the timer is active, so disabling the timer drops the capability on the next beat without restoring an old script. Do not call `verify_enrolled_identity` from `--repair` (its short capabilities list would wipe the flag).
 
-**Staged exposure:** v9.6.3 is the user-visible PNG fix and can ship to a deployment that never repairs VM2. Text files remain “on the control plane” until v9.6.6 **and** a node repair that reports `session-inbox-v1`.
+**Staged exposure:** v9.6.6 is the user-visible PNG fix and can ship to a deployment that never repairs VM2. Text files remain “on the control plane” until v9.6.9 **and** a node repair that reports `session-inbox-v1`.
 
 ## Risks
 
@@ -776,7 +776,7 @@ VM2 changes land via `orcasynapse-agent update` / installer `--repair`, which al
 
 - `hermes-client.test.ts`: existing string-body assertion still exact; new case with `images: [{mediaType, base64}]` expects a parts array; `images: []` expects a string; `JSON.stringify(nativeSessionChatBody(input))` equals the POST `body` (budget measurement uses the same function).
 - `packages/contracts` `injectableImageMediaType`: `image/jpg` → `image/jpeg`; SVG and `text/plain` → null.
-- `hardened-instructions.test.ts`: fourth argument defaults `sessionInbox: false` (v9.6.3 copy, no path); `{ sessionInbox: true }` emits the inbox path and still no `read_file` token; no “search the filesystem” for artifactIds; images “on this turn”; empty uploads still omit the section; deliverable path unchanged.
+- `hardened-instructions.test.ts`: fourth argument defaults `sessionInbox: false` (v9.6.6 copy, no path); `{ sessionInbox: true }` emits the inbox path and still no `read_file` token; no “search the filesystem” for artifactIds; images “on this turn”; empty uploads still omit the section; deliverable path unchanged.
 - `agent-processor` tests: UUID/non-matching sessionId ⇒ no `images`; conversation with PNG bound to this turn’s user message (`ordinal = assistant.ordinal - 1`) ⇒ `start` received `images`; a PNG bound to an older message is not injected; `input` still the prompt; bytes not in any `agentRun.input` row; skip reasons `budget` / `count` / `not-injectable`; scheduled-style bind-on-send (pending upload stamped on the user message) is injected.
 - `drizzle-chat-manager.test.ts`: bind-on-send still holds; fork copies UPLOADED INLINE **images** (bounded) and not AGENT; `chatArtifactContent` round-trips; a skipped oversized extra image is omitted; a non-image bound to a copied USER row has a **new** artifact id and a **new** `messageId` whose message `conversationId` is the fork; an unbound source upload stays `messageId` null.
 - `inference-gateway.test.ts` (`apps/api/src/inference/inference-gateway.test.ts`): large `data:image/png;base64,` + short text does not `INPUT_CHARACTER_LIMIT`; credential in the **text** part still BLOCKS.
@@ -803,34 +803,34 @@ VM2 changes land via `orcasynapse-agent update` / installer `--repair`, which al
 
 Each item is a versioned commit on `main` (subject `vX.Y.Z`), independently reviewable and shippable. A GitHub PR is optional and equivalent to that commit. **Tag** each commit `vX.Y.Z` per `CONTRIBUTING.md`. This design does not `git push` the tags.
 
-Patch 3–6 does not trip the minor-digit-rolls-at-9 rule (`scripts/test-release-consistency.sh`).
+v9.6.6–v9.6.9 does not trip the minor-digit-rolls-at-9 rule (`scripts/test-release-consistency.sh`).
 
-### v9.6.3 — Inject Session images on the Hermes turn
-
-- **Title:** `v9.6.3`
-- **Files/components:** `packages/contracts/src/artifacts.ts` (`injectableImageMediaType` + test); `packages/runtime-clients/src/hermes-client.ts` (+ test); `apps/worker/src/agent-processor.ts` (+ `hardened-instructions.test.ts`, `agent-processor.test.ts`); `apps/api/src/inference/routes.ts`; `apps/api/src/inference/inference-gateway.test.ts`; `deploy/nginx/default.conf`; `apps/web/src/vite-proxy-routes.test.ts`; `apps/api/src/chat/drizzle-chat-manager.ts` (`chatArtifact` / `chatArtifactContent` fork copy) (+ `drizzle-chat-manager.test.ts`); version surfaces + `CHANGELOG.md`
-- **Depends on:** nothing (after v9.6.2)
-- **Changes:** Optional `images` on `HermesRunSubmission`; exported `nativeSessionChatBody` used for both POST and worker `Buffer.byteLength` (test: strings equal). String `message` when `images` empty. Shared injectable-image allowlist in contracts. Worker selects **this-turn** INLINE injectable images (`messageId` = USER row at `assistant.ordinal - 1`), skip reasons `budget`/`count`/`not-injectable`. Scheduled `submitMessage` bind-on-send is honored. Rewrite `ATTACHED FILES` (`hardenedInstructions` fourth arg defaults `sessionInbox: false`): no `read_file` token; images “on this turn”; other files “on the control plane.” Raise Fastify chat-completions `bodyLimit` to 16 MiB **and** Nginx `client_max_body_size` 16 m (`/internal/v1/`) / 8 m (`/api/`). Fork: in-lock image copy with `.returning` `messageIdMap`; after-commit remaining INLINE uses the **same** new ids and mapped `messageId`s. **Fixes `canonical.png` without a VM2 repair.**
-
-### v9.6.4 — Publisher must not ingest an inbox
-
-- **Title:** `v9.6.4`
-- **Files/components:** `scripts/hermes-artifact-publisher.py`; `scripts/test-hermes-artifact-publisher.py`; version surfaces + `CHANGELOG.md`
-- **Depends on:** none logically; ships after v9.6.3 by convention
-- **Changes:** Reserved session/path skip (`inbox`, `.inbox`, `_inbox`, dot-directories). Tests that a planted `artifacts/inbox/…` file is not POSTed. No behaviour change for real session directories. Safe on nodes that never grow an inbox.
-
-### v9.6.5 — Node-signed session-inbox API
-
-- **Title:** `v9.6.5`
-- **Files/components:** `packages/contracts/src/artifacts.ts` (inbox list schema; reuses `injectableImageMediaType`); `apps/api/src/artifacts/artifact-manager.ts`, `drizzle-artifact-manager.ts`, `routes.ts` (+ tests); `apps/api/src/app.ts` wiring if needed; version surfaces + `CHANGELOG.md`
-- **Depends on:** v9.6.3 (allowlist)
-- **Changes:** `GET …/session-inbox` and `GET …/session-inbox/:artifactId/content`, node-signed, `null` body, method+path bound, 401 on auth failure. Manifest grouped by session with `truncated` / `filesComplete`; whole sessions only; 50/conversation; 200 global as a stop, not a mid-session cut. Content GET uses the same eligibility (UPLOADED + INLINE + non-injectable). Direct runs with a non-conversation UUID never appear. No companion yet.
-
-### v9.6.6 — VM2 inbox companion, installer repair, gated path copy
+### v9.6.6 — Inject Session images on the Hermes turn
 
 - **Title:** `v9.6.6`
+- **Files/components:** `packages/contracts/src/artifacts.ts` (`injectableImageMediaType` + test); `packages/runtime-clients/src/hermes-client.ts` (+ test); `apps/worker/src/agent-processor.ts` (+ `hardened-instructions.test.ts`, `agent-processor.test.ts`); `apps/api/src/inference/routes.ts`; `apps/api/src/inference/inference-gateway.test.ts`; `deploy/nginx/default.conf`; `apps/web/src/vite-proxy-routes.test.ts`; `apps/api/src/chat/drizzle-chat-manager.ts` (`chatArtifact` / `chatArtifactContent` fork copy) (+ `drizzle-chat-manager.test.ts`); version surfaces + `CHANGELOG.md`
+- **Depends on:** nothing (after v9.6.5)
+- **Changes:** Optional `images` on `HermesRunSubmission`; exported `nativeSessionChatBody` used for both POST and worker `Buffer.byteLength` (test: strings equal). String `message` when `images` empty. Shared injectable-image allowlist in contracts. Worker selects **this-turn** INLINE injectable images (`messageId` = USER row at `assistant.ordinal - 1`), skip reasons `budget`/`count`/`not-injectable`. Scheduled `submitMessage` bind-on-send is honored. Rewrite `ATTACHED FILES` (`hardenedInstructions` fourth arg defaults `sessionInbox: false`): no `read_file` token; images “on this turn”; other files “on the control plane.” Raise Fastify chat-completions `bodyLimit` to 16 MiB **and** Nginx `client_max_body_size` 16 m (`/internal/v1/`) / 8 m (`/api/`). Fork: in-lock image copy with `.returning` `messageIdMap`; after-commit remaining INLINE uses the **same** new ids and mapped `messageId`s. **Fixes `canonical.png` without a VM2 repair.**
+
+### v9.6.7 — Publisher must not ingest an inbox
+
+- **Title:** `v9.6.7`
+- **Files/components:** `scripts/hermes-artifact-publisher.py`; `scripts/test-hermes-artifact-publisher.py`; version surfaces + `CHANGELOG.md`
+- **Depends on:** none logically; ships after v9.6.6 by convention
+- **Changes:** Reserved session/path skip (`inbox`, `.inbox`, `_inbox`, dot-directories). Tests that a planted `artifacts/inbox/…` file is not POSTed. No behaviour change for real session directories. Safe on nodes that never grow an inbox.
+
+### v9.6.8 — Node-signed session-inbox API
+
+- **Title:** `v9.6.8`
+- **Files/components:** `packages/contracts/src/artifacts.ts` (inbox list schema; reuses `injectableImageMediaType`); `apps/api/src/artifacts/artifact-manager.ts`, `drizzle-artifact-manager.ts`, `routes.ts` (+ tests); `apps/api/src/app.ts` wiring if needed; version surfaces + `CHANGELOG.md`
+- **Depends on:** v9.6.6 (allowlist)
+- **Changes:** `GET …/session-inbox` and `GET …/session-inbox/:artifactId/content`, node-signed, `null` body, method+path bound, 401 on auth failure. Manifest grouped by session with `truncated` / `filesComplete`; whole sessions only; 50/conversation; 200 global as a stop, not a mid-session cut. Content GET uses the same eligibility (UPLOADED + INLINE + non-injectable). Direct runs with a non-conversation UUID never appear. No companion yet.
+
+### v9.6.9 — VM2 inbox companion, installer repair, gated path copy
+
+- **Title:** `v9.6.9`
 - **Files/components:** `scripts/hermes-session-inbox.py` + unit tests (User-Agent, truncated GC); `scripts/install-agentic-node.sh`; `scripts/remove-agentic-node.sh`; `scripts/orcasynapse-agent-cli.sh`; `apps/api/src/runtime-nodes/routes.ts` (`/install/hermes-session-inbox.py` + digest); `apps/worker/src/agent-processor.ts` + `hardened-instructions.test.ts` (path copy gated on `session-inbox-v1`); installer smoke/recovery tests; version surfaces + `CHANGELOG.md`
-- **Depends on:** v9.6.4 (skip), v9.6.5 (API)
+- **Depends on:** v9.6.7 (skip), v9.6.8 (API)
 - **Changes:** Companion pull loop, `User-Agent: orcasynapse-hermes-inbox/1.0`, `mkdir(parents=True)` then temp+`os.replace`, timer `OnBootSec=5s` / `OnUnitActiveSec=10s` / `RandomizedDelaySec=2s` / `Persistent=true`, GC only on `filesComplete` / `truncated: false`. `${STATE_ROOT}/inbox` `2770`, companion `ReadWritePaths` only (Hermes unit **unchanged**). Install/repair: enable inbox unit **then** rewrite/restart heartbeat. Heartbeat **appends** `session-inbox-v1` to the existing capabilities list only when the inbox dir exists and the timer is active; `verify_enrolled_identity` stays enroll-only. Node target `Wants=` the sixth unit; installer/remover/doctor comments recount six privilege profiles. Worker: `sessionInboxAvailable()` sibling query; `hardenedInstructions(..., { sessionInbox })` names paths only when true. No `read_file` token. Image inject continues to work on unrepaired nodes.
 
 No further PRs are required to close the verified PNG failure. Text-on-baseline-without-native-file-tools remains an explicit non-claim. Inbox paths cannot diverge from an unrepaired node because they are capability-gated, not upgrade-note-gated.
