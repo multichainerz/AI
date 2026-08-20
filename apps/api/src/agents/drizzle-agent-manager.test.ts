@@ -243,6 +243,69 @@ describe("DrizzleAgentManager profiles", () => {
     expect(renamed.activeVersion).toBe(2);
   });
 
+  /*
+   * The model follows the inference setup instead of being typed again. The
+   * gateway already overwrites `model` with the approved route's alias on
+   * every forwarded request, so a hand-typed profile alias was a manual copy
+   * of platform state whose drift refused activations and 404'd upstreams.
+   */
+  const seedAgentRoute = async (modelAlias: string) => {
+    const [connection] = await context.database.insert(serviceConnection).values({
+      slug: `inference-${randomUUID().slice(0, 8)}`,
+      displayName: "Inference", kind: "INFERENCE", environment: "DEVELOPMENT",
+      enabled: true, status: "HEALTHY", baseUrl: "https://inference.internal", configuration: {},
+    }).returning({ id: serviceConnection.id });
+    await context.database.insert(modelDeployment).values({
+      slug: `route-${randomUUID().slice(0, 8)}`,
+      displayName: "Evaluated route", modelAlias, workload: "AGENT",
+      status: "ACTIVE", connectionId: connection!.id, version: "1",
+      contextWindowTokens: 128_000, maxOutputTokens: 8_192, maxConcurrentRequests: 4,
+      isDefault: true, firstActivatedAt: new Date(),
+    });
+  };
+  const inputWithoutAlias = () => {
+    const { modelAlias: _alias, ...input } = profileInput();
+    return input as CreateAgentProfile;
+  };
+
+  it("derives the model from the active default agent route when none is given", async () => {
+    await seedAgentRoute("served-by-vllm");
+
+    const created = await manager().createProfile(principal, inputWithoutAlias());
+
+    expect(created.version.modelAlias).toBe("served-by-vllm");
+  });
+
+  it("derives the model from the enabled inference connection when no route exists", async () => {
+    await context.database.insert(serviceConnection).values({
+      slug: `inference-${randomUUID().slice(0, 8)}`,
+      displayName: "Inference", kind: "INFERENCE", environment: "DEVELOPMENT",
+      enabled: true, status: "HEALTHY", baseUrl: "https://inference.internal",
+      configuration: { modelAlias: "connection-model" },
+    });
+
+    const created = await manager().createProfile(principal, inputWithoutAlias());
+
+    expect(created.version.modelAlias).toBe("connection-model");
+  });
+
+  it("refuses creation when nothing names a model", async () => {
+    await expect(manager().createProfile(principal, inputWithoutAlias()))
+      .rejects.toThrow(/Configure the AI Inference connection/);
+  });
+
+  it("follows a route change on the next save", async () => {
+    const active = await activeProfile();
+    await seedAgentRoute("newly-served-model");
+
+    const updated = await manager().updateProfile(principal, active.id, { displayName: "Follows the route" } as never);
+
+    // Derived fresh at mint, released through the gate that checks the same
+    // route -- so a route switch propagates on the next save, not never.
+    expect(updated.version.modelAlias).toBe("newly-served-model");
+    expect(updated.activeVersion).toBe(2);
+  });
+
   it("appends an immutable version instead of editing the current one", async () => {
     const created = await manager().createProfile(principal, profileInput());
 

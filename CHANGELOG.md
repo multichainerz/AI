@@ -5,6 +5,22 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.4 — 2026-08-20
+
+Profiles follow the approved inference setup instead of asking for a model
+name the platform already knows.
+
+### Changes
+
+- remove the Inference model field from the profile editor; the server
+  resolves the alias when each version is minted — the active default AGENT
+  model route first, then the single active route, then the AI Inference
+  connection's configured alias — and refuses creation with instructions
+  when nothing names a model
+- every saved version re-follows the current route, so switching the default
+  agent model propagates to a profile on its next save; API callers may
+  still pin an explicit alias
+
 ## v9.6.3 — 2026-08-20
 
 Names the upstream failure instead of just its status code.

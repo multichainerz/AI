@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/api",
-  "version": "9.6.3",
+  "version": "9.6.4",
   "description": "OrcaSynapse control-plane API: identity, policy, orchestration, and audit",
   "license": "BUSL-1.1",
   "private": true,

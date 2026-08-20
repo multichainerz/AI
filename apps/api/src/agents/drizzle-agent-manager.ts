@@ -379,6 +379,36 @@ export class DrizzleAgentManager implements AgentManager {
    * keep notes and never what any of them can read.
    */
   /**
+   * The model a new version runs, read from the inference setup instead of
+   * typed again. The gateway already overwrites `model` with the approved
+   * route's alias on every forwarded request, so a hand-typed profile alias
+   * was a manual copy of platform state -- one that drifted, and whose drift
+   * refused activations. Priority mirrors what the gateway serves: the ACTIVE
+   * default AGENT route, else the single ACTIVE AGENT route, else the enabled
+   * AI Inference connection's configured alias when exactly one exists. Null
+   * when nothing is derivable, and the caller decides what that refuses.
+   */
+  private async resolveModelAlias(
+    executor: { select: OrcaSynapseDatabase["select"] },
+  ): Promise<string | null> {
+    const routes = await executor
+      .select({ modelAlias: modelDeployment.modelAlias, isDefault: modelDeployment.isDefault })
+      .from(modelDeployment)
+      .where(and(eq(modelDeployment.workload, "AGENT"), eq(modelDeployment.status, "ACTIVE")));
+    const route = routes.find((item) => item.isDefault) ?? (routes.length === 1 ? routes[0] : undefined);
+    if (route) return route.modelAlias;
+    const connections = await executor
+      .select({ configuration: serviceConnection.configuration })
+      .from(serviceConnection)
+      .where(and(eq(serviceConnection.kind, "INFERENCE"), eq(serviceConnection.enabled, true)));
+    const aliases = [...new Set(connections
+      .map(({ configuration }) => (configuration as Record<string, unknown>).modelAlias)
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => value.trim()))];
+    return aliases.length === 1 ? aliases[0]! : null;
+  }
+
+  /**
    * The version-specific gates a release must pass, shared by explicit
    * activation and by the release a save on an ACTIVE profile performs. Two
    * copies would drift, and the drifted one would be whichever path the next
@@ -474,10 +504,16 @@ export class DrizzleAgentManager implements AgentManager {
   }
 
   async createProfile(principal: AgentPrincipal, input: CreateAgentProfile): Promise<AgentProfile> {
-    const digest = distributionDigest(input);
     let created: StoredProfile;
     try {
       created = await this.database.transaction(async (transaction) => {
+        // The inference setup names the model; the caller may pin one, and a
+        // deployment where neither exists is told which screen to visit.
+        const modelAlias = input.modelAlias ?? await this.resolveModelAlias(transaction);
+        if (!modelAlias) {
+          throw new AgentConflictError("Configure the AI Inference connection or activate an agent model route before creating a profile.");
+        }
+        const digest = distributionDigest({ ...input, modelAlias });
         const [profile] = await transaction
           .insert(agentProfile)
           .values({ slug: input.slug })
@@ -493,7 +529,7 @@ export class DrizzleAgentManager implements AgentManager {
             instructions: input.instructions,
             soulMd: input.soulMd,
             distributionDigest: digest,
-            modelAlias: input.modelAlias,
+            modelAlias,
             maxTurns: input.maxTurns,
             timeoutSeconds: input.timeoutSeconds,
             maxConcurrentRuns: input.maxConcurrentRuns,
@@ -538,12 +574,24 @@ export class DrizzleAgentManager implements AgentManager {
       if (!current) throw new AgentConflictError("The current agent configuration is missing.");
       const nextVersion = profile.currentVersion + 1;
       const soulMd = input.soulMd ?? (current.soulMd.trim().length >= 10 ? current.soulMd : current.instructions);
+      /*
+       * Every mint re-follows the inference setup: an operator who switched
+       * the default agent model route gets the new alias on the very next
+       * save, instead of every profile silently pinning the old one until
+       * somebody retypes it. Explicit input still wins, and a deployment
+       * where nothing is derivable keeps the version's own alias -- a profile
+       * that worked yesterday must not stop minting because a route was
+       * suspended today.
+       */
+      const followedModelAlias = input.modelAlias
+        ?? (await this.resolveModelAlias(transaction))
+        ?? current.modelAlias;
       const nextConfiguration = {
         displayName: input.displayName ?? current.displayName,
         purpose: input.purpose ?? current.purpose,
         instructions: input.instructions ?? current.instructions,
         soulMd,
-        modelAlias: input.modelAlias ?? current.modelAlias,
+        modelAlias: followedModelAlias,
         maxTurns: input.maxTurns ?? current.maxTurns,
         timeoutSeconds: input.timeoutSeconds ?? current.timeoutSeconds,
         maxConcurrentRuns: input.maxConcurrentRuns ?? current.maxConcurrentRuns,

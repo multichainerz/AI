@@ -1,6 +1,6 @@
 {
   "name": "orcasynapse",
-  "version": "9.6.3",
+  "version": "9.6.4",
   "description": "OrcaSynapse - on-premises agentic intelligence and governed execution control plane",
   "license": "BUSL-1.1",
   "private": true,

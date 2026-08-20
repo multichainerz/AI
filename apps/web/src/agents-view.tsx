@@ -17,8 +17,6 @@ import {
   getAgentRunEvents,
   getAgentRuns,
   getAgentRuntime,
-  getConnections,
-  getModelDeployments,
   assignProfileDivision,
   getDivisions,
   getSkillSets,
@@ -137,8 +135,6 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
   const [profileDraft, setProfileDraft] = useState<CreateAgentProfile>(blankProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
-  /** Every ACTIVE agent model route, offered as completions on the model field. */
-  const [agentModelAliases, setAgentModelAliases] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -342,37 +338,11 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     }
   };
 
-  const openNewProfile = async () => {
+  const openNewProfile = () => {
     setError(null);
     setNotice(null);
-    /*
-     * The model catalogue is the system of record for what a run may use: the
-     * gateway routes by the ACTIVE default AGENT deployment, so that is what a
-     * new profile should be filled with. The connection's own `modelAlias` is
-     * the pre-catalogue field this screen used to read -- kept only as the
-     * fallback for a deployment that has not evaluated a model route yet.
-     */
-    let modelAlias = blankProfile.modelAlias;
-    try {
-      const deployments = await getModelDeployments();
-      const routes = deployments.items.filter(({ workload, status }) => workload === "AGENT" && status === "ACTIVE");
-      setAgentModelAliases([...new Set(routes.map(({ modelAlias: alias }) => alias))]);
-      const route = routes.find(({ isDefault }) => isDefault) ?? (routes.length === 1 ? routes[0] : undefined);
-      if (route) {
-        modelAlias = route.modelAlias;
-      } else {
-        const connections = await getConnections();
-        const aliases = connections.items
-          .filter(({ kind, enabled, status }) => kind === "INFERENCE" && enabled && status === "HEALTHY")
-          .map(({ configuration }) => configuration.modelAlias)
-          .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-        if (aliases.length === 1) modelAlias = aliases[0]!.trim();
-      }
-    } catch (cause) {
-      fail(cause);
-    }
     setEditingId(null);
-    setProfileDraft({ ...blankProfile, modelAlias });
+    setProfileDraft(blankProfile);
     setEditorOpen(true);
   };
 
@@ -380,13 +350,6 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     setEditingId(profile.id);
     setProfileDraft(draftFromProfile(profile));
     setEditorOpen(true);
-    // Fire-and-forget: the datalist is a convenience, not a gate, and the
-    // version being edited already carries its own alias.
-    void getModelDeployments()
-      .then(({ items }) => setAgentModelAliases([...new Set(items
-        .filter(({ workload, status }) => workload === "AGENT" && status === "ACTIVE")
-        .map(({ modelAlias }) => modelAlias))]))
-      .catch(() => undefined);
   };
 
   const saveProfile = async (event: FormEvent) => {
@@ -397,7 +360,12 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     setNotice(null);
     setReadinessRequired(false);
     try {
-      const candidate = { ...profileDraft };
+      /*
+       * The model is deliberately never sent: the server derives it from the
+       * approved inference setup at mint time, so a profile follows a route
+       * change instead of pinning whatever the screen once knew.
+       */
+      const { modelAlias: _model, ...candidate } = { ...profileDraft };
       if (editingId) {
         const { slug: _slug, ...configuration } = candidate;
         await updateAgentProfile(editingId, configuration);
@@ -760,22 +728,18 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
             <Field label="Purpose">
               <Textarea className="min-h-[64px]" rows={2} required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} />
             </Field>
-            <Field
-              label="Inference model"
-              hint={agentModelAliases.length > 0
-                ? "Filled from the default agent model route; the suggestions are every active one."
-                : "The model alias Hermes runs will use."}
-            >
-              <Input
-                required
-                list="agent-model-aliases"
-                value={profileDraft.modelAlias}
-                onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })}
-              />
-              <datalist id="agent-model-aliases">
-                {agentModelAliases.map((alias) => <option key={alias} value={alias} />)}
-              </datalist>
-            </Field>
+            {/*
+              * Deliberately not a field. The gateway forwards every request
+              * with the approved route's model regardless of what a profile
+              * says, so asking for a model name here was asking the operator
+              * to hand-copy platform state -- and the copy drifted. The server
+              * resolves the alias from the inference setup when each version
+              * is minted; the card's chips show what a version resolved to.
+              */}
+            <p className="mb-0 text-caption text-muted">
+              The model follows the approved AI Inference setup — the active agent model route, or the
+              connection's configured model. Change it under Models; profiles pick it up on their next save.
+            </p>
           </section>
 
           <section className="grid gap-3 border-t border-border pt-5">
