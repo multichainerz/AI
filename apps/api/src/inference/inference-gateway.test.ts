@@ -504,8 +504,8 @@ describe("DrizzleInferenceGateway", () => {
 
     const result = await gateway.chat("runtime-key", request, new AbortController().signal);
 
-    // The default policy allows 200,000 output characters.
-    expect(result.maxResponseBytes).toBe(200_000 * 8);
+    // The default policy allows 256,000 output characters.
+    expect(result.maxResponseBytes).toBe(256_000 * 8);
   });
 
   it("refuses to serve when a suspended node leaves no eligible runtime", async () => {
@@ -593,7 +593,8 @@ describe("DrizzleInferenceGateway rate-limit counter", () => {
    */
   it("forwards an assistant echo longer than the input ceiling", async () => {
     const { gateway, fetcher } = await harness();
-    const answer = "a".repeat(33_000);
+    // Over the 128k default input ceiling, under the 256k output ceiling.
+    const answer = "a".repeat(130_000);
 
     await gateway.chat(
       "runtime-key",
@@ -623,7 +624,7 @@ describe("DrizzleInferenceGateway rate-limit counter", () => {
 
     await expect(gateway.chat(
       "runtime-key",
-      { ...request, messages: [{ role: "user", content: "u".repeat(33_000) }] },
+      { ...request, messages: [{ role: "user", content: "u".repeat(130_000) }] },
       new AbortController().signal,
     )).rejects.toMatchObject({ code: "POLICY_REJECTED", message: expect.stringContaining("INPUT_CHARACTER_LIMIT") });
     expect(fetcher).not.toHaveBeenCalled();

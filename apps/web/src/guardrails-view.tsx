@@ -281,8 +281,8 @@ export function GuardrailsView({
 
   /** The boundary as it stands, which each control then changes one part of. */
   const currentSettings = (): BoundarySettings => ({
-    maxInputCharacters: workingPolicy?.maxInputCharacters ?? 12_000,
-    maxOutputCharacters: workingPolicy?.maxOutputCharacters ?? 200_000,
+    maxInputCharacters: workingPolicy?.maxInputCharacters ?? 128_000,
+    maxOutputCharacters: workingPolicy?.maxOutputCharacters ?? 256_000,
     blockControlCharacters: workingPolicy?.blockControlCharacters ?? false,
     blockCredentialPatterns: workingPolicy?.blockCredentialPatterns ?? false,
     rules: workingPolicy ? [...workingPolicy.rules] : [],
@@ -332,7 +332,7 @@ export function GuardrailsView({
     setControl({
       kind,
       ruleId: null,
-      amount: kind === "OUTPUT_CEILING" ? (workingPolicy?.maxOutputCharacters ?? 200_000) : (workingPolicy?.maxInputCharacters ?? 12_000),
+      amount: kind === "OUTPUT_CEILING" ? (workingPolicy?.maxOutputCharacters ?? 256_000) : (workingPolicy?.maxInputCharacters ?? 128_000),
       label: "",
       pattern: "",
       action: "BLOCK",
@@ -348,8 +348,8 @@ export function GuardrailsView({
       kind: row.kind,
       ruleId: row.ruleId ?? null,
       amount: row.kind === "OUTPUT_CEILING"
-        ? (workingPolicy?.maxOutputCharacters ?? 200_000)
-        : (workingPolicy?.maxInputCharacters ?? 12_000),
+        ? (workingPolicy?.maxOutputCharacters ?? 256_000)
+        : (workingPolicy?.maxInputCharacters ?? 128_000),
       label: rule?.label ?? "",
       pattern: rule?.pattern ?? "",
       action: rule?.action ?? "BLOCK",

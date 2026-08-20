@@ -424,7 +424,7 @@ describe("DrizzleAgentManager runs", () => {
       .select({ outputCharacterLimit: agentRun.outputCharacterLimit })
       .from(agentRun)
       .where(eq(agentRun.id, run.id));
-    expect(stored?.outputCharacterLimit).toBe(200_000);
+    expect(stored?.outputCharacterLimit).toBe(256_000);
   });
 
   /*

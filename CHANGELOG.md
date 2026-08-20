@@ -5,6 +5,22 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.5.7 — 2026-08-20
+
+Makes a fresh install permissive at the new ceilings, teaches the profile
+editor the model catalogue, and simplifies the profile card.
+
+### Changes
+
+- default the no-policy guardrail values to 128,000 input / 256,000 output
+  characters, and prefill the guardrail form with the same; an active policy's
+  own values are untouched
+- fill the profile editor's model field from the active default AGENT model
+  route (the catalogue the gateway actually routes by) instead of the legacy
+  connection alias, and offer every active route as a suggestion
+- rebuild the profile card: the truncating dot-separated mono line becomes
+  wrapping fact chips, and the audience control and actions share one footer
+
 ## v9.5.6 — 2026-08-20
 
 Raises the guardrail ceilings an operator may configure: typed input up to

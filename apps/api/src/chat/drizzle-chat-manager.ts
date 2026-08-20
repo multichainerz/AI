@@ -1644,8 +1644,8 @@ export class DrizzleChatManager implements ChatManager {
     const policy = policies[0];
     return {
       requestsPerMinute: 12,
-      maxInputCharacters: policy?.maxInputCharacters ?? 32_000,
-      maxOutputCharacters: policy?.maxOutputCharacters ?? 200_000,
+      maxInputCharacters: policy?.maxInputCharacters ?? 128_000,
+      maxOutputCharacters: policy?.maxOutputCharacters ?? 256_000,
       blockControlCharacters: policy?.blockControlCharacters ?? true,
       blockCredentialPatterns: policy?.blockCredentialPatterns ?? true,
       rules: (policy?.rules ?? []) as GuardrailRule[],

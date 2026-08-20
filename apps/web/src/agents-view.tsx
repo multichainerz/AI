@@ -18,6 +18,7 @@ import {
   getAgentRuns,
   getAgentRuntime,
   getConnections,
+  getModelDeployments,
   assignProfileDivision,
   getDivisions,
   getSkillSets,
@@ -136,6 +137,8 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
   const [profileDraft, setProfileDraft] = useState<CreateAgentProfile>(blankProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  /** Every ACTIVE agent model route, offered as completions on the model field. */
+  const [agentModelAliases, setAgentModelAliases] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -342,14 +345,29 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
   const openNewProfile = async () => {
     setError(null);
     setNotice(null);
+    /*
+     * The model catalogue is the system of record for what a run may use: the
+     * gateway routes by the ACTIVE default AGENT deployment, so that is what a
+     * new profile should be filled with. The connection's own `modelAlias` is
+     * the pre-catalogue field this screen used to read -- kept only as the
+     * fallback for a deployment that has not evaluated a model route yet.
+     */
     let modelAlias = blankProfile.modelAlias;
     try {
-      const connections = await getConnections();
-      const aliases = connections.items
-        .filter(({ kind, enabled, status }) => kind === "INFERENCE" && enabled && status === "HEALTHY")
-        .map(({ configuration }) => configuration.modelAlias)
-        .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-      if (aliases.length === 1) modelAlias = aliases[0]!.trim();
+      const deployments = await getModelDeployments();
+      const routes = deployments.items.filter(({ workload, status }) => workload === "AGENT" && status === "ACTIVE");
+      setAgentModelAliases([...new Set(routes.map(({ modelAlias: alias }) => alias))]);
+      const route = routes.find(({ isDefault }) => isDefault) ?? (routes.length === 1 ? routes[0] : undefined);
+      if (route) {
+        modelAlias = route.modelAlias;
+      } else {
+        const connections = await getConnections();
+        const aliases = connections.items
+          .filter(({ kind, enabled, status }) => kind === "INFERENCE" && enabled && status === "HEALTHY")
+          .map(({ configuration }) => configuration.modelAlias)
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+        if (aliases.length === 1) modelAlias = aliases[0]!.trim();
+      }
     } catch (cause) {
       fail(cause);
     }
@@ -362,6 +380,13 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     setEditingId(profile.id);
     setProfileDraft(draftFromProfile(profile));
     setEditorOpen(true);
+    // Fire-and-forget: the datalist is a convenience, not a gate, and the
+    // version being edited already carries its own alias.
+    void getModelDeployments()
+      .then(({ items }) => setAgentModelAliases([...new Set(items
+        .filter(({ workload, status }) => workload === "AGENT" && status === "ACTIVE")
+        .map(({ modelAlias }) => modelAlias))]))
+      .catch(() => undefined);
   };
 
   const saveProfile = async (event: FormEvent) => {
@@ -509,52 +534,30 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           {profiles.map((profile) => <article
             key={profile.id}
             className={cn(
-              "grid gap-3 rounded border p-3",
-              selectedProfileId === profile.id ? "border-border-strong bg-raised" : "border-border bg-raised/40",
+              "grid gap-2.5 rounded-lg border p-3 transition-colors",
+              selectedProfileId === profile.id
+                ? "border-border-strong bg-raised"
+                : "border-border bg-raised/40 hover:border-border-strong/70",
             )}
           >
             <Button
               variant="ghost"
-              // Same reason as the run rows: three stacked lines do not fit the
+              // Same reason as the run rows: stacked lines do not fit the
               // default single-line height, and `p-0` keeps the article's own
               // padding as the row's only inset.
               size="auto"
-              className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 p-0 text-left"
+              className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 p-0 text-left"
               onClick={() => selectProfile(profile.id)}
             >
               <span
                 aria-hidden="true"
-                className="grid h-9 w-9 place-items-center rounded border border-border-strong bg-surface font-mono text-[10px] font-bold text-accent"
+                className="grid h-10 w-10 place-items-center rounded-md bg-accent/10 font-mono text-caption font-bold text-accent"
               >
                 {profile.version.displayName.slice(0, 2).toUpperCase()}
               </span>
               <div className="min-w-0">
                 <strong className="block truncate text-label font-semibold text-text">{profile.version.displayName}</strong>
-                <p className="mb-0 mt-0.5 truncate text-caption text-muted">{profile.version.purpose}</p>
-                {/* The distribution digest is what VM2 admits, so it is on the
-                    row rather than behind a click. */}
-                <small className="mt-1 block truncate font-mono text-micro text-faint">
-                  {profile.slug} · current v{profile.version.version} · {profile.version.modelAlias} · distro {profile.version.distributionDigest.slice(0, 10)}
-                  {profile.activeVersion !== null && profile.activeVersion !== profile.version.version ? ` · live v${profile.activeVersion}` : ""}
-                  {/*
-                    * Who can reach it, on the row rather than behind a click.
-                    * "everyone" is the honest word for a null division: it is
-                    * not "unassigned" or "none" -- the profile really is visible
-                    * to every signed-in user, and a label that sounded like an
-                    * empty field would hide that.
-                    *
-                    * Which is exactly why "everyone" is keyed off a null
-                    * `divisionId` and never off a failed lookup. The division
-                    * list loads separately and lands after the profiles: for one
-                    * frame -- or permanently, if that request fails -- a
-                    * restricted profile would otherwise announce itself as
-                    * visible to everybody. Caught in the browser, where it
-                    * showed for exactly one screenshot.
-                    */}
-                  {` · ${profile.divisionId === null
-                    ? "everyone"
-                    : divisions.find(({ id }) => id === profile.divisionId)?.displayName ?? "a division"}`}
-                </small>
+                <p className="mb-0 mt-0.5 line-clamp-2 text-caption text-muted">{profile.version.purpose}</p>
               </div>
               {/*
                 * Configuration status, then what that configuration is doing.
@@ -584,40 +587,72 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
                   </StatusText>}
               </div>
             </Button>
-            {canManage && divisions.length > 0 && (
-              /*
-                * Its own control, not a field in the version editor. Assigning a
-                * division does not change what the agent is or how it behaves,
-                * only who may reach it -- minting a new immutable version for it
-                * would make the version history lie about what changed. The
-                * write is guarded server-side by `currentVersion`, so a stale
-                * tab cannot silently re-home a profile somebody else just
-                * edited.
-                */
-              <label className="flex items-center justify-end gap-2 text-caption text-muted">
-                <span>Visible to</span>
-                <Select
-                  className="h-8 w-[220px] text-caption"
-                  value={profile.divisionId ?? ""}
-                  disabled={busy !== null}
-                  onChange={(event) => void assignDivision(profile, event.target.value || null)}
-                >
-                  <option value="">Everyone (deployment-wide)</option>
-                  {divisions.map((item) => (
-                    <option key={item.id} value={item.id}>{item.displayName}</option>
-                  ))}
-                </Select>
-              </label>
-            )}
-            {canManage && <div className="flex justify-end gap-1.5">
-              <Button size="sm" onClick={() => editProfile(profile)}>New version</Button>
-              {profile.status === "ACTIVE"
-                ? <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</Button>
-                /* Verification runs before activation and needs `readiness:manage`
-                   as well, so the button is withheld unless both are held. */
-                : canActivate && <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => void activateForChat(profile)}>
-                    {busy === `activate-${profile.id}` ? "Verifying Hermes..." : "Verify & activate"}
-                  </Button>}
+            {/*
+              * The facts the old dot-separated mono line crammed into one
+              * truncating string, as chips that wrap instead of vanishing. The
+              * distribution digest is what VM2 admits, so it stays on the card
+              * rather than behind a click.
+              *
+              * "everyone" is the honest word for a null division: the profile
+              * really is visible to every signed-in user. It is keyed off a
+              * null `divisionId` and never off a failed lookup -- the division
+              * list loads separately and lands after the profiles, and for that
+              * frame a restricted profile must not announce itself as visible
+              * to everybody.
+              */}
+            <div className="flex flex-wrap items-center gap-1.5 font-mono text-micro text-faint">
+              {[
+                profile.slug,
+                `current v${profile.version.version}`,
+                ...(profile.activeVersion !== null && profile.activeVersion !== profile.version.version
+                  ? [`live v${profile.activeVersion}`] : []),
+                profile.version.modelAlias,
+                `distro ${profile.version.distributionDigest.slice(0, 10)}`,
+                profile.divisionId === null
+                  ? "everyone"
+                  : divisions.find(({ id }) => id === profile.divisionId)?.displayName ?? "a division",
+              ].map((fact) => (
+                <span key={fact} className="rounded border border-border bg-surface/60 px-1.5 py-0.5">{fact}</span>
+              ))}
+            </div>
+            {canManage && <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
+              {divisions.length > 0
+                ? (
+                  /*
+                    * Its own control, not a field in the version editor.
+                    * Assigning a division does not change what the agent is or
+                    * how it behaves, only who may reach it -- minting a new
+                    * immutable version for it would make the version history
+                    * lie about what changed. The write is guarded server-side
+                    * by `currentVersion`, so a stale tab cannot silently
+                    * re-home a profile somebody else just edited.
+                    */
+                  <label className="flex min-w-0 items-center gap-2 text-caption text-muted">
+                    <span className="shrink-0">Visible to</span>
+                    <Select
+                      className="h-8 w-[190px] text-caption"
+                      value={profile.divisionId ?? ""}
+                      disabled={busy !== null}
+                      onChange={(event) => void assignDivision(profile, event.target.value || null)}
+                    >
+                      <option value="">Everyone (deployment-wide)</option>
+                      {divisions.map((item) => (
+                        <option key={item.id} value={item.id}>{item.displayName}</option>
+                      ))}
+                    </Select>
+                  </label>
+                )
+                : <span aria-hidden="true" />}
+              <div className="flex gap-1.5">
+                <Button size="sm" onClick={() => editProfile(profile)}>New version</Button>
+                {profile.status === "ACTIVE"
+                  ? <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</Button>
+                  /* Verification runs before activation and needs `readiness:manage`
+                     as well, so the button is withheld unless both are held. */
+                  : canActivate && <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => void activateForChat(profile)}>
+                      {busy === `activate-${profile.id}` ? "Verifying Hermes..." : "Verify & activate"}
+                    </Button>}
+              </div>
             </div>}
           </article>)}
         </div>
@@ -703,8 +738,21 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
             <Field label="Purpose">
               <Textarea className="min-h-[64px]" rows={2} required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} />
             </Field>
-            <Field label="Inference model" hint="Filled from the healthy AI Inference connection.">
-              <Input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} />
+            <Field
+              label="Inference model"
+              hint={agentModelAliases.length > 0
+                ? "Filled from the default agent model route; the suggestions are every active one."
+                : "The model alias Hermes runs will use."}
+            >
+              <Input
+                required
+                list="agent-model-aliases"
+                value={profileDraft.modelAlias}
+                onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })}
+              />
+              <datalist id="agent-model-aliases">
+                {agentModelAliases.map((alias) => <option key={alias} value={alias} />)}
+              </datalist>
             </Field>
           </section>
 

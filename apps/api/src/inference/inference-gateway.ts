@@ -32,8 +32,8 @@ import {
 type ResolvedPolicy = RuntimeTextPolicy & { rules: GuardrailRule[] };
 
 const DEFAULT_POLICY: ResolvedPolicy = {
-  maxInputCharacters: 32_000,
-  maxOutputCharacters: 200_000,
+  maxInputCharacters: 128_000,
+  maxOutputCharacters: 256_000,
   blockControlCharacters: true,
   blockCredentialPatterns: true,
   rules: [],
