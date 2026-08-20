@@ -5,6 +5,23 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.8 — 2026-08-20
+
+Names the division beside the account it bounds.
+
+### Upgrade notes
+
+- **API, web and contracts must ship together.** The enterprise session's
+  `user` now requires `divisionName` (nullable). A mixed pair fails schema
+  parse at sign-in for People accounts.
+
+### Changes
+
+- carry the person's division name on the enterprise session — joined for
+  free on the per-request touch path, looked up once at sign-in — and show
+  it as a quiet label beside the account menu. Deployment-wide accounts and
+  administrators carry none and show nothing.
+
 ## v9.6.7 — 2026-08-20
 
 Says the ceilings the guardrail form actually enforces.

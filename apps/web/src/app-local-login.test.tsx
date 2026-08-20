@@ -44,6 +44,7 @@ const enterpriseSession = {
     id: "fb8c1e58-10d6-4ac7-aafe-e259763a6f63",
     displayName: "Ayu Rahman",
     email: "ayu@orcasynapse.example",
+    divisionName: "Finance",
   },
   scopes: ["chat:use", "agents:use"],
   createdAt: "2026-08-16T00:00:00.000Z",
@@ -101,6 +102,8 @@ describe("local person sign-in", () => {
     await waitFor(() => expect(api.createLocalPersonSession).toHaveBeenCalledWith("ayu", "a-long-enough-password"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Ayu Rahman" })).toBeTruthy());
     expect(screen.queryByText(/administrator session expired/i)).toBeNull();
+    // The division bounding this person's view, said beside the account chip.
+    expect(screen.getByTitle("Division: Finance").textContent).toBe("Finance");
   });
 
   it("hides the administration areas from a People account", async () => {

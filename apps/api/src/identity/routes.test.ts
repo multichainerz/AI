@@ -15,7 +15,7 @@ const USER_ID = "fb8c1e58-10d6-4ac7-aafe-e259763a6f63";
 const session: EnterpriseSession = {
   id: SESSION_ID,
   identityMode: "ENTERPRISE",
-  user: { id: USER_ID, displayName: "Pilot User", email: "pilot@orcasynapse.example" },
+  user: { id: USER_ID, displayName: "Pilot User", email: "pilot@orcasynapse.example", divisionName: null },
   scopes: ["chat:use", "agents:use"],
   createdAt: "2026-07-30T00:00:00.000Z",
   idleExpiresAt: "2026-07-30T08:00:00.000Z",

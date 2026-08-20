@@ -4,6 +4,15 @@ export const enterpriseUserSchema = z.object({
   id: z.uuid(),
   displayName: z.string().min(1).max(200),
   email: z.email().nullable(),
+  /*
+   * The division bounding what this person sees, by name, or null for a
+   * deployment-wide account. Carried on the session because the shell shows
+   * it beside the account and a person cannot call the admin divisions API
+   * to resolve their own. Required-nullable rather than optional: API, web
+   * and contracts ship together (see the v9.5.3 upgrade note), and optional
+   * fields are how a server that stopped sending one goes unnoticed.
+   */
+  divisionName: z.string().min(1).max(120).nullable(),
 });
 
 export const enterpriseSessionSchema = z.object({

@@ -30,7 +30,7 @@ const areas = primaryNavigationGroups.flatMap((group) => group.items);
  */
 const source = readFileSync(resolve(process.cwd(), "src/app.tsx"), "utf8").replaceAll("\r\n", "\n");
 
-const operator = { initials: "SA", name: "System administrator", detail: "platform admin" };
+const operator = { initials: "SA", name: "System administrator", detail: "platform admin", division: null };
 
 /**
  * The header for one area, and the lockup inside it.

@@ -229,7 +229,7 @@ export function WorkspaceHeader({
   children,
 }: {
   area: string;
-  operator: { initials: string; name: string; detail: string };
+  operator: { initials: string; name: string; detail: string; division: string | null };
   onSignOut: () => void;
   /*
    * The Dashboard's command panel begins directly beneath this band and scrolls
@@ -357,6 +357,20 @@ export function WorkspaceHeader({
           * "System administrator" after the visible label moved into the menu.
           */}
         <div className="relative flex items-center" ref={account}>
+          {/*
+            * The division bounding this person's view, said where the person
+            * is named. It reads as context for the chip beside it, not as a
+            * control; administrators carry none, so nothing renders for them
+            * rather than a label claiming a boundary that bounds nothing.
+            */}
+          {operator.division && (
+            <span
+              className="mr-2 hidden max-w-[180px] truncate rounded border border-border bg-soft/60 px-2 py-0.5 text-micro font-medium text-muted sm:block"
+              title={`Division: ${operator.division}`}
+            >
+              {operator.division}
+            </span>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -1320,11 +1334,15 @@ function App() {
       initials: "SA",
       name: "System administrator",
       detail: adminSession.role.replaceAll("_", " ").toLowerCase(),
+      // Administrators are deployment-wide by construction; a division label
+      // on them would claim a boundary that does not bound anything.
+      division: null as string | null,
     }
     : {
       initials: enterpriseSession!.user.displayName.slice(0, 2).toUpperCase(),
       name: enterpriseSession!.user.displayName,
       detail: "Enterprise user",
+      division: enterpriseSession!.user.divisionName,
     };
 
   /*

@@ -6,6 +6,7 @@ import { isIP } from "node:net";
 import type { EnterpriseSession } from "@orcasynapse/contracts";
 import {
   auditEvent,
+  division,
   enterpriseUser,
   enterpriseUserSession,
   localUser,
@@ -113,6 +114,14 @@ function principalFromRecord(record: {
   idleExpiresAt: Date;
   absoluteExpiresAt: Date;
   user: { id: string; displayName: string; email: string | null; divisionId?: string | null };
+  /*
+   * Resolved by the caller, because only the caller knows whether it can get
+   * the name for free: `authenticate` runs on every request and joins it,
+   * the two sign-in paths look it up once. The shell shows it beside the
+   * account, which is the one place a person learns which division bounds
+   * what they see.
+   */
+  divisionName?: string | null;
   passwordChangeRequired?: boolean;
 }): EnterprisePrincipal {
   const session: EnterpriseSession = {
@@ -122,6 +131,7 @@ function principalFromRecord(record: {
       id: record.user.id,
       displayName: record.user.displayName,
       email: record.user.email,
+      divisionName: record.divisionName ?? null,
     },
     scopes: ["chat:use", "agents:use"],
     createdAt: record.createdAt.toISOString(),
@@ -143,11 +153,26 @@ function principalFromRecord(record: {
 
 type LoadedSession = typeof enterpriseUserSession.$inferSelect & {
   user: typeof enterpriseUser.$inferSelect;
+  divisionName?: string | null;
   passwordChangeRequired?: boolean;
 };
 
 export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManager {
   constructor(private readonly database: OrcaSynapseDatabase) {}
+
+  /** The user's division name, one lookup, for the paths that cannot join it. */
+  private async divisionNameFor(
+    executor: { select: OrcaSynapseDatabase["select"] },
+    divisionId: string | null,
+  ): Promise<string | null> {
+    if (!divisionId) return null;
+    const [row] = await executor
+      .select({ displayName: division.displayName })
+      .from(division)
+      .where(eq(division.id, divisionId))
+      .limit(1);
+    return row?.displayName ?? null;
+  }
 
   /**
    * Sign in a locally created person with a username and password.
@@ -294,6 +319,7 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
         principal: principalFromRecord({
           ...created,
           user,
+          divisionName: await this.divisionNameFor(transaction, user.divisionId),
           passwordChangeRequired: current!.credential.passwordChangeRequired,
         }),
       };
@@ -425,7 +451,11 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
       });
       return {
         token: replacementToken,
-        principal: principalFromRecord({ ...created, user: row.user }),
+        principal: principalFromRecord({
+          ...created,
+          user: row.user,
+          divisionName: await this.divisionNameFor(transaction, row.user.divisionId),
+        }),
       };
     });
   }
@@ -434,16 +464,18 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
     if (!validOpaqueToken(token)) return null;
     const now = new Date();
     const [row] = await this.database
-      .select({ session: enterpriseUserSession, user: enterpriseUser, credential: localUser })
+      .select({ session: enterpriseUserSession, user: enterpriseUser, credential: localUser, divisionName: division.displayName })
       .from(enterpriseUserSession)
       .innerJoin(enterpriseUser, eq(enterpriseUserSession.userId, enterpriseUser.id))
       .leftJoin(localUser, eq(localUser.userId, enterpriseUser.id))
+      .leftJoin(division, eq(enterpriseUser.divisionId, division.id))
       .where(eq(enterpriseUserSession.tokenHash, tokenDigest(token)))
       .limit(1);
     const session: LoadedSession | undefined = row
       ? {
           ...row.session,
           user: row.user,
+          divisionName: row.divisionName,
           passwordChangeRequired: row.credential?.passwordChangeRequired === true,
         }
       : undefined;
