@@ -384,13 +384,32 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
           aria-label="Pending tool decisions"
           onSubmit={(event) => void saveDraft(event)}
         >
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <div className="grid gap-2">
             <strong className="text-label font-semibold text-text">
               {Object.keys(draft).length === 1 ? "1 pending decision" : `${Object.keys(draft).length} pending decisions`}
             </strong>
-            <span className="min-w-0 truncate font-mono text-micro text-muted">
-              {Object.entries(draft).map(([name, admitted]) => `${name} → ${admitted ? "allow" : "block"}`).join(" · ")}
-            </span>
+            {/*
+              * One chip per staged decision, wrapping. This was a single
+              * dot-joined mono line that truncated, which broke down exactly
+              * when the bar matters most: a bulk review staged a dozen
+              * decisions and the summary showed two of them and an ellipsis.
+              * Chips wrap instead of vanishing, and each one carries its own
+              * verdict tone, so what is about to be recorded is readable
+              * before the reason commits it.
+              */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {Object.entries(draft).map(([name, admitted]) => (
+                <span
+                  key={name}
+                  className={cn(
+                    "rounded border px-1.5 py-0.5 font-mono text-micro",
+                    admitted ? "border-good/50 bg-good/10 text-good" : "border-bad/50 bg-bad/10 text-bad",
+                  )}
+                >
+                  {name} → {admitted ? "allow" : "block"}
+                </span>
+              ))}
+            </div>
           </div>
           <div className="grid gap-2.5 sm:flex sm:items-end">
             {/* One reason for the batch, recorded on every decision in it: the

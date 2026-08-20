@@ -5,6 +5,16 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.6 — 2026-08-20
+
+Keeps a bulk tool review readable while it is still a draft.
+
+### Changes
+
+- render the pending-decisions bar as one wrapping chip per staged decision,
+  each carrying its allow/block verdict tone, instead of a single truncating
+  line that showed two names and an ellipsis exactly when a dozen were staged
+
 ## v9.6.5 — 2026-08-20
 
 Hides the administration areas from People accounts.

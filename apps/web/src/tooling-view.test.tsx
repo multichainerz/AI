@@ -287,6 +287,24 @@ describe("the toggle", () => {
     );
   });
 
+  it("keeps every staged decision readable in a bulk draft", async () => {
+    // A dozen at once: the summary used to be one truncating line, which is
+    // precisely what a bulk review broke. Every chip must render, named.
+    const names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima"];
+    const user = userEvent.setup();
+    await view({ catalogue: catalogue(...names.map((name) => ({ name, enabled: false }))) });
+
+    for (const name of names) {
+      await user.click(within(screen.getByLabelText(name)).getByRole("switch"));
+    }
+
+    const bar = screen.getByRole("form", { name: "Pending tool decisions" });
+    expect(within(bar).getByText("12 pending decisions")).toBeTruthy();
+    for (const name of names) {
+      expect(within(bar).getByText(`${name} → allow`)).toBeTruthy();
+    }
+  });
+
   it("un-stages a switch flipped back to the recorded value, leaving nothing to save", async () => {
     const user = userEvent.setup();
     await view({ catalogue: catalogue({ name: "code_execution", enabled: false }) });
