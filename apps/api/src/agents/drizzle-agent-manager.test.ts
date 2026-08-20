@@ -7,11 +7,13 @@ import {
   agentRunEvent,
   agentRuntimeControl,
   auditEvent,
+  chatConversation,
   division,
   componentCompatibility,
   createTestDatabase,
   guardrailPolicy,
   hermesRuntimeNode,
+  modelDeployment,
   platformArchitectureDecision,
   runtimeToolsetAdmission,
   serviceConnection,
@@ -176,6 +178,69 @@ describe("DrizzleAgentManager profiles", () => {
     await manager().createProfile(principal, input);
 
     await expect(manager().createProfile(principal, input)).rejects.toBeInstanceOf(AgentConflictError);
+  });
+
+  /*
+   * The confusing state this closes: an operator renamed their agent, the
+   * save succeeded, and every new Session kept the old name because the
+   * minted version sat unreleased behind `current v2 · live v1` with no
+   * release control anywhere on an active card. Saving onto an ACTIVE
+   * profile now releases in the same transaction, and the conversation
+   * rows that snapshot the name at creation follow.
+   */
+  it("releases the saved version immediately when the profile is active", async () => {
+    const active = await activeProfile();
+    const [conversation] = await context.database.insert(chatConversation).values({
+      ownerSubject: "local-admin:operator", title: "Under the old name",
+      modelAlias: "hermes-agent", profileId: active.id, profileName: active.version.displayName,
+    }).returning({ id: chatConversation.id });
+
+    const updated = await manager().updateProfile(principal, active.id, { displayName: "Renamed live" } as never);
+
+    expect(updated.currentVersion).toBe(2);
+    expect(updated.activeVersion).toBe(2);
+    expect(updated.activeVersionConfiguration?.displayName).toBe("Renamed live");
+    const [stored] = await context.database
+      .select({ profileName: chatConversation.profileName })
+      .from(chatConversation)
+      .where(eq(chatConversation.id, conversation!.id));
+    expect(stored?.profileName).toBe("Renamed live");
+  });
+
+  it("stages the saved version without releasing when the profile is suspended", async () => {
+    const active = await activeProfile();
+    await manager().suspendProfile(principal, active.id);
+
+    const updated = await manager().updateProfile(principal, active.id, { displayName: "Staged rename" } as never);
+
+    // The suspended states exist precisely to stage versions without serving
+    // them; only an ACTIVE profile treats a save as a release.
+    expect(updated.currentVersion).toBe(2);
+    expect(updated.activeVersion).toBe(1);
+  });
+
+  it("refuses a releasing save whose model route is not active", async () => {
+    const active = await activeProfile();
+    // An evaluated catalogue is what makes the route gate real.
+    const [connection] = await context.database.insert(serviceConnection).values({
+      slug: `inference-${randomUUID().slice(0, 8)}`,
+      displayName: "Inference", kind: "INFERENCE", environment: "DEVELOPMENT",
+      enabled: true, status: "HEALTHY", baseUrl: "https://inference.internal", configuration: {},
+    }).returning({ id: serviceConnection.id });
+    await context.database.insert(modelDeployment).values({
+      slug: `route-${randomUUID().slice(0, 8)}`,
+      displayName: "Evaluated route", modelAlias: "hermes-agent", workload: "AGENT",
+      status: "ACTIVE", connectionId: connection!.id, version: "1",
+      contextWindowTokens: 128_000, maxOutputTokens: 8_192, maxConcurrentRequests: 4,
+      isDefault: true, firstActivatedAt: new Date(),
+    });
+
+    // The same edit with the routed alias releases; the unrouted one refuses
+    // the whole save rather than minting a version that cannot go live.
+    await expect(manager().updateProfile(principal, active.id, { modelAlias: "unrouted-model" } as never))
+      .rejects.toThrow(/agent model route/);
+    const renamed = await manager().updateProfile(principal, active.id, { displayName: "Still routed" } as never);
+    expect(renamed.activeVersion).toBe(2);
   });
 
   it("appends an immutable version instead of editing the current one", async () => {

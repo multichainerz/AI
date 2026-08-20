@@ -705,12 +705,18 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         icon={Bot}
         title={editingId ? "Create a new profile version" : "Create agent profile"}
         description={editingId
-          ? "Saving writes a new immutable revision. The current version stays in the ledger."
+          ? (profiles.find(({ id }) => id === editingId)?.status === "ACTIVE"
+            ? "Saving writes a new immutable revision and releases it immediately — Sessions use it from their next message."
+            : "Saving writes a new immutable revision. The current version stays in the ledger until this profile is activated.")
           : "Name it, then write how it should think and act."}
         footer={<>
           <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
           <Button variant="primary" disabled={busy !== null} type="submit" form="agent-profile-editor">
-            {busy === "profile-save" ? "Saving..." : editingId ? "Save new version" : activationReady === false ? "Save draft" : "Create & activate"}
+            {busy === "profile-save"
+              ? "Saving..."
+              : editingId
+                ? (profiles.find(({ id }) => id === editingId)?.status === "ACTIVE" ? "Save & release" : "Save new version")
+                : activationReady === false ? "Save draft" : "Create & activate"}
           </Button>
         </>}
       >

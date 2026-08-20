@@ -5,6 +5,23 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.5.8 — 2026-08-20
+
+Saving a new version of an ACTIVE profile now releases it immediately, so
+Sessions follow a rename instead of quietly serving the superseded version.
+
+### Changes
+
+- release the minted version in the same transaction when the edited profile
+  is ACTIVE, through the same gates activation runs (Hermes compatibility,
+  agent model route); STANDBY and SUSPENDED profiles still stage without
+  releasing
+- refresh the conversation name snapshots on every release — explicit
+  activation included — so open Sessions show the current profile name
+- grant the `read-file` built-in to newly minted versions alongside the
+  memory tools, matching what the migration seeds
+- say what saving does in the editor: "Save & release" on an active profile
+
 ## v9.5.7 — 2026-08-20
 
 Makes a fresh install permissive at the new ceilings, teaches the profile

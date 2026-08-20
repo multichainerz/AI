@@ -23,6 +23,7 @@ import {
   agentRuntimeControl,
   agentToolGrant,
   auditEvent,
+  chatConversation,
   componentCompatibility,
   governedTool,
   guardrailPolicy,
@@ -377,14 +378,60 @@ export class DrizzleAgentManager implements AgentManager {
    * division comes from the run rather than the grant, so this widens who may
    * keep notes and never what any of them can read.
    */
-  private async grantMemoryTools(
+  /**
+   * The version-specific gates a release must pass, shared by explicit
+   * activation and by the release a save on an ACTIVE profile performs. Two
+   * copies would drift, and the drifted one would be whichever path the next
+   * incident happens not to exercise.
+   */
+  private async assertVersionReleasable(
+    transaction: { select: OrcaSynapseDatabase["select"] },
+    modelAlias: string,
+  ): Promise<{ modelRouteId: string | null }> {
+    const [hermesCompatibility] = await transaction
+      .select({ status: componentCompatibility.status })
+      .from(componentCompatibility)
+      .where(eq(componentCompatibility.key, "hermes-api"))
+      .limit(1);
+    if (hermesCompatibility?.status !== "PASSED") {
+      throw new AgentConflictError("Hermes compatibility is not passed. Use Create & activate in Hermes Profiles to run the check automatically, or run the AI services check from Deployment diagnostics.");
+    }
+    const [catalogue] = await transaction
+      .select({ total: count() })
+      .from(modelDeployment)
+      .where(and(eq(modelDeployment.workload, "AGENT"), isNotNull(modelDeployment.firstActivatedAt)));
+    const modelCatalogueCount = catalogue?.total ?? 0;
+    const [modelRoute] = modelCatalogueCount > 0
+      ? await transaction
+        .select({ id: modelDeployment.id })
+        .from(modelDeployment)
+        .where(and(
+          eq(modelDeployment.workload, "AGENT"),
+          eq(modelDeployment.modelAlias, modelAlias),
+          eq(modelDeployment.status, "ACTIVE"),
+        ))
+        .limit(1)
+      : [];
+    if (modelCatalogueCount > 0 && !modelRoute) {
+      throw new AgentConflictError(`Activate the '${modelAlias}' agent model route before activating this profile.`);
+    }
+    return { modelRouteId: modelRoute?.id ?? null };
+  }
+
+  private async grantBuiltInTools(
     transaction: { select: OrcaSynapseDatabase["select"]; insert: OrcaSynapseDatabase["insert"] },
     profileVersionId: string,
   ): Promise<void> {
+    // The same set `seedBuiltInTools` grants at migration: a version minted
+    // between upgrades must not carry fewer capabilities than a seeded one.
     const tools = await transaction
       .select({ id: governedTool.id })
       .from(governedTool)
-      .where(inArray(governedTool.handlerKey, ["orcasynapse.memory.remember", "orcasynapse.memory.recall"]));
+      .where(inArray(governedTool.handlerKey, [
+        "orcasynapse.memory.remember",
+        "orcasynapse.memory.recall",
+        "orcasynapse.files.read",
+      ]));
     if (tools.length === 0) return;
     await transaction.insert(agentToolGrant).values(tools.map(({ id }) => ({
       profileVersionId,
@@ -456,7 +503,7 @@ export class DrizzleAgentManager implements AgentManager {
           })
           .returning();
         if (!version) throw new AgentConflictError("The agent configuration could not be created.");
-        await this.grantMemoryTools(transaction, version.id);
+        await this.grantBuiltInTools(transaction, version.id);
         await transaction.insert(auditEvent).values({
           actorType: "USER", actorId: principal.id, action: "agent.profile_created",
           resourceType: "AgentProfile", resourceId: profile.id, outcome: "SUCCESS",
@@ -521,15 +568,42 @@ export class DrizzleAgentManager implements AgentManager {
        * version, not the profile, so an edit that mints v2 would otherwise
        * leave the agent able to remember on v1 and not on v2.
        */
-      if (minted) await this.grantMemoryTools(transaction, minted.id);
+      if (minted) await this.grantBuiltInTools(transaction, minted.id);
+      /*
+       * Saving onto an ACTIVE profile releases the new version in the same
+       * transaction, through the same gates activation runs. The state where
+       * `current v2 · live v1` sat behind a success toast — the operator
+       * renamed their agent, the save "worked", and every new Session kept the
+       * old name with no release control anywhere on an active card — was the
+       * confusing half of an invariant whose useful half is the immutable
+       * ledger. The ledger is untouched: v1 remains attributable to every run
+       * that pinned it. A profile in STANDBY or SUSPENDED keeps the old
+       * behaviour, because those states exist precisely to stage versions
+       * without serving them.
+       */
+      const releasing = profile.status === "ACTIVE";
+      if (releasing) await this.assertVersionReleasable(transaction, nextConfiguration.modelAlias);
       await transaction
         .update(agentProfile)
-        .set({ currentVersion: nextVersion })
+        .set({ currentVersion: nextVersion, ...(releasing ? { activeVersion: nextVersion } : {}) })
         .where(eq(agentProfile.id, profileId));
+      /*
+       * The Session names a conversation by the profileName snapshotted at its
+       * creation; a release is the moment that snapshot goes stale. Refreshed
+       * for the whole profile rather than on a name change only, so
+       * conversations left stale by releases that predate this refresh heal on
+       * the next one.
+       */
+      if (releasing) {
+        await transaction
+          .update(chatConversation)
+          .set({ profileName: nextConfiguration.displayName })
+          .where(eq(chatConversation.profileId, profileId));
+      }
       await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id, action: "agent.profile_version_created",
         resourceType: "AgentProfile", resourceId: profileId, outcome: "SUCCESS",
-        metadata: { version: nextVersion, changedFields: Object.keys(input) },
+        metadata: { version: nextVersion, changedFields: Object.keys(input), released: releasing },
       });
       const reloaded = await transaction.query.agentProfile.findFirst({
         where: eq(agentProfile.id, profileId),
@@ -1032,6 +1106,7 @@ export class DrizzleAgentManager implements AgentManager {
         ? await transaction
           .select({
             modelAlias: agentProfileVersion.modelAlias,
+            displayName: agentProfileVersion.displayName,
             distributionDigest: agentProfileVersion.distributionDigest,
           })
           .from(agentProfileVersion)
@@ -1047,37 +1122,9 @@ export class DrizzleAgentManager implements AgentManager {
       if (requiresRelease && !currentVersion!.distributionDigest) {
         throw new AgentConflictError("Create a Profile Distribution version before standby or activation.");
       }
-      if (requiresRelease) {
-        const [hermesCompatibility] = await transaction
-          .select({ status: componentCompatibility.status })
-          .from(componentCompatibility)
-          .where(eq(componentCompatibility.key, "hermes-api"))
-          .limit(1);
-        if (hermesCompatibility?.status !== "PASSED") {
-          throw new AgentConflictError("Hermes compatibility is not passed. Use Create & activate in Hermes Profiles to run the check automatically, or run the AI services check from Deployment diagnostics.");
-        }
-      }
-      const [catalogue] = requiresRelease
-        ? await transaction
-          .select({ total: count() })
-          .from(modelDeployment)
-          .where(and(eq(modelDeployment.workload, "AGENT"), isNotNull(modelDeployment.firstActivatedAt)))
-        : [];
-      const modelCatalogueCount = catalogue?.total ?? 0;
-      const [modelRoute] = requiresRelease && modelCatalogueCount > 0
-        ? await transaction
-          .select({ id: modelDeployment.id })
-          .from(modelDeployment)
-          .where(and(
-            eq(modelDeployment.workload, "AGENT"),
-            eq(modelDeployment.modelAlias, currentVersion!.modelAlias),
-            eq(modelDeployment.status, "ACTIVE"),
-          ))
-          .limit(1)
-        : [];
-      if (requiresRelease && modelCatalogueCount > 0 && !modelRoute) {
-        throw new AgentConflictError(`Activate the '${currentVersion!.modelAlias}' agent model route before activating this profile.`);
-      }
+      const releaseGate = requiresRelease
+        ? await this.assertVersionReleasable(transaction, currentVersion!.modelAlias)
+        : { modelRouteId: null };
       const [architecture] = requiresRelease
         ? await transaction
           .select({ targetEnvironment: platformArchitectureDecision.targetEnvironment })
@@ -1090,13 +1137,22 @@ export class DrizzleAgentManager implements AgentManager {
         .update(agentProfile)
         .set({ status: state, ...(requiresRelease ? { activeVersion: profile.currentVersion } : {}) })
         .where(eq(agentProfile.id, profileId));
+      // The same snapshot refresh a releasing save performs: the Session names
+      // conversations by the profileName captured at creation, and a release
+      // is when that capture goes stale.
+      if (requiresRelease) {
+        await transaction
+          .update(chatConversation)
+          .set({ profileName: currentVersion!.displayName })
+          .where(eq(chatConversation.profileId, profileId));
+      }
       await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id,
         action: state === "ACTIVE" ? "agent.profile_activated" : state === "STANDBY" ? "agent.profile_standby" : "agent.profile_suspended",
         resourceType: "AgentProfile", resourceId: profileId, outcome: "SUCCESS",
         metadata: {
           activeVersion: requiresRelease ? profile.currentVersion : profile.activeVersion,
-          modelRouteId: modelRoute?.id ?? null,
+          modelRouteId: releaseGate.modelRouteId,
           targetEnvironment,
         },
       });
