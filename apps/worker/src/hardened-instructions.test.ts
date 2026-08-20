@@ -90,12 +90,12 @@ describe("hardenedInstructions", () => {
   });
 
   /*
-   * The attachment announcement: the `read-file` tool takes an artifactId, and
+   * The attachment announcement: the `read_file` tool takes an artifactId, and
    * this section is the only place a run can learn one. A user who attaches a
    * file and asks about it is otherwise talking about something the model
    * cannot see exists -- the exact failure this section was added to close.
    */
-  it("announces attached files with the id the read-file tool needs", () => {
+  it("announces attached files with the id the read_file tool needs", () => {
     const text = hardenedInstructions(run("Speak plainly and cite the handbook."), [], [
       { artifactId: "3f2c8f9e-4a1b-4c6d-8e2f-9a7b6c5d4e3f", name: "report.csv", mediaType: "text/csv", sizeBytes: 12_800 },
       { artifactId: "aa11bb22-cc33-4d44-8e55-ff6677889900", name: "big.txt", mediaType: "text/plain", sizeBytes: 2_400_000 },

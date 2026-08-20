@@ -70,7 +70,7 @@ const APPROVAL_POLL_MS = 1_000;
 const MAXIMUM_INLINE_WAIT_MS = 5 * 60_000;
 
 /**
- * How much of an attached text file one `read-file` call returns.
+ * How much of an attached text file one `read_file` call returns.
  *
  * Characters, because the page rides a JSON tool result straight into the
  * model's context window: the 4 MiB upload cap decoded whole would be on the

@@ -243,7 +243,10 @@ const BUILT_IN_TOOLS = [
     },
   },
   {
-    slug: "read-file",
+    // Underscore, not hyphen: `governedToolSchema` bounds slugs to
+    // /^[a-z][a-z0-9_]{2,79}$/, and this shipped one release as `read-file`,
+    // which made the whole tool list unparseable on the Tools screen.
+    slug: "read_file",
     displayName: "Read attached file",
     description: "Read a file the user attached to this conversation. Text comes back in pages; a binary file reports its metadata only.",
     handlerKey: "orcasynapse.files.read",
@@ -259,6 +262,13 @@ const BUILT_IN_TOOLS = [
 ] as const;
 
 async function seedBuiltInTools(pool: Pool): Promise<void> {
+  /*
+   * Heals the one release (v9.5.4 through v9.5.9) that seeded this slug with
+   * a hyphen the tooling contract refuses. The rename is safe mid-flight:
+   * grants and calls reference the tool by id, and Hermes rediscovers tools
+   * by slug on every run.
+   */
+  await pool.query(`UPDATE "GovernedTool" SET "slug" = 'read_file' WHERE "slug" = 'read-file'`);
   for (const tool of BUILT_IN_TOOLS) {
     await pool.query(
       `INSERT INTO "GovernedTool" ("slug", "displayName", "description", "risk", "status", "handlerKey", "inputSchema", "updatedAt")

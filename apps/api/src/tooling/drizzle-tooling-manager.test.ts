@@ -849,14 +849,14 @@ describe("division-scoped memory", () => {
 });
 
 /*
- * The `read-file` handler: an attached upload's bytes, delivered to the run
+ * The `read_file` handler: an attached upload's bytes, delivered to the run
  * whose conversation carries the file and to no other. The conversation comes
  * from the run authorization -- the same seam as the division above -- so the
  * arguments name a file, never a scope.
  */
 describe("conversation-scoped file reads", () => {
   async function readTool() {
-    return seedTool({ slug: `read-file-${randomUUID().slice(0, 8)}`, handlerKey: "orcasynapse.files.read" });
+    return seedTool({ slug: `read_file_${randomUUID().slice(0, 8)}`, handlerKey: "orcasynapse.files.read" });
   }
 
   /** Rebinds the run to a real chat conversation, the way chat submission wires one. */

@@ -94,7 +94,7 @@ describe("the governed built-in tools seeded at installation", () => {
     expect(tools.every((tool) => tool.status === "ACTIVE" && tool.risk === "READ_ONLY")).toBe(true);
     // The slug is the name the model calls the tool by, so it is part of the
     // contract with the ATTACHED FILES instructions rather than a label.
-    expect(tools.map((tool) => tool.slug).sort()).toEqual(["read-file", "recall", "remember"]);
+    expect(tools.map((tool) => tool.slug).sort()).toEqual(["read_file", "recall", "remember"]);
   });
 
   /*

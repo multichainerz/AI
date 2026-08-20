@@ -5,6 +5,19 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.0 — 2026-08-20
+
+Renames the attached-file tool's slug to what the tooling contract permits.
+
+### Changes
+
+- `read-file` → `read_file`: the governed-tool slug contract allows
+  underscores only, so the hyphenated slug shipped in v9.5.4 made the Tools
+  screen fail to parse the whole tool list. The seed now writes `read_file`,
+  renames any already-seeded hyphenated row on migration, and the ATTACHED
+  FILES instructions name the tool by its valid slug. Grants and recorded
+  calls reference the tool by id and are unaffected.
+
 ## v9.5.9 — 2026-08-20
 
 Hardens the release-on-save path shipped in v9.5.8.

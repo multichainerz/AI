@@ -607,7 +607,7 @@ describe("DrizzleInferenceGateway rate-limit counter", () => {
     expect(forwarded.messages[0]?.content).toBe(answer);
   });
 
-  it("forwards a tool message the size of a read-file page", async () => {
+  it("forwards a tool message the size of a read_file page", async () => {
     const { gateway, fetcher } = await harness();
 
     await gateway.chat(
