@@ -5,6 +5,18 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.3 — 2026-08-20
+
+Names the upstream failure instead of just its status code.
+
+### Changes
+
+- carry the inference server's own error message (bounded, one line,
+  HTML de-tagged) inside UPSTREAM_FAILED — "returned status 404" now says
+  whether the model alias is unserved or a proxy answered the wrong path.
+  Returned to the caller only; the audit trail still records counts and
+  names, never upstream bodies that may echo a prompt.
+
 ## v9.6.2 — 2026-08-20
 
 Attaches uploads to the message that sends them instead of pinning them to

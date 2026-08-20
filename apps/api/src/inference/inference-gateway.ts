@@ -189,6 +189,44 @@ async function readBounded(response: Response, limit: number): Promise<string> {
  * either retried as a fresh request without the named hints, or turned into
  * UPSTREAM_FAILED.
  */
+/**
+ * The upstream's own words, bounded and flattened to one line.
+ *
+ * A bare "returned status 404" left the operator guessing between the two
+ * things a 404 means on this path: a model name the server does not serve
+ * (vLLM answers exactly "The model `x` does not exist") and a wrong chat
+ * path (a reverse proxy or a doubled `/v1` answers with an HTML page). Both
+ * name themselves in the body, so the body is what the error should carry.
+ * OpenAI-style `{error:{message}}`, vLLM's top-level `message`, and FastAPI's
+ * `detail` are read; anything else -- an HTML error page, plain text -- is
+ * de-tagged and truncated, because "404 Not Found nginx" is itself the clue
+ * that a proxy answered instead of the inference server.
+ */
+async function upstreamErrorDetail(response: Response): Promise<string> {
+  let text = "";
+  try {
+    text = await readBounded(response, 4_096);
+  } catch {
+    return "";
+  }
+  let message = text.replace(/<[^>]*>/g, " ");
+  try {
+    const record = JSON.parse(text) as Record<string, unknown>;
+    const error = record.error;
+    const candidate = typeof error === "string"
+      ? error
+      : error && typeof error === "object" && typeof (error as Record<string, unknown>).message === "string"
+        ? (error as Record<string, unknown>).message as string
+        : typeof record.message === "string"
+          ? record.message
+          : typeof record.detail === "string" ? record.detail : "";
+    if (candidate) message = candidate;
+  } catch {
+    // Not JSON; the de-tagged prefix stands.
+  }
+  return message.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 200);
+}
+
 export async function rejectedCompatibilityHints(response: Response): Promise<Set<CompatibilityHint>> {
   if (response.status !== 400) return new Set();
   const declaredLength = Number(response.headers.get("content-length"));
@@ -589,7 +627,18 @@ export class DrizzleInferenceGateway {
       throw new InferenceGatewayError("UPSTREAM_FAILED", "The approved inference server could not be reached.");
     }
     if (!response.ok) {
-      throw new InferenceGatewayError("UPSTREAM_FAILED", `The approved inference server returned status ${response.status}.`);
+      /*
+       * Returned to the caller, deliberately never written to the audit
+       * trail: an upstream validation error can echo the prompt, and the
+       * audit rule here is counts and names, not content. The body may
+       * already be drained when the 400 hint probe read it; the detail is
+       * then simply absent rather than fetched again.
+       */
+      const detail = await upstreamErrorDetail(response);
+      throw new InferenceGatewayError(
+        "UPSTREAM_FAILED",
+        `The approved inference server returned status ${response.status}${detail ? ` (${detail})` : ""}.`,
+      );
     }
     const jsonResponseBytes = Math.min(
       MAX_JSON_RESPONSE_BYTES,

@@ -548,6 +548,23 @@ describe("DrizzleInferenceGateway rate-limit counter", () => {
     expect(await context.database.select().from(inferenceGatewayRequest)).toHaveLength(2);
   });
 
+  it("carries the upstream's own error message on a failed forward", async () => {
+    // vLLM's 404 for an unserved model name -- the one detail that tells an
+    // operator whether the route's alias or the chat path is wrong. A bare
+    // "returned status 404" forced them to guess between the two.
+    const notFound = vi.fn(async () => new Response(
+      JSON.stringify({ object: "error", message: "The model `hermes-agent` does not exist.", code: 404 }),
+      { status: 404, headers: { "content-type": "application/json" } },
+    )) as typeof fetch;
+    const { gateway } = await harness(notFound);
+
+    await expect(gateway.chat("runtime-key", request, new AbortController().signal))
+      .rejects.toMatchObject({
+        code: "UPSTREAM_FAILED",
+        message: expect.stringContaining("The model `hermes-agent` does not exist."),
+      });
+  });
+
   it("refuses a chat path that would leave the approved inference origin", async () => {
     const { gateway, fetcher } = await harness(okResponse(), { chatPath: "//exfiltration.example/v1/chat" });
 
