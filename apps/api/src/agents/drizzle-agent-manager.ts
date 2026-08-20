@@ -1095,6 +1095,14 @@ export class DrizzleAgentManager implements AgentManager {
     state: "ACTIVE" | "STANDBY" | "SUSPENDED",
   ): Promise<StoredProfile> {
     return this.database.transaction(async (transaction) => {
+      /*
+       * The same lock `updateProfile` takes, because both now write
+       * `activeVersion`. Without it, an activation racing a releasing save
+       * could read `currentVersion` before the save commits and then set
+       * `activeVersion` one step backwards -- undoing a release that had
+       * already been confirmed to the saver.
+       */
+      await transaction.execute(advisoryLock(`orcasynapse-agent-profile:${profileId}`));
       const [profile] = await transaction
         .select()
         .from(agentProfile)

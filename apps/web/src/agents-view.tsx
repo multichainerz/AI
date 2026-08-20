@@ -461,6 +461,19 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
    */
   const chatLabel = chatAvailable ? "Open Session" : executionEnabled === false ? "Execution is off" : "Session not ready";
 
+  /*
+   * What the save button is about to do, and what it costs right now. A save
+   * onto an ACTIVE profile releases immediately, and the worker's boundary
+   * check stops any run still executing on the superseded version -- so the
+   * editor says both before the operator commits, instead of a colleague's
+   * answer dying with "version no longer active" as the announcement.
+   */
+  const editingProfile = editingId === null ? undefined : profiles.find(({ id }) => id === editingId);
+  const editingReleases = editingProfile?.status === "ACTIVE";
+  const editingRunning = editingProfile
+    ? runsFor(editingProfile.id).filter(({ status }) => runningStatuses.has(status)).length
+    : 0;
+
   return (
     <div className="workspace-stack agents-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
       <WorkspaceIntro
@@ -705,8 +718,11 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         icon={Bot}
         title={editingId ? "Create a new profile version" : "Create agent profile"}
         description={editingId
-          ? (profiles.find(({ id }) => id === editingId)?.status === "ACTIVE"
+          ? (editingReleases
             ? "Saving writes a new immutable revision and releases it immediately — Sessions use it from their next message."
+              + (editingRunning > 0
+                ? ` ${editingRunning} run${editingRunning === 1 ? " is" : "s are"} executing on the current version and will stop when this releases.`
+                : "")
             : "Saving writes a new immutable revision. The current version stays in the ledger until this profile is activated.")
           : "Name it, then write how it should think and act."}
         footer={<>
@@ -715,7 +731,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
             {busy === "profile-save"
               ? "Saving..."
               : editingId
-                ? (profiles.find(({ id }) => id === editingId)?.status === "ACTIVE" ? "Save & release" : "Save new version")
+                ? (editingReleases ? "Save & release" : "Save new version")
                 : activationReady === false ? "Save draft" : "Create & activate"}
           </Button>
         </>}

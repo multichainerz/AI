@@ -5,6 +5,18 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.5.9 — 2026-08-20
+
+Hardens the release-on-save path shipped in v9.5.8.
+
+### Changes
+
+- take the profile advisory lock in state changes too, so an activation
+  racing a releasing save cannot set `activeVersion` a step backwards
+- warn in the editor before a releasing save stops runs still executing on
+  the superseded version, instead of a colleague's answer dying as the
+  announcement
+
 ## v9.5.8 — 2026-08-20
 
 Saving a new version of an ACTIVE profile now releases it immediately, so
