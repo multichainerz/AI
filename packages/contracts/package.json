@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/contracts",
-  "version": "9.6.4",
+  "version": "9.6.5",
   "description": "Shared Zod contracts and version constants for OrcaSynapse",
   "license": "BUSL-1.1",
   "private": true,

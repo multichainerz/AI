@@ -103,6 +103,29 @@ describe("local person sign-in", () => {
     expect(screen.queryByText(/administrator session expired/i)).toBeNull();
   });
 
+  it("hides the administration areas from a People account", async () => {
+    api.createLocalAdministratorSession.mockRejectedValue(
+      new OrcaSynapseApiError(401, "The username or password is incorrect."),
+    );
+    api.createLocalPersonSession.mockResolvedValue(enterpriseSession);
+
+    await submitLocalSignIn("ayu", "a-long-enough-password");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ayu Rahman" })).toBeTruthy());
+
+    /*
+     * The rail advertises only what this identity can open. The admin group
+     * -- its fold control and every row behind it -- must not render for a
+     * person: each of those pages answers them with a locked screen, so the
+     * rows were four doors that do not open. The workspace rows staying in
+     * the same render is what keeps the absences from passing vacuously.
+     */
+    expect(screen.getByRole("button", { name: /Session/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Files/ })).toBeTruthy();
+    for (const hidden of ["Admin", "Agents", "Gateway", "Operations", "Settings"]) {
+      expect(screen.queryByRole("button", { name: new RegExp(`^${hidden}`) })).toBeNull();
+    }
+  });
+
   it("says the credentials are wrong instead of claiming the admin session expired", async () => {
     api.createLocalAdministratorSession.mockRejectedValue(
       new OrcaSynapseApiError(401, "The username or password is incorrect."),

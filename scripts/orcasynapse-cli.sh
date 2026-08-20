@@ -14,7 +14,7 @@
 # Bare invocation on a TTY opens the menu; a subcommand runs non-interactively.
 set -Eeuo pipefail
 
-CLI_VERSION="v9.6.4"
+CLI_VERSION="v9.6.5"
 
 ORCASYNAPSE_UPDATE_UNIT="${ORCASYNAPSE_UPDATE_UNIT:-orcasynapse-update}"
 ORCASYNAPSE_UPDATE_STATE_DIR="${ORCASYNAPSE_UPDATE_STATE_DIR:-/var/lib/orcasynapse-update}"

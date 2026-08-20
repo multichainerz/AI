@@ -5,6 +5,18 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.5 — 2026-08-20
+
+Hides the administration areas from People accounts.
+
+### Changes
+
+- render the Admin navigation group (Agents, Gateway, Operations, Settings)
+  only for an unlocked administrator session; a person signed in through the
+  enterprise tuple sees the workspace rows alone. Deep links stay guarded by
+  each view and by the API's own scopes — this stops the rail from
+  advertising doors that do not open.
+
 ## v9.6.4 — 2026-08-20
 
 Profiles follow the approved inference setup instead of asking for a model

@@ -1380,6 +1380,17 @@ function App() {
               if (!group.collapsible) {
                 return <div className="nav-group" key={group.label}>{group.items.map(renderNavigationRow)}</div>;
               }
+              /*
+               * The administration areas exist only for an unlocked
+               * administrator session. A person signed in through the
+               * enterprise tuple gets the workspace rows and nothing else:
+               * the pages behind these rows answer them with locked screens
+               * anyway, so rendering the group for them was four rows of
+               * "you cannot use this". Deep links stay guarded by each view
+               * and by the API's own scopes -- this only stops the rail from
+               * advertising doors that do not open.
+               */
+              if (!unlocked) return null;
               const holdsActive = group.items.some((item) => item.area === activeArea);
               const open = adminNavOpen ?? holdsActive;
               const panelId = `nav-group-${group.label.toLowerCase()}`;
