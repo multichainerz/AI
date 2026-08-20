@@ -5,6 +5,20 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.2 — 2026-08-20
+
+Attaches uploads to the message that sends them instead of pinning them to
+the composer forever.
+
+### Changes
+
+- bind every still-pending upload to the user message that goes out with it,
+  inside the submit transaction; a later message cannot steal them and agent
+  deliverables keep their own attribution
+- show only unbound uploads on the composer ("Files to send with your next
+  message"); once sent, the files render on that message's bubble in the
+  transcript, for user messages as well as agent responses
+
 ## v9.6.1 — 2026-08-20
 
 Makes the attachment announcement honest on nodes that cannot reach the

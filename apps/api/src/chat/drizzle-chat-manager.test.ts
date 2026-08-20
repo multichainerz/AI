@@ -9,6 +9,7 @@ import {
   agentRunApproval,
   agentRunEvent,
   auditEvent,
+  chatArtifact,
   chatConversation,
   chatFeedback,
   chatMessage,
@@ -255,6 +256,45 @@ describe("DrizzleChatManager message submission", () => {
       expect.objectContaining({ profileId, input: "Hello" }),
       expect.anything(),
     );
+  });
+
+  /*
+   * Uploads attach to the message that sends them. Stored at pick time with a
+   * null messageId (so they survive a closed tab and appear on Files), they
+   * bind to the next user message on submit -- and only to it: a later
+   * message must not steal them, and an agent deliverable awaiting its own
+   * attribution must not be re-homed by someone else's send.
+   */
+  it("binds pending uploads to the user message that sends them", async () => {
+    const conversationId = await conversation();
+    const seedArtifact = async (origin: "UPLOADED" | "AGENT", name: string) => {
+      const [row] = await context.database.insert(chatArtifact).values({
+        conversationId, origin, ownerSubject: principal.subject,
+        name, path: name, mediaType: "text/plain",
+        sizeBytes: 5, sha256: "0".repeat(64), storage: "INLINE", observedAt: new Date(),
+      }).returning({ id: chatArtifact.id });
+      return row!.id;
+    };
+    const pendingId = await seedArtifact("UPLOADED", "notes.txt");
+    const agentFileId = await seedArtifact("AGENT", "report.md");
+
+    const first = await manager().submitMessage(principal, conversationId, "read the attached file");
+
+    const bindings = async () => new Map(
+      (await context.database.select({ id: chatArtifact.id, messageId: chatArtifact.messageId }).from(chatArtifact))
+        .map(({ id, messageId }) => [id, messageId]),
+    );
+    expect((await bindings()).get(pendingId)).toBe(first.userMessage.id);
+    expect((await bindings()).get(agentFileId)).toBeNull();
+
+    // A second message binds nothing retroactively: the upload stays on the
+    // bubble that sent it.
+    await context.database.update(chatMessage)
+      .set({ status: "COMPLETED" })
+      .where(eq(chatMessage.id, first.assistantMessage.id));
+    const second = await manager().submitMessage(principal, conversationId, "and what does it say?");
+    expect(second.userMessage.id).not.toBe(first.userMessage.id);
+    expect((await bindings()).get(pendingId)).toBe(first.userMessage.id);
   });
 
   it("stores the turn pair, titles the conversation, and links the run", async () => {

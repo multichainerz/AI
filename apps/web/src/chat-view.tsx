@@ -439,15 +439,19 @@ function AgentActivityTrail({ entries }: { entries: readonly TimelineEntry<ChatR
 }
 
 /**
- * The files a governed turn produced, on the message that produced them. The
- * list is division-bounded by the server and fetched per conversation; this
- * renders the slice whose messageId matches. Same quiet register as the
- * activity trail: a deliverable is part of the answer, not a banner over it.
+ * The files a message carries, on the bubble that carries them: an agent
+ * turn's deliverables, or the uploads a person's message sent. The list is
+ * division-bounded by the server and fetched per conversation; this renders
+ * the slice whose messageId matches. Same quiet register as the activity
+ * trail: a file is part of the message, not a banner over it.
  */
-function MessageArtifacts({ items }: { items: readonly ChatArtifact[] }) {
+function MessageArtifacts({ items, role }: { items: readonly ChatArtifact[]; role: "USER" | "ASSISTANT" }) {
   if (items.length === 0) return null;
   return (
-    <ul aria-label="Files from this response" className="m-0 mt-3 grid list-none gap-1 p-0">
+    <ul
+      aria-label={role === "USER" ? "Files sent with this message" : "Files from this response"}
+      className="m-0 mt-3 grid list-none gap-1 p-0"
+    >
       {items.map((artifact) => (
         <li className="flex min-w-0 items-center gap-2.5 rounded border border-border bg-raised/40 px-3 py-2" key={artifact.id}>
           <PaperclipIcon size={14} className="shrink-0 text-faint" aria-hidden="true" />
@@ -1953,9 +1957,10 @@ export function ChatView({
                           busy={busy}
                           elapsedMs={streamElapsedMs}
                         />}
-                    {message.role === "ASSISTANT" && (
-                      <MessageArtifacts items={messageArtifacts.filter((artifact) => artifact.messageId === message.id)} />
-                    )}
+                    <MessageArtifacts
+                      role={message.role}
+                      items={messageArtifacts.filter((artifact) => artifact.messageId === message.id)}
+                    />
                     {message.role === "ASSISTANT" && message.approvals.map((approval) => (
                       /*
                        * The one block on the transcript that is warn-toned on
@@ -2196,13 +2201,16 @@ export function ChatView({
               />
             </div>
             {/*
-              * The conversation's uploads, worn by the composer that added
-              * them. Provenance chips, not controls: files live and die with
-              * the conversation, and the Files screen is where they download.
+              * Only the uploads still waiting to be sent. A file binds to the
+              * user message that sends it -- `submitMessage` stamps every
+              * pending upload with the new message's id -- so once it has gone
+              * out it renders on that bubble in the transcript, not here. The
+              * composer wearing every upload forever was the bug this split
+              * fixes: these chips are the outbox, the bubble is the record.
               */}
-            {messageArtifacts.some((artifact) => artifact.origin === "UPLOADED") && (
-              <ul aria-label="Files attached to this conversation" className="m-0 flex list-none flex-wrap gap-1.5 px-3 pt-1">
-                {messageArtifacts.filter((artifact) => artifact.origin === "UPLOADED").map((artifact) => (
+            {messageArtifacts.some((artifact) => artifact.origin === "UPLOADED" && artifact.messageId === null) && (
+              <ul aria-label="Files to send with your next message" className="m-0 flex list-none flex-wrap gap-1.5 px-3 pt-1">
+                {messageArtifacts.filter((artifact) => artifact.origin === "UPLOADED" && artifact.messageId === null).map((artifact) => (
                   <li key={artifact.id} className="flex min-w-0 items-center gap-1.5 rounded border border-border bg-raised/60 px-2 py-1 text-micro text-muted">
                     <PaperclipIcon size={11} aria-hidden="true" className="shrink-0 text-faint" />
                     <span className="max-w-[12rem] truncate font-medium">{artifact.name}</span>

@@ -29,6 +29,7 @@ import {
   agentRunApproval,
   agentRunEvent,
   auditEvent,
+  chatArtifact,
   chatConversation,
   chatFeedback,
   chatMessage,
@@ -38,7 +39,7 @@ import {
   type ChatRunWatch,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, getTableColumns, gt, gte, inArray, lte, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, gt, gte, inArray, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
 import { profileVisibleTo } from "../agents/profile-visibility.js";
 import {
@@ -754,6 +755,24 @@ export class DrizzleChatManager implements ChatManager {
         { id: userMessageId, conversationId, ordinal: generation * 2 - 1, role: "USER", status: "COMPLETED", content, completedAt: now },
         { id: assistantMessageId, conversationId, ordinal: generation * 2, role: "ASSISTANT", status: "PENDING", content: "", modelAlias: stored.modelAlias },
       ]);
+      /*
+       * Uploads attach to the message that sends them. A file added from the
+       * composer is stored the moment it is picked -- so it survives a closed
+       * tab and is already listed on Files -- but it stays unbound
+       * (`messageId` null) until a message goes out, and this is the binding:
+       * every still-pending upload in the conversation becomes an attachment
+       * of this user message. The composer shows only unbound uploads, so
+       * chips move from the composer to the bubble on send instead of
+       * shadowing the prompt forever.
+       */
+      await transaction
+        .update(chatArtifact)
+        .set({ messageId: userMessageId })
+        .where(and(
+          eq(chatArtifact.conversationId, conversationId),
+          eq(chatArtifact.origin, "UPLOADED"),
+          isNull(chatArtifact.messageId),
+        ));
       return {
         profileId: stored.profileId,
         modelAlias: stored.modelAlias,
