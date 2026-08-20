@@ -5,6 +5,20 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.5.5 — 2026-08-20
+
+Stops a conversation from being poisoned by its own history: the inference
+gateway's length ceiling is now role-aware.
+
+### Changes
+
+- re-check each replayed message against the ceiling it was produced under —
+  `user`/`system`/`developer` against `maxInputCharacters`, `assistant`/`tool`
+  against `maxOutputCharacters`. The first answer or tool page longer than the
+  input ceiling no longer fails every later turn of its conversation with
+  INPUT_CHARACTER_LIMIT. Detectors and operator rules still run on every
+  role; person-typed input keeps its composer-time bound, unchanged.
+
 ## v9.5.4 — 2026-08-20
 
 Lets agents read what people attach to a conversation, and stops authored

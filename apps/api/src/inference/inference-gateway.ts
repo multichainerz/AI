@@ -468,8 +468,23 @@ export class DrizzleInferenceGateway {
      */
     const inspected: InferenceGatewayChatRequest["messages"] = [];
     const redactions: GuardrailRuleMatch[] = [];
-    const inspectText = async (text: string) => {
-      const inspection = inspectInput(text, policy, policy.rules);
+    /*
+     * The length ceiling is the one check that must be role-aware, because a
+     * message may only be re-checked against the ceiling it was produced
+     * under. Person-typed input was authored under `maxInputCharacters` and
+     * already refused at the composer if it broke it; assistant and tool
+     * messages were produced under `maxOutputCharacters`, which the policy
+     * deliberately sets far higher. Re-bounding those at the input ceiling on
+     * echo was the bug this replaces: the first answer or tool page longer
+     * than 32k characters made every later turn of its conversation refuse
+     * with INPUT_CHARACTER_LIMIT -- a thread poisoned by its own history.
+     * Detectors and the operator's rules still run on every role; only the
+     * length check varies.
+     */
+    const ceilingFor = (role: InferenceGatewayChatRequest["messages"][number]["role"]) =>
+      role === "assistant" || role === "tool" ? policy.maxOutputCharacters : policy.maxInputCharacters;
+    const inspectText = async (text: string, maxInputCharacters: number) => {
+      const inspection = inspectInput(text, { ...policy, maxInputCharacters }, policy.rules);
       if (inspection.decision === "BLOCK") {
         // The violation name and the rule labels, never the text that carried
         // them. A CREDENTIAL_PATTERN rejection exists because the message
@@ -487,7 +502,7 @@ export class DrizzleInferenceGateway {
     };
     for (const message of input.messages) {
       if (typeof message.content === "string" && message.content) {
-        const text = await inspectText(message.content);
+        const text = await inspectText(message.content, ceilingFor(message.role));
         inspected.push(text === message.content ? message : { ...message, content: text });
         continue;
       }
@@ -502,7 +517,7 @@ export class DrizzleInferenceGateway {
         const parts: GatewayContentPart[] = [];
         for (const part of message.content) {
           if (isTextPart(part) && part.text) {
-            const text = await inspectText(part.text);
+            const text = await inspectText(part.text, ceilingFor(message.role));
             if (text !== part.text) {
               changed = true;
               parts.push({ ...part, text });

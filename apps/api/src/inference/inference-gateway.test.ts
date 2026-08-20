@@ -581,4 +581,75 @@ describe("DrizzleInferenceGateway rate-limit counter", () => {
       .rejects.toMatchObject({ code: "NOT_CONFIGURED" });
     expect(fetcher).not.toHaveBeenCalled();
   });
+
+  /*
+   * The role-aware length ceiling. A replayed message may only be re-checked
+   * against the ceiling it was produced under: person-typed input against
+   * `maxInputCharacters`, assistant and tool traffic against
+   * `maxOutputCharacters`. Before this, the first answer or tool page longer
+   * than the input ceiling poisoned its conversation permanently -- every
+   * later turn carried the oversized echo and refused with
+   * INPUT_CHARACTER_LIMIT.
+   */
+  it("forwards an assistant echo longer than the input ceiling", async () => {
+    const { gateway, fetcher } = await harness();
+    const answer = "a".repeat(33_000);
+
+    await gateway.chat(
+      "runtime-key",
+      { ...request, messages: [{ role: "assistant", content: answer }, { role: "user", content: "go on" }] },
+      new AbortController().signal,
+    );
+
+    const [, init] = (fetcher as unknown as { mock: { calls: Array<[URL, RequestInit]> } }).mock.calls[0]!;
+    const forwarded = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+    expect(forwarded.messages[0]?.content).toBe(answer);
+  });
+
+  it("forwards a tool message the size of a read-file page", async () => {
+    const { gateway, fetcher } = await harness();
+
+    await gateway.chat(
+      "runtime-key",
+      { ...request, messages: [{ role: "tool", content: "t".repeat(60_000) }, { role: "user", content: "summarise it" }] },
+      new AbortController().signal,
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("still refuses a user message past the input ceiling", async () => {
+    const { gateway, fetcher } = await harness();
+
+    await expect(gateway.chat(
+      "runtime-key",
+      { ...request, messages: [{ role: "user", content: "u".repeat(33_000) }] },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "POLICY_REJECTED", message: expect.stringContaining("INPUT_CHARACTER_LIMIT") });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("refuses an assistant echo past the output ceiling its policy grants", async () => {
+    // A tighter-than-default policy, because the contract already caps one
+    // string body at 120k: the policy ceiling is what an operator tunes.
+    const { gateway, fetcher } = await harness();
+    await context.database.insert(guardrailPolicy).values({
+      slug: `policy-${randomUUID().slice(0, 8)}`,
+      displayName: "Tight output ceiling",
+      description: "Bounds what an echoed answer may carry.",
+      version: "1",
+      status: "ACTIVE",
+      maxInputCharacters: 32_000,
+      maxOutputCharacters: 50_000,
+      firstActivatedAt: new Date(),
+      rules: [],
+    });
+
+    await expect(gateway.chat(
+      "runtime-key",
+      { ...request, messages: [{ role: "assistant", content: "a".repeat(60_000) }, { role: "user", content: "go on" }] },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: "POLICY_REJECTED" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });
