@@ -135,7 +135,10 @@ describe("chat schedules", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Resume" }));
 
-    expect(vi.mocked(updateChatSchedule)).toHaveBeenCalledWith(base.id, { enabled: true });
+    expect(vi.mocked(updateChatSchedule)).toHaveBeenCalledWith(base.id, {
+      enabled: true,
+      expectedRevision: base.revision,
+    });
   });
 
   it("deletes a schedule and stops showing it", async () => {

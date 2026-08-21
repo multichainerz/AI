@@ -59,7 +59,10 @@ const ACCOUNT_ID_PATTERN = /^[0-9a-f-]{36}$/i;
  * carries only `sessions:manage` and so cannot reach any chat route, but a
  * parser that assumed every subject held a uuid would be wrong about it.
  */
-export function principalAccountId(principal: ChatPrincipal): string | null {
+export function principalAccountId(principal: {
+  identityMode: "ENTERPRISE" | "ADMINISTRATOR_PREVIEW";
+  subject: string;
+}): string | null {
   const prefix = principal.identityMode === "ENTERPRISE" ? "user:" : "local-admin:";
   if (!principal.subject.startsWith(prefix)) return null;
   const accountId = principal.subject.slice(prefix.length);

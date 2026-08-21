@@ -7,13 +7,11 @@ import { Mark } from "./surface.js";
  * each row is both a progress readout and the way back into that step.
  *
  * Lifted from the governed-path column on the Dashboard
- * (`dashboard-hero.tsx`, `PipelineRow`), which is the only place in the product that
- * had already solved "these are in order, and a message travels through them":
- * an `<ol>` with an absolutely-positioned 1px `bg-border-strong` rule running
- * between the markers rather than three cards of equal weight separated by a
- * gap. Side by side, equal-weight cards say "related" and nothing about
- * direction — which is exactly how the screen this replaces ended up inferring
- * its ordering from the order of its cards.
+ * (`dashboard-hero.tsx`, `PipelineRow`): an `<ol>` with a 1px rule running
+ * between stacked markers. That spine is vertical-only. A horizontal run puts
+ * the title beside each marker, so the same rule rotated onto its side cut
+ * through the step cells at the marker midline. Order in a row is the
+ * ordinals; there is no empty corridor to put a connector in.
  *
  * Deliberately domain-free. It knows nothing about inference servers or agent
  * profiles; `setup-steps.ts` decides what the steps are and what blocks them,
@@ -66,7 +64,7 @@ export function StepList({
     <ol
       className={cn(
         "m-0 grid list-none gap-0 p-0",
-        horizontal && "sm:grid-flow-col sm:auto-cols-fr",
+        horizontal && "sm:grid-flow-col sm:auto-cols-fr sm:gap-3",
         className,
       )}
       aria-label={label}
@@ -94,18 +92,6 @@ export function StepList({
                   "absolute -bottom-3 left-7 top-11 w-px bg-border-strong",
                   horizontal && "sm:hidden",
                 )}
-              />
-            )}
-            {/*
-              The same chain, turned on its side: from the right edge of this
-              marker (12px pad + 32px marker = left-11) across the cell
-              boundary into the next cell's padding (-right-3), at the
-              marker's vertical centre (top-7 = 12px pad + half of 32px).
-            */}
-            {horizontal && index < items.length - 1 && (
-              <span
-                aria-hidden="true"
-                className="absolute -right-3 left-11 top-7 hidden h-px bg-border-strong sm:block"
               />
             )}
             <Button

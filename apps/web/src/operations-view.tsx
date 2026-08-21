@@ -416,14 +416,11 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
               kicker="Infrastructure"
               title="Services"
               /*
-               * All three provenance words, because all three appear. The
-               * sentence named "Live" and "Verified" while `source` is a
-               * three-valued enum -- LIVE, LAST_VERIFIED, CONFIGURATION -- so
-               * a row reading "Configuration" was a word the legend under it
-               * did not admit existed, on the screen an operator reaches for
-               * when they already distrust what they are seeing.
+               * All three provenance words, because all three appear as a
+               * footer. Naming only Live and Verified left a row labelled
+               * Configuration unexplained.
                */
-              description="Everything OrcaSynapse depends on, worst first. “Live” was checked just now; “Verified” is the last connection test and may be old; “Configuration” means nothing was contacted — the row describes what is set up, not what answered."
+              description="Worst first. Live is now, Verified is the last test, Configuration is setup only."
               /*
                * Toned, not merely timestamped. Every figure on this screen
                * comes from this one snapshot, so when it is old the whole page

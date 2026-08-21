@@ -240,6 +240,7 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
     );
 
     const outcome = await this.database.transaction(async (transaction) => {
+      await transaction.execute(advisoryLock(`orcasynapse-local-person:${username}`));
       /*
        * Re-read under the transaction, because ~800ms passed.
        *
@@ -250,6 +251,11 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
        * hash is compared too: if it changed while this attempt was hashing, the
        * password just verified is no longer the account's, and accepting it
        * would let a rotated credential keep working for the length of one KDF.
+       *
+       * The advisory lock is what makes that re-read sufficient. Without it
+       * two waiters both read `failedLoginCount = 0` under READ COMMITTED and
+       * both write `1`, so the lockout never trips. The administrator twin
+       * serialises on `orcasynapse-local-admin:${username}` for the same reason.
        */
       const [current] = found
         ? await transaction

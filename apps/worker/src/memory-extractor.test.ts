@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import {
   createTestDatabase,
   modelDeployment,
@@ -116,6 +117,34 @@ describe("InferenceMemoryExtractor", () => {
     // The approved alias, not the run's -- the run's is a Hermes alias and means
     // nothing to the inference endpoint.
     expect((calls[0]?.body as { model: string }).model).toBe("orca-agent-70b");
+  });
+
+  it("does not post to a healthy inference connection the default agent route does not name", async () => {
+    await seedInferenceRoute({ approved: true });
+    const [named] = await context.database
+      .select({ id: serviceConnection.id })
+      .from(serviceConnection)
+      .limit(1);
+    await context.database
+      .update(serviceConnection)
+      .set({ enabled: false })
+      .where(eq(serviceConnection.id, named!.id));
+    await context.database.insert(serviceConnection).values({
+      slug: `other-${randomUUID().slice(0, 8)}`,
+      displayName: "Other inference",
+      kind: "INFERENCE",
+      environment: "PRODUCTION",
+      baseUrl: "https://other.internal",
+      enabled: true,
+      status: "HEALTHY",
+    });
+    const { calls, fetcher } = recordingFetcher(() => completion("[]"));
+
+    const notes = await new InferenceMemoryExtractor(context.database, resolver(), fetcher)
+      .extract(EXCHANGE);
+
+    expect(calls).toHaveLength(0);
+    expect(notes).toEqual([]);
   });
 
   it("keeps nothing when the model says there is nothing", async () => {

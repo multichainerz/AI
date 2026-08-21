@@ -68,7 +68,7 @@ validate_protected_installation() {
 
 wait_for_readiness() {
   local deadline=$((SECONDS + 180))
-  until curl --fail --silent "http://127.0.0.1:${ORCASYNAPSE_HTTP_PORT}/readyz" >/dev/null 2>&1; do
+  until curl --fail --silent "$(orcasynapse_readyz_url)" >/dev/null 2>&1; do
     (( SECONDS < deadline )) || return 1
     sleep 2
   done

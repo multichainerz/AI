@@ -1,4 +1,5 @@
 import {
+  auditEvent,
   chatSchedule,
   enterpriseUser,
   localAdministrator,
@@ -153,18 +154,22 @@ export class ScheduleRuntime {
        * because a schedule that silently stopped is indistinguishable from one
        * that is simply not due yet.
        */
-      await this.settle(schedule.id, "DISABLED", `${schedule.createdBySubject} can no longer start conversations, so this schedule was disabled.`, false);
+      const detail = `${schedule.createdBySubject} can no longer start conversations, so this schedule was disabled.`;
+      await this.settle(schedule.id, "DISABLED", detail, false);
+      await this.recordFire(schedule, "DISABLED", detail);
       return;
     }
 
     try {
       await this.chat.submitMessage(principal, schedule.conversationId, schedule.prompt);
       await this.settle(schedule.id, "OK", "The scheduled turn was queued.", true);
+      await this.recordFire(schedule, "OK", "The scheduled turn was queued.");
     } catch (error) {
       const outcome = this.classify(error);
       await this.settle(schedule.id, outcome.status, outcome.detail, outcome.status !== "DISABLED");
       if (outcome.status === "DISABLED") {
         this.logger.info(`Scheduled turn ${schedule.id} disabled: ${outcome.detail}`);
+        await this.recordFire(schedule, "DISABLED", outcome.detail);
       }
     }
   }
@@ -225,6 +230,34 @@ export class ScheduleRuntime {
         ...(keepEnabled ? {} : { enabled: false }),
       })
       .where(eq(chatSchedule.id, scheduleId));
+  }
+
+  /**
+   * The trail the panel does not write. Create/update/delete are operator
+   * actions on the row; a fire is unattended execution, and a self-disable is
+   * a standing grant ending itself. Neither was recorded, so a morning report
+   * that stopped was indistinguishable in the audit trail from one that was
+   * never due. Skips stay off the trail: a rate limit every 15 seconds is not
+   * a decision.
+   */
+  private async recordFire(
+    schedule: ClaimedSchedule,
+    outcome: "OK" | "DISABLED",
+    detail: string,
+  ): Promise<void> {
+    await this.database.insert(auditEvent).values({
+      actorType: "SERVICE",
+      actorId: schedule.createdBy,
+      action: outcome === "OK" ? "chat.schedule_fired" : "chat.schedule_disabled",
+      resourceType: "ChatSchedule",
+      resourceId: schedule.id,
+      outcome: outcome === "OK" ? "SUCCESS" : "FAILURE",
+      metadata: {
+        conversationId: schedule.conversationId,
+        createdBySubject: schedule.createdBySubject,
+        detail: detail.slice(0, 500),
+      },
+    });
   }
 
   /**

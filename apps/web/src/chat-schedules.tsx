@@ -169,7 +169,10 @@ export function ChatSchedules({ conversationId }: { conversationId: string }) {
               <Button
                 size="sm"
                 disabled={busy}
-                onClick={() => void guard(() => updateChatSchedule(schedule.id, { enabled: !schedule.enabled }))}
+                onClick={() => void guard(() => updateChatSchedule(schedule.id, {
+                  enabled: !schedule.enabled,
+                  expectedRevision: schedule.revision,
+                }))}
               >
                 {schedule.enabled ? "Pause" : "Resume"}
               </Button>

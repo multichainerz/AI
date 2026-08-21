@@ -20,4 +20,17 @@ describe("development proxy route coverage", () => {
     expect(Object.keys(developmentProxyRoutes).some((prefix) => request.startsWith(prefix))).toBe(true);
     expect(nginxConfiguration).toContain(nginxLocation);
   });
+
+  it("raises Nginx above Fastify's raised body limits on the production path", () => {
+    const apiBlock = nginxConfiguration.slice(
+      nginxConfiguration.indexOf("location /api/ {"),
+      nginxConfiguration.indexOf("location /internal/v1/ {"),
+    );
+    const inferenceBlock = nginxConfiguration.slice(
+      nginxConfiguration.indexOf("location /internal/v1/ {"),
+      nginxConfiguration.indexOf("location = /healthz {"),
+    );
+    expect(apiBlock).toMatch(/client_max_body_size\s+8m\s*;/);
+    expect(inferenceBlock).toMatch(/client_max_body_size\s+16m\s*;/);
+  });
 });

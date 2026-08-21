@@ -170,6 +170,7 @@ export function HomeView(props: HomeViewProps) {
     <DashboardHero
       unlocked={props.unlocked}
       apiAvailable={props.apiAvailable}
+      bootstrapState={props.bootstrapState}
       primaryLabel={primaryLabel}
       onPrimary={primaryAction}
       onAsk={() => (props.unlocked ? props.onSelect("Chat") : props.onUnlock())}

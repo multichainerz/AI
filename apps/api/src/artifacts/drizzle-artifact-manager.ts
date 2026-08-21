@@ -10,6 +10,7 @@ import {
 import {
   agentProfile,
   agentRun,
+  auditEvent,
   chatArtifact,
   chatArtifactContent,
   chatConversation,
@@ -129,6 +130,19 @@ export class DrizzleChatArtifactManager implements ChatArtifactManager {
       removed += dropped.length;
     }
 
+    const stored = results.filter((result) => result.unchanged !== true).length;
+    const unchanged = results.length - stored;
+    if (stored > 0 || removed > 0) {
+      await this.database.insert(auditEvent).values({
+        actorType: "SERVICE",
+        action: "chat.artifact_ingested",
+        resourceType: "AgentRun",
+        resourceId: run.id,
+        outcome: "SUCCESS",
+        metadata: { nodeId, sessionId: input.sessionId, stored, unchanged, removed },
+      });
+    }
+
     return { accepted: true, results, removed, serverTime: new Date().toISOString() };
   }
 
@@ -181,6 +195,20 @@ export class DrizzleChatArtifactManager implements ChatArtifactManager {
         observedAt: now,
       }).returning();
       await transaction.insert(chatArtifactContent).values({ artifactId: created!.id, bytes });
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: principal.id,
+        action: "chat.artifact_uploaded",
+        resourceType: "ChatArtifact",
+        resourceId: created!.id,
+        outcome: "SUCCESS",
+        metadata: {
+          conversationId: conversation.id,
+          name: input.name,
+          mediaType: input.mediaType,
+          sizeBytes: bytes.byteLength,
+        },
+      });
       return created!;
     });
     return DrizzleChatArtifactManager.toWire(artifact, conversation.title, conversation.profileName);

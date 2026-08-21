@@ -393,6 +393,24 @@ unblock_target() {
 # The health gate. The control plane's own readiness endpoint on the loopback
 # port the installer publishes -- the same check scripts/install-orcasynapse.sh
 # waits on, so a green gate here means the same thing it means there.
+# Copied rather than sourced: this file must not depend on the install tree,
+# which is renamed out from under it during an upgrade. Docker publishes
+# ${bind}:${port}:8080, so loopback is the wrong probe when the bind is a
+# LAN unicast address.
+update_readyz_url() {
+  local bind="${ORCASYNAPSE_HTTP_BIND:-}"
+  if [[ -z "${bind}" && -f "${ORCASYNAPSE_INSTALL_DIR}/.local/state/http-bind" ]]; then
+    bind="$(<"${ORCASYNAPSE_INSTALL_DIR}/.local/state/http-bind")"
+    bind="${bind//[$'\r\n\t ']/}"
+  fi
+  local host
+  case "${bind}" in
+    0.0.0.0|"") host="127.0.0.1" ;;
+    *) host="${bind}" ;;
+  esac
+  printf 'http://%s:%s/readyz' "${host}" "${ORCASYNAPSE_HTTP_PORT:-8080}"
+}
+
 wait_for_ready() {
   # Two statements, not one `local budget=… deadline=$((… + budget))`. In a
   # single `local` the names are created before the initialisers are evaluated,
@@ -401,7 +419,7 @@ wait_for_ready() {
   local budget="$1"
   local deadline=$((SECONDS + budget))
   until curl --fail --silent --show-error --max-time 10 \
-      "http://127.0.0.1:${ORCASYNAPSE_HTTP_PORT}/readyz" >/dev/null 2>&1; do
+      "$(update_readyz_url)" >/dev/null 2>&1; do
     (( SECONDS < deadline )) || return 1
     sleep 5
   done

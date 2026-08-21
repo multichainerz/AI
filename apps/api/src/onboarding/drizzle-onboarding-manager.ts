@@ -58,7 +58,7 @@ const COMPONENTS = [
   ["hermes-api", "Hermes API Server", "Agents", true, "Pinned Hermes passes native session streaming, stop, Profile, Skill, Toolset, and state.db checks."],
   ["hermes-runtime-node", "Hermes runtime node", "Agents", false, "An isolated Hermes node completes one-time enrollment, proves its signing identity, and maintains a current heartbeat without standing SSH trust."],
   ["mcp-gateway", "MCP gateway", "Tools", false, "Optional governed tools pass negotiation, discovery, calls, cancellation, authorization, and token-boundary checks."],
-  ["enterprise-oidc", "Enterprise OIDC", "Identity", false, "Production identity passes discovery, signatures, PKCE, state, nonce, groups, logout, and revocation."],
+  ["enterprise-oidc", "Enterprise OIDC", "Identity", false, "Federated sign-in was removed; local people accounts are the enterprise identity path."],
   ["signed-installer", "OrcaSynapse signed installer", "Deployment", true, "The signed release-bundle installer passes clean install, isolation, upgrade, rollback, and recovery."],
   ["gpu-capacity", "Local GPU capacity", "Infrastructure", false, "Selected local inference stack passes admitted context, concurrency, contention, thermal, and recovery tests."],
 ] as const;
@@ -66,7 +66,7 @@ const COMPONENTS = [
 const STEPS = [
   ["activate-installation", 1, "Activate installation", "Confirm the local administrator account, installed release, and host identity.", "Run installation validation"],
   ["system-topology", 2, "System and topology", "Validate the host and select Compact, Control-plane only, or Segmented production.", "Save topology, then validate this host"],
-  ["identity-recovery", 3, "Identity and recovery", "Configure final trust, enterprise identity, recovery ownership, and a verified encrypted recovery kit.", "Export and verify recovery; configure OIDC for Production"],
+  ["identity-recovery", 3, "Identity and recovery", "Configure final trust, people accounts, recovery ownership, and a verified encrypted recovery kit.", "Export and verify recovery; Production requires a verified recovery kit"],
   ["ai-services", 4, "AI services and Hermes node", "Connect an inference server, then enroll and validate the isolated Hermes runtime.", "Test the inference server, then enroll the Hermes VM"],
   ["hermes-profiles", 5, "Hermes and Profiles", "Validate the Hermes boundary and move an immutable Profile Distribution into standby.", "Create, evaluate, and validate a standby Profile"],
   ["guardrails-tools", 6, "Guardrails and tools", "Prove conservative policy, zero-tool operation, approvals, and bounded governed tools.", "Activate a guardrail baseline and validate tool posture"],
@@ -112,7 +112,6 @@ function componentRequirement(architecture: ArchitectureDecision, component: Sto
   let required = production ? component.required : CORE_RUNTIME_COMPONENTS.has(component.key);
   let reason = required ? `${architecture.targetEnvironment.toLowerCase()} runtime baseline` : "Not required by the selected target";
   const selected: Array<[boolean, string, string]> = [
-    [component.key === "enterprise-oidc" && production, "Production requires enterprise identity", "enterprise-oidc"],
     [component.key === "signed-installer", "The supported OrcaSynapse release-bundle installer path must pass", "signed-installer"],
     [component.key === "inference-server", "An approved OpenAI-compatible inference server is required", "inference-server"],
     [component.key === "gpu-capacity" && production, "Production inference requires measured GPU admission", "gpu-capacity"],
@@ -124,7 +123,7 @@ function componentRequirement(architecture: ArchitectureDecision, component: Sto
       reason = selectedReason;
     }
   }
-  if (component.key === "enterprise-oidc" && !production) reason = "OIDC is recommended now and becomes blocking for Production";
+  if (component.key === "enterprise-oidc") reason = "Federated sign-in was removed; people sign in with local accounts an administrator creates";
   if (component.key === "gpu-capacity" && !production) reason = "GPU capacity is attested on the separately managed inference server before Production";
   return { required, reason };
 }
@@ -230,6 +229,7 @@ export function calculateOnboardingGate(
   steps: OnboardingStep[],
   recovery?: CredentialRecoveryControl,
   productionReadinessStatus?: ProductionReadiness["status"] | "UNAVAILABLE",
+  productionReadinessControlCount = 0,
 ): OnboardingGate {
   const requiredComponents = components.filter((item) => item.required);
   const requiredSteps = steps.filter((item) => item.required);
@@ -240,10 +240,12 @@ export function calculateOnboardingGate(
   if (architecture.targetEnvironment === "PRODUCTION" && recovery?.status !== "VERIFIED") {
     blockers.push("Credential recovery: an encrypted off-host recovery kit must be verified");
   }
-  if (architecture.targetEnvironment === "PRODUCTION" && productionReadinessStatus !== "READY") {
-    blockers.push(productionReadinessStatus === "UNAVAILABLE"
-      ? "Production readiness: the readiness authority is unavailable"
-      : `Production readiness: status is ${(productionReadinessStatus ?? "NOT_READY").toLowerCase().replaceAll("_", " ")}`);
+  if (architecture.targetEnvironment === "PRODUCTION" && productionReadinessStatus && productionReadinessStatus !== "READY") {
+    if (productionReadinessStatus === "UNAVAILABLE") {
+      blockers.push("Production readiness: the readiness authority is unavailable");
+    } else if (productionReadinessControlCount > 0) {
+      blockers.push(`Production readiness: status is ${productionReadinessStatus.toLowerCase().replaceAll("_", " ")}`);
+    }
   }
   const warnings = components
     .filter((item) => !item.required && ["FAILED", "BLOCKED"].includes(item.status))
@@ -359,11 +361,16 @@ export class DrizzleOnboardingManager implements OnboardingManager {
     const stepValues = steps.map((item) => stepDto(item, architectureValue));
     const recoveryValue = recoveryDto(recovery);
     let productionReadinessStatus: ProductionReadiness["status"] | "UNAVAILABLE" | undefined;
+    let productionReadinessControlCount = 0;
     if (architectureValue.targetEnvironment === "PRODUCTION") {
       try {
-        productionReadinessStatus = this.readiness
-          ? (await this.readiness.productionReadiness()).status
-          : "UNAVAILABLE";
+        if (!this.readiness) {
+          productionReadinessStatus = "UNAVAILABLE";
+        } else {
+          const readiness = await this.readiness.productionReadiness();
+          productionReadinessStatus = readiness.status;
+          productionReadinessControlCount = readiness.summary.totalControls;
+        }
       } catch {
         productionReadinessStatus = "UNAVAILABLE";
       }
@@ -380,7 +387,14 @@ export class DrizzleOnboardingManager implements OnboardingManager {
       components: componentValues,
       steps: stepValues,
       evidence: evidence.map(evidenceDto),
-      gate: calculateOnboardingGate(architectureValue, componentValues, stepValues, recoveryValue, productionReadinessStatus),
+      gate: calculateOnboardingGate(
+        architectureValue,
+        componentValues,
+        stepValues,
+        recoveryValue,
+        productionReadinessStatus,
+        productionReadinessControlCount,
+      ),
     };
   }
 
@@ -485,6 +499,20 @@ export class DrizzleOnboardingManager implements OnboardingManager {
         ))
         .returning({ key: componentCompatibility.key });
       if (changed.length !== 1) throw new OnboardingConflictError("The component contract changed in another session. Refresh and try again.");
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: principal.id,
+        action: "onboarding.component_updated",
+        resourceType: "ComponentCompatibility",
+        resourceId: key,
+        outcome: "SUCCESS",
+        metadata: {
+          status: input.status,
+          observedVersion: input.observedVersion ?? null,
+          attestationAuthority: input.attestationAuthority ?? null,
+          revision: input.expectedRevision + 1,
+        },
+      });
       await transaction.insert(onboardingEvidence).values({
         stageKey: "validate-activate",
         componentKey: key,
@@ -523,6 +551,15 @@ export class DrizzleOnboardingManager implements OnboardingManager {
       ))
       .returning({ key: onboardingStep.key });
     if (changed.length !== 1) throw new OnboardingConflictError("The onboarding stage changed in another session. Refresh and try again.");
+    await this.database.insert(auditEvent).values({
+      actorType: "USER",
+      actorId: principal.id,
+      action: "onboarding.step_updated",
+      resourceType: "OnboardingStep",
+      resourceId: key,
+      outcome: "SUCCESS",
+      metadata: { status: input.status, note: input.note },
+    });
     return this.snapshot();
   }
 
@@ -652,7 +689,15 @@ export class DrizzleOnboardingManager implements OnboardingManager {
       const enterpriseIdentityReady = oidc?.status === "HEALTHY" && (!production || administratorGroupsConfigured);
       return [
         { stageKey, outcome: recovery?.verifiedAt ? "PASSED" : production ? "FAILED" : "WARNING", code: "credential-recovery", summary: recovery?.verifiedAt ? "The current encrypted recovery kit was verified." : production ? "Production requires a verified encrypted off-host recovery kit." : "Recovery verification is recommended now and required for Production." },
-        { stageKey, componentKey: "enterprise-oidc", outcome: enterpriseIdentityReady ? contractOutcome(true) : production ? "FAILED" : "WARNING", code: "enterprise-identity", summary: enterpriseIdentityReady ? "An enabled enterprise OIDC connection is healthy and has administrator group mapping; Production still requires a retained login, logout, and revocation exercise." : production && oidc?.status === "HEALTHY" ? "Production requires at least one OIDC administrator group mapping." : production ? "Production requires an enabled healthy enterprise OIDC connection." : "Enterprise OIDC can be completed before Production activation." },
+        {
+          stageKey,
+          componentKey: "enterprise-oidc",
+          outcome: enterpriseIdentityReady ? contractOutcome(true) : "WARNING",
+          code: "enterprise-identity",
+          summary: enterpriseIdentityReady
+            ? "An enabled OIDC connection is still healthy. Federated sign-in was removed; it is not required."
+            : "Federated sign-in was removed. People sign in with local accounts an administrator creates under Settings → Access.",
+        },
       ];
     }
     if (stageKey === "ai-services") {

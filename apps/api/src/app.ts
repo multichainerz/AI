@@ -46,6 +46,12 @@ import { registerUsageRoutes } from "./usage/routes.js";
  */
 const PLATFORM_UPDATE_CACHE_MS = 5 * 60 * 1_000;
 
+function clientErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const statusCode = Number((error as { statusCode?: unknown }).statusCode);
+  return Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500 ? statusCode : undefined;
+}
+
 export interface AppOptions {
   logger?: boolean;
   runtime?: RuntimeServices;
@@ -487,6 +493,15 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   );
 
   app.setErrorHandler(async (error, request, reply) => {
+    const statusCode = clientErrorStatus(error);
+    if (statusCode !== undefined) {
+      return reply.code(statusCode).send({
+        error: statusCode === 413 ? "PAYLOAD_TOO_LARGE" : "BAD_REQUEST",
+        message: statusCode === 413
+          ? "The request body is larger than this route allows."
+          : "The request could not be parsed.",
+      });
+    }
     request.log.error({ error }, "OrcaSynapse request failed");
     await reply.code(500).send({
       error: "INTERNAL_ERROR",

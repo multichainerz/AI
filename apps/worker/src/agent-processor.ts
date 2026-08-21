@@ -21,7 +21,7 @@ import {
   toolRuntimeControl,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { HermesClient, HermesRunDetachedError, type HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
+import { HermesClient, HermesRunDetachedError, nativeRunId, type HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
 import type { RunCapabilityIssuer } from "@orcasynapse/security";
 import type { MemoryExtractor } from "./memory-extractor.js";
 
@@ -444,6 +444,14 @@ export class DrizzleAgentProcessor {
 
     original = await this.load(payload.runId);
     if (!original || original.processorLeaseOwner !== workerId) return { skipped: true, reason: "lease-lost" };
+    if (original.divisionId !== null) {
+      await this.database.update(agentRun).set({ divisionId: original.divisionId })
+        .where(and(
+          eq(agentRun.id, original.id),
+          eq(agentRun.processorLeaseOwner, workerId),
+          isNull(agentRun.divisionId),
+        ));
+    }
 
     let leaseLost = false;
     let renewal: Promise<void> | null = null;
@@ -537,7 +545,20 @@ export class DrizzleAgentProcessor {
 
         if (!externalRunId) {
           const [memory, uploads] = await Promise.all([this.divisionMemory(run), this.conversationUploads(run)]);
-          externalRunId = await this.hermes.start({
+          /*
+           * Persist the deterministic native id *before* `start()`. `start()`
+           * fires the Hermes POST without waiting, so a lease steal or crash
+           * between POST and the UPDATE used to leave `externalRunId` null.
+           * The next worker then POSTed a second turn. The id is
+           * `hermes-native-${sha256(run.id)}`, the same value `start` returns.
+           */
+          const nativeId = nativeRunId(run.id);
+          const linked = await this.database.update(agentRun).set({ externalRunId: nativeId })
+            .where(and(eq(agentRun.id, run.id), eq(agentRun.processorLeaseOwner, workerId)))
+            .returning({ id: agentRun.id });
+          if (linked.length !== 1) throw new ProcessorLeaseLostError();
+          externalRunId = nativeId;
+          await this.hermes.start({
             input: run.input,
             instructions: hardenedInstructions(run, memory, uploads),
             sessionId: run.sessionId,
@@ -546,10 +567,6 @@ export class DrizzleAgentProcessor {
             admittedToolsets,
           });
           assertLease();
-          const linked = await this.database.update(agentRun).set({ externalRunId })
-            .where(and(eq(agentRun.id, run.id), eq(agentRun.processorLeaseOwner, workerId)))
-            .returning({ id: agentRun.id });
-          if (linked.length !== 1) throw new ProcessorLeaseLostError();
         }
 
         if (this.hermes.events) {
@@ -849,7 +866,7 @@ export class DrizzleAgentProcessor {
     const [row] = await this.database.select({
       run: agentRun,
       profileId: agentRun.profileId,
-      divisionId: agentProfile.divisionId,
+      profileDivisionId: agentProfile.divisionId,
       profileStatus: agentProfile.status,
       profileActiveVersion: agentProfile.activeVersion,
       version: {
@@ -872,7 +889,7 @@ export class DrizzleAgentProcessor {
     return {
       ...row.run,
       profileId: row.profileId,
-      divisionId: row.divisionId,
+      divisionId: row.run.divisionId ?? row.profileDivisionId,
       profile: { status: row.profileStatus, activeVersion: row.profileActiveVersion },
       version: {
         ...row.version,
@@ -1084,8 +1101,7 @@ export class DrizzleAgentProcessor {
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING "id", "input", "output",
-        (SELECT "divisionId" FROM "AgentProfile" WHERE "AgentProfile"."id" = "AgentRun"."profileId") AS "divisionId"
+      RETURNING "id", "input", "output", "divisionId"
     `);
     const rows = (Array.isArray(claimed) ? claimed : claimed.rows) as Array<{
       id: string; input: string; output: string | null; divisionId: string | null;

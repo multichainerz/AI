@@ -197,6 +197,20 @@ orcasynapse_persist_http_port() {
   chmod 0600 "${ORCASYNAPSE_HTTP_PORT_STATE}"
 }
 
+# The URL the installer and rotation probe. Docker publishes
+# ${ORCASYNAPSE_HTTP_BIND}:${port}:8080, so curling 127.0.0.1 fails when the
+# bind is a LAN unicast address that does not listen on loopback.
+orcasynapse_readyz_url() {
+  local bind="${1:-${ORCASYNAPSE_HTTP_BIND:-0.0.0.0}}"
+  local port="${2:-${ORCASYNAPSE_HTTP_PORT:-8080}}"
+  local host
+  case "${bind}" in
+    0.0.0.0|"") host="127.0.0.1" ;;
+    *) host="${bind}" ;;
+  esac
+  printf 'http://%s:%s/readyz' "${host}" "${port}"
+}
+
 # Says out loud what the deployment is reachable on. Silence is what made the
 # original defect invisible: an update completed with a green summary while the
 # dashboard moved from loopback to every interface.

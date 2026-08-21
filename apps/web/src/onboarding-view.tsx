@@ -24,8 +24,8 @@ import {
 } from "./runtime-nodes-panel.js";
 import { deriveSetupSteps, type SetupStep, type SetupStepKey } from "./setup-steps.js";
 import {
-  Alert, Button, LockedScreen,
-  Panel, PanelHeading, StatusText, StepList, WorkspaceIntro, cn,
+  Alert, Button, EmptyState, LockedScreen, Mark, MicroLabel,
+  Panel, PanelHeading, StatusText, StepList, Tile, WorkspaceIntro, cn,
 } from "./ui/index.js";
 
 interface OnboardingViewProps {
@@ -72,6 +72,11 @@ interface OnboardingViewProps {
 
 const stepTone = { done: "good", current: "accent", blocked: "warn" } as const;
 const stepStatusLabel = { done: "Done", current: "In progress", blocked: "Waiting" } as const;
+const stepMark = {
+  done: "border-good/40 bg-good/10 text-good",
+  current: "border-accent/50 bg-raised text-accent",
+  blocked: "border-border-strong bg-raised text-faint",
+} as const;
 
 /**
  * Setup, as the sequence it actually is.
@@ -295,36 +300,54 @@ export function OnboardingView({
       </Panel>
 
       <div className="grid content-start gap-3">
-      {active && <section className="grid gap-4" aria-label={`Step ${active.ordinal}: ${active.title}`}>
-        <Panel>
-          <PanelHeading
-            kicker={`Step ${active.ordinal} of ${steps.length}`}
-            title={active.title}
-            description={active.purpose}
-            actions={<StatusText dot tone={stepTone[active.status]}>{stepStatusLabel[active.status]}</StatusText>}
-          />
+      {active && (
+        <Panel
+          aria-label={`Step ${active.ordinal}: ${active.title}`}
+          className="overflow-hidden p-0"
+        >
+          {/*
+            * The same marker the rail uses, so the open step is the rail row
+            * continued rather than a second, untitled card of work.
+            */}
+          <div className="flex items-start gap-3 p-5">
+            <Mark size="sm" className={cn("mt-0.5 border", stepMark[active.status])}>
+              {active.status === "done" ? "✓" : active.ordinal}
+            </Mark>
+            <PanelHeading
+              className="mb-0 min-w-0 flex-1"
+              kicker={`Step ${active.ordinal} of ${steps.length}`}
+              title={active.title}
+              description={active.purpose}
+              actions={<StatusText dot tone={stepTone[active.status]}>{stepStatusLabel[active.status]}</StatusText>}
+            />
+          </div>
 
           {/*
             * Every reason, not the first five. The list this replaces printed a
             * count taken from the whole array beside a `.slice(0, 5)` of it, so
             * the screen contradicted itself whenever more than five things were
             * wrong — which is exactly when an operator is reading it.
+            *
+            * One labelled list, not a stack of warn tiles: those tiles were
+            * the loudest thing on the card, so the form that actually clears
+            * them sat under what looked like the work.
             */}
           {active.blockedBy.length > 0 && (
-            <ul className="m-0 grid list-none gap-1.5 p-0" aria-label={`What step ${active.ordinal} is waiting on`}>
-              {active.blockedBy.map((blocker) => (
-                // `text-text`, not the `text-muted` the block this replaces
-                // used: muted over the warn tint measures 4.46:1 in dark theme,
-                // which is under AA — and a blocker is the one thing on the
-                // step nobody should have to lean in to read.
-                <li className="rounded border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-body text-text" key={blocker}>
-                  {blocker}
-                </li>
-              ))}
-            </ul>
+            <div className="border-t border-border bg-raised px-5 py-4">
+              <MicroLabel className="mb-2 block">Waiting on</MicroLabel>
+              <ul className="m-0 grid list-none gap-2 p-0" aria-label={`What step ${active.ordinal} is waiting on`}>
+                {active.blockedBy.map((blocker) => (
+                  <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2.5 text-body text-text" key={blocker}>
+                    <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warn" />
+                    {blocker}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
 
-          {active.key === "inference" && <div className="mt-4 grid gap-3">
+          <div className="grid gap-3 border-t border-border p-5">
+          {active.key === "inference" && (
             <ConnectionDrawer
               embedded
               open
@@ -346,39 +369,59 @@ export function OnboardingView({
               onLoadRevisions={connectionEditor.onLoadRevisions}
               onRollback={connectionEditor.onRollback}
             />
-          </div>}
-
-          {active.key === "runtime" && (
-            <div className="mt-4">
-              <RuntimeNodesPanel
-                targetEnvironment={architecture?.targetEnvironment ?? null}
-                inferenceReady={readiness.inferenceReady}
-                onConfigureInference={() => {
-                  setOpenStep("inference");
-                  onSelectStep?.("inference");
-                }}
-                onNodesChange={onRuntimeNodesChange}
-                onSessionExpired={onSessionExpired}
-              />
-            </div>
           )}
 
-          {active.key === "profile" && <div className="mt-4 grid gap-3">
-            <p className="m-0 text-caption leading-relaxed text-faint">
-              Activating a Profile re-runs the AI-services check first: activation is refused until the Hermes API
-              component has passed, and that check is the only thing that records it.
-            </p>
-            <Button
-              className="justify-self-start"
-              variant={active.status === "done" ? "ghost" : "primary"}
-              disabled={busy !== null}
-              onClick={() => void openProfiles()}
-            >
-              {busy === "ai-services" ? "Re-running the AI-services check…" : readiness.profileReady ? "Manage Agent Profiles" : "Create an Agent Profile"}
-            </Button>
-          </div>}
+          {active.key === "runtime" && (
+            <RuntimeNodesPanel
+              targetEnvironment={architecture?.targetEnvironment ?? null}
+              inferenceReady={readiness.inferenceReady}
+              onConfigureInference={() => {
+                setOpenStep("inference");
+                onSelectStep?.("inference");
+              }}
+              onNodesChange={onRuntimeNodesChange}
+              onSessionExpired={onSessionExpired}
+            />
+          )}
+
+          {active.key === "profile" && (
+            readiness.profileReady ? (
+              <Tile pad="lg" className="flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <MicroLabel className="mb-1 block">Ready</MicroLabel>
+                  <strong className="block text-label font-semibold text-text">An Agent Profile is active</strong>
+                  <p className="mb-0 mt-1 max-w-[62ch] text-body text-muted">
+                    Opening Profiles re-runs the AI-services check. That check is the only record that Hermes is ready.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  disabled={busy !== null}
+                  onClick={() => void openProfiles()}
+                >
+                  {busy === "ai-services" ? "Re-running the AI-services check…" : "Manage Agent Profiles"}
+                </Button>
+              </Tile>
+            ) : (
+              <EmptyState
+                title="Create the profile a session runs under"
+                action={
+                  <Button
+                    variant="primary"
+                    disabled={busy !== null}
+                    onClick={() => void openProfiles()}
+                  >
+                    {busy === "ai-services" ? "Re-running the AI-services check…" : "Create an Agent Profile"}
+                  </Button>
+                }
+              >
+                Activation re-runs the AI-services check first, and is refused until the Hermes API check has passed.
+              </EmptyState>
+            )
+          )}
+          </div>
         </Panel>
-      </section>}
+      )}
 
     {allDone && <Panel>
       <PanelHeading

@@ -29,6 +29,7 @@ import {
   enterpriseUser,
   enterpriseUserSession,
   governedTool,
+  localAdministrator,
   governedToolCall,
   mcpGatewayCredential,
   division,
@@ -1149,6 +1150,29 @@ export class DrizzleToolingManager implements ToolingManager {
     executor: Executor = this.database,
   ): Promise<boolean> {
     const now = new Date();
+    /*
+     * Account first, session second.
+     *
+     * `requestedBy` used to be the browser session row. Scheduled fires have
+     * no session -- they store the durable account uuid -- and an interactive
+     * turn can outlive the 15-minute admin idle window while Hermes is still
+     * calling tools. Matching a live session made both of those look like a
+     * revoked grant. The account is what the grant names; a disabled account
+     * still fails closed below.
+     */
+    const [administratorAccount] = await executor
+      .select({ role: localAdministrator.role })
+      .from(localAdministrator)
+      .where(and(eq(localAdministrator.id, requestedBy), isNull(localAdministrator.disabledAt)))
+      .limit(1);
+    if (administratorAccount) return roles.includes(administratorAccount.role);
+    const [person] = await executor
+      .select({ groups: enterpriseUser.groups, enabled: enterpriseUser.enabled })
+      .from(enterpriseUser)
+      .where(eq(enterpriseUser.id, requestedBy))
+      .limit(1);
+    if (person) return person.enabled && (person.groups ?? []).some((group) => groups.includes(group));
+
     const [administrator] = await executor
       .select({ role: administratorSession.role })
       .from(administratorSession)

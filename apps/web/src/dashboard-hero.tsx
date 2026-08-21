@@ -15,6 +15,7 @@ import { ArrowRight, CheckCircle2, MessageSquareText as TerminalIcon } from "luc
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { deploymentStatus } from "./deployment-status.js";
 import type { HomeLayer, HomeReadinessCheck } from "./home-view.js";
 import type { SetupStepKey } from "./setup-steps.js";
 import type { ActiveView } from "./workspace-navigation.js";
@@ -37,6 +38,7 @@ import type { ActiveView } from "./workspace-navigation.js";
 interface DashboardHeroProps {
   unlocked: boolean;
   apiAvailable: boolean;
+  bootstrapState: "LOCKED" | "REQUIRED" | "READY";
   primaryLabel: string;
   onPrimary: () => void;
   onAsk: () => void;
@@ -222,7 +224,7 @@ function ReadinessRing({ ready, total, unlocked }: { ready: number; total: numbe
           cx="28"
           cy="28"
           r={radius}
-          className={cn("fill-none transition-[stroke-dasharray]", complete ? "stroke-good" : "stroke-node")}
+          className={cn("fill-none transition-[stroke-dasharray]", complete ? "stroke-good" : "stroke-accent")}
           strokeWidth="4"
           strokeLinecap="round"
           strokeDasharray={`${filled} ${circumference}`}
@@ -454,6 +456,20 @@ function attentionItems(props: DashboardHeroProps): AttentionItem[] {
 /** How many attention rows fit before the panel stops being a glance. */
 const ATTENTION_ROWS = 5;
 
+const HEALTH_DOT = {
+  good: "bg-good",
+  warn: "bg-warn",
+  node: "bg-node",
+  bad: "bg-bad",
+} as const;
+
+const HEALTH_INK = {
+  good: "text-good",
+  warn: "text-warn",
+  node: "text-node",
+  bad: "text-bad",
+} as const;
+
 const RUN_TONE: Record<AgentRun["status"], string> = {
   QUEUED: "bg-faint",
   RUNNING: "bg-node",
@@ -479,6 +495,7 @@ function runMoment(run: AgentRun): string | null {
 export function DashboardHero(props: DashboardHeroProps) {
   const hops = topology(props);
   const intact = hops.every((hop) => hop.live);
+  const health = deploymentStatus(props);
   const readyCount = props.readiness.filter(({ ready }) => ready).length;
   const workspaceReady = props.unlocked && props.readiness.length > 0 && readyCount === props.readiness.length;
 
@@ -541,15 +558,10 @@ export function DashboardHero(props: DashboardHeroProps) {
               <span className="flex items-center gap-2">
                 <span
                   aria-hidden="true"
-                  className={cn("size-1.5 shrink-0 rounded-full", props.apiAvailable ? "bg-good" : "bg-bad")}
+                  className={cn("size-1.5 shrink-0 rounded-full", HEALTH_DOT[health.tone])}
                 />
-                <span
-                  className={cn(
-                    "whitespace-nowrap text-micro font-semibold",
-                    props.apiAvailable ? "text-good" : "text-bad",
-                  )}
-                >
-                  {props.apiAvailable ? "Control plane online" : "Control plane offline"}
+                <span className={cn("whitespace-nowrap text-micro font-semibold", HEALTH_INK[health.tone])}>
+                  {health.label}
                 </span>
               </span>
             </div>
@@ -799,7 +811,7 @@ export function DashboardHero(props: DashboardHeroProps) {
                     className={cn(
                       "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 whitespace-normal rounded border px-3 py-2.5 text-left font-normal",
                       item.next
-                        ? "border-node/35 bg-node/[0.07] hover:border-node/60 hover:bg-node/[0.1]"
+                        ? "border-accent/35 bg-accent/[0.07] hover:border-accent/60 hover:bg-accent/[0.1]"
                         : "border-border bg-bg hover:border-border-strong hover:bg-raised",
                     )}
                     key={item.key}
@@ -809,13 +821,13 @@ export function DashboardHero(props: DashboardHeroProps) {
                       aria-hidden="true"
                       className={cn(
                         "h-1.5 w-1.5 rounded-full",
-                        item.tone === "bad" ? "bg-bad" : item.tone === "warn" ? "bg-warn" : "bg-node",
+                        item.tone === "bad" ? "bg-bad" : item.tone === "warn" ? "bg-warn" : "bg-accent",
                       )}
                     />
                     <span className="min-w-0">
                       <span className="flex items-center gap-2">
                         <strong className="truncate text-caption font-semibold text-text">{item.label}</strong>
-                        {item.next && <span className="text-micro uppercase tracking-[0.12em] text-node">Next</span>}
+                        {item.next && <span className="text-micro uppercase tracking-[0.12em] text-accent">Next</span>}
                       </span>
                       <small className="mt-0.5 block text-micro font-medium leading-snug text-muted">{item.detail}</small>
                     </span>
@@ -913,13 +925,13 @@ export function DashboardHero(props: DashboardHeroProps) {
                     aria-hidden="true"
                     className={cn(
                       "relative z-[1] mt-1 size-[13px] shrink-0 rounded-full border-2 bg-surface",
-                      hop.live ? "border-node" : "border-border-strong",
+                      hop.live ? "border-accent" : "border-border-strong",
                     )}
                   />
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                       <strong className="min-w-0 truncate text-caption font-semibold text-text">{hop.name}</strong>
-                      <span className={cn("shrink-0 text-micro font-semibold", hop.live ? "text-node" : "text-muted")}>
+                      <span className={cn("shrink-0 text-micro font-semibold", hop.live ? "text-accent" : "text-muted")}>
                         {hop.state}
                       </span>
                     </div>

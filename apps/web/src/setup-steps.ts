@@ -123,19 +123,19 @@ export function deriveSetupSteps(input: SetupStepsInput): SetupStep[] {
     {
       key: "inference" as const,
       title: "Connect an inference server",
-      purpose: "The approved OpenAI-compatible endpoint OrcaSynapse and Hermes both call.",
+      purpose: "Where models are served. OrcaSynapse and Hermes both call this endpoint.",
       blockedBy: inferenceBlockers,
     },
     {
       key: "runtime" as const,
       title: "Install the agent runtime",
-      purpose: "One isolated Ubuntu VM running Hermes under a signed node identity.",
+      purpose: "An isolated Ubuntu VM that runs Hermes under a signed node identity.",
       blockedBy: runtimeBlockers,
     },
     {
       key: "profile" as const,
       title: "Create an Agent Profile",
-      purpose: "The governed behaviour, model route and tool boundary a session runs under.",
+      purpose: "The behaviour, model, and tools a session is allowed to use.",
       blockedBy: profileBlockers,
     },
   ].map((step, index) => ({

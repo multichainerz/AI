@@ -553,6 +553,8 @@ describe("DrizzleHermesRuntimeNodeManager lifecycle", () => {
       .where(eq(hermesRuntimeNode.id, node.id));
 
     expect((await manager().list())[0]?.status).toBe("OFFLINE");
+    expect((await context.database.select().from(auditEvent)).map(({ action }) => action))
+      .toContain("hermes.node.marked_offline");
   });
 
   it("keeps an operator's pending action valid across a heartbeat", async () => {

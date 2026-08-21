@@ -186,19 +186,51 @@ def looks_secret(name: str, content: bytes | None) -> bool:
 
 
 def session_files(session_dir: Path) -> list[Path]:
+    """List regular files under the session without following any symlink.
+
+    ``Path.rglob`` follows directory symlinks, so ``escape -> /etc`` used to
+    yield ``escape/passwd`` as a regular file whose ``read_bytes()`` then
+    copied host material. ``os.walk(..., followlinks=False)`` plus skipping
+    symlink directories keeps every path under the session root.
+    """
     files: list[Path] = []
-    for path in sorted(session_dir.rglob("*")):
-        if len(files) >= MAX_FILES_PER_SESSION:
-            print(f"note: {session_dir.name}: more than {MAX_FILES_PER_SESSION} files; the rest wait for the next pass", file=sys.stderr)
-            break
-        # lstat-based checks so a symlink is never followed anywhere -- not out
-        # of the root, and not to a path the agent may not read.
-        if path.is_symlink() or not path.is_file():
-            continue
-        if path.name.startswith("."):
-            continue
-        files.append(path)
+    for dirpath, dirnames, filenames in os.walk(session_dir, followlinks=False):
+        current = Path(dirpath)
+        dirnames[:] = sorted(
+            name for name in dirnames
+            if not name.startswith(".") and not (current / name).is_symlink()
+        )
+        for name in sorted(filenames):
+            if len(files) >= MAX_FILES_PER_SESSION:
+                print(f"note: {session_dir.name}: more than {MAX_FILES_PER_SESSION} files; the rest wait for the next pass", file=sys.stderr)
+                return files
+            if name.startswith("."):
+                continue
+            path = current / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            files.append(path)
     return files
+
+
+def open_nofollow(path: Path):
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    return os.open(path, flags)
+
+
+def read_regular_file(path: Path) -> bytes:
+    with os.fdopen(open_nofollow(path), "rb") as handle:
+        return handle.read()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with os.fdopen(open_nofollow(path), "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def publish_session(node_id: str, session_dir: Path, state: dict[str, str]) -> int:
@@ -213,15 +245,15 @@ def publish_session(node_id: str, session_dir: Path, state: dict[str, str]) -> i
         state_key = f"{session_dir.name}/{relative}"
         present.add(relative)
         content: bytes | None = None
-        if stat.st_size <= INLINE_LIMIT_BYTES:
-            try:
-                content = path.read_bytes()
-            except OSError as error:
-                print(f"note: skipping {path}: {error}", file=sys.stderr)
-                continue
-            digest = hashlib.sha256(content).hexdigest()
-        else:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            if stat.st_size <= INLINE_LIMIT_BYTES:
+                content = read_regular_file(path)
+                digest = hashlib.sha256(content).hexdigest()
+            else:
+                digest = sha256_file(path)
+        except OSError as error:
+            print(f"note: skipping {path}: {error}", file=sys.stderr)
+            continue
         if state.get(state_key) == digest:
             continue
         if looks_secret(path.name, content):

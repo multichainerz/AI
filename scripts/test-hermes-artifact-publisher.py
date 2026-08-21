@@ -98,6 +98,18 @@ class ArtifactPublisherTests(unittest.TestCase):
         paths = [entry["path"] for entry in self.sent[0]["body"]["artifacts"]]
         self.assertEqual(paths, ["real.txt"])
 
+    def test_never_follows_a_directory_symlink(self) -> None:
+        outside = self.root / "host-etc"
+        outside.mkdir()
+        (outside / "passwd").write_bytes(b"root:x:0:0:root:/root:/bin/sh")
+        session = self.artifact_root / "session-1"
+        session.mkdir()
+        (session / "escape").symlink_to(outside)
+        self.write("session-1", "real.txt", b"real")
+        self.module.scan()
+        paths = [entry["path"] for entry in self.sent[0]["body"]["artifacts"]]
+        self.assertEqual(paths, ["real.txt"])
+
     def test_skips_dotfiles_and_implausible_session_names(self) -> None:
         self.write("session-1", ".hidden", b"x")
         self.write("session-1", "seen.txt", b"x")

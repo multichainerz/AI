@@ -234,6 +234,8 @@ describe("Home", () => {
     expect(screen.getAllByText("Create and activate an Agent Profile").length).toBeGreaterThan(0);
     expect(screen.getByText("2/3")).toBeTruthy();
     expect(screen.getByText("Next")).toBeTruthy();
+    expect(screen.getByText("Next").className).toContain("text-accent");
+    expect(screen.getByText("Next").className).not.toContain("text-node");
   });
 
   it("keeps the dashboard to one command surface without duplicate sections or shortcuts", () => {
@@ -358,9 +360,36 @@ describe("Home", () => {
     expect(screen.getByRole("heading", { name: "7 items waiting" })).toBeTruthy();
   });
 
-  it("says the control plane is offline instead of showing stale figures as live", () => {
+  it("says the deployment is offline instead of showing stale figures as live", () => {
     render(<HomeView {...props({ apiAvailable: false })} />);
-    expect(screen.getByText("Control plane offline")).toBeTruthy();
+    expect(screen.getByText("Offline")).toBeTruthy();
+    expect(screen.queryByText("Fully Operational")).toBeNull();
+  });
+
+  it("names the whole deployment from the signals the Dashboard already inspects", async () => {
+    const readyLayers: HomeLayer[] = layers.map((layer) => ({
+      ...layer,
+      state: { label: "Ready", tone: "ready" },
+      components: [],
+    }));
+    const online = [{ ...runtimeNodes[0] }] as HermesRuntimeNode[];
+
+    const { unmount: unmountSetup } = render(<HomeView {...props()} />);
+    expect(screen.getByText("Need Setup")).toBeTruthy();
+    unmountSetup();
+
+    const { unmount: unmountReady } = render(
+      <HomeView {...props({ layers: readyLayers, runtimeNodes: online, readiness: readiness(true) })} />,
+    );
+    expect(screen.getByText("Fully Operational")).toBeTruthy();
+    unmountReady();
+
+    api.getOperationalIncidents.mockResolvedValue({ items: [incident] });
+    render(
+      <HomeView {...props({ layers: readyLayers, runtimeNodes: online, readiness: readiness(true) })} />,
+    );
+    expect(await screen.findByText("Degraded")).toBeTruthy();
+    expect(screen.queryByText("Fully Operational")).toBeNull();
   });
 
   it("keeps installation ahead of everything else until bootstrap completes", async () => {
@@ -560,6 +589,7 @@ describe("Home", () => {
 
     expect(circumference).toBeGreaterThan(0);
     expect((filled ?? 0) / (circumference ?? 1)).toBeCloseTo(2 / 3, 5);
+    expect(container.querySelector("circle[stroke-dasharray]")?.getAttribute("class") ?? "").toContain("stroke-accent");
     unmount();
 
     // Locked, there is no ring at all: an arc drawn from figures nobody is
@@ -579,6 +609,8 @@ describe("Home", () => {
 
     expect(system.getByText("The path is not complete")).toBeTruthy();
     expect(system.getByText("Serving")).toBeTruthy();
+    expect(system.getByText("Serving").className).toContain("text-accent");
+    expect(system.getByText("Serving").className).not.toContain("text-node");
     // The layer's own diagnostic, drawn only while the hop is not live.
     expect(system.getByText(/Needs Profile or policy/)).toBeTruthy();
     expect(system.getByText("1/2 online")).toBeTruthy();

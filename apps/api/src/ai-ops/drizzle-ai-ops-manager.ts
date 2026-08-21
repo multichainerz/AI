@@ -827,9 +827,19 @@ export class DrizzleAiOpsManager implements AiOpsManager {
       if (component.status === "DEGRADED" || component.status === "UNAVAILABLE") {
         const title = `${component.label} is ${component.status === "UNAVAILABLE" ? "unavailable" : "degraded"}`;
         const severity = component.status === "UNAVAILABLE" ? "CRITICAL" as const : "WARNING" as const;
-        // The fingerprint is unique among open incidents, so a component that
-        // stays degraded refreshes one row rather than accumulating duplicates.
-        await this.database
+        const [open] = await this.database
+          .select({ id: operationalIncident.id })
+          .from(operationalIncident)
+          .where(and(eq(operationalIncident.activeFingerprint, activeFingerprint), this.openIncident))
+          .limit(1);
+        if (open) {
+          await this.database
+            .update(operationalIncident)
+            .set({ title, severity, summary: component.summary, lastObservedAt: observedAt })
+            .where(eq(operationalIncident.id, open.id));
+          return;
+        }
+        const [created] = await this.database
           .insert(operationalIncident)
           .values({
             activeFingerprint,
@@ -841,12 +851,19 @@ export class DrizzleAiOpsManager implements AiOpsManager {
             detectedAt: observedAt,
             lastObservedAt: observedAt,
           })
-          .onConflictDoUpdate({
-            target: operationalIncident.activeFingerprint,
-            set: { title, severity, summary: component.summary, lastObservedAt: observedAt },
-          });
+          .onConflictDoNothing({ target: operationalIncident.activeFingerprint })
+          .returning({ id: operationalIncident.id });
+        if (!created) return;
+        await this.database.insert(auditEvent).values({
+          actorType: "SERVICE",
+          action: "operations.incident_auto_opened",
+          resourceType: "OperationalIncident",
+          resourceId: created.id,
+          outcome: "SUCCESS",
+          metadata: { component: component.id, severity, status: component.status },
+        });
       } else {
-        await this.database
+        const resolved = await this.database
           .update(operationalIncident)
           .set({
             status: "RESOLVED",
@@ -854,7 +871,17 @@ export class DrizzleAiOpsManager implements AiOpsManager {
             resolvedAt: observedAt,
             resolutionNote: "Automatically resolved after the component returned to a non-degraded state.",
           })
-          .where(and(eq(operationalIncident.activeFingerprint, activeFingerprint), this.openIncident));
+          .where(and(eq(operationalIncident.activeFingerprint, activeFingerprint), this.openIncident))
+          .returning({ id: operationalIncident.id });
+        if (resolved.length !== 1 || !resolved[0]) return;
+        await this.database.insert(auditEvent).values({
+          actorType: "SERVICE",
+          action: "operations.incident_auto_resolved",
+          resourceType: "OperationalIncident",
+          resourceId: resolved[0].id,
+          outcome: "SUCCESS",
+          metadata: { component: component.id },
+        });
       }
     }));
   }

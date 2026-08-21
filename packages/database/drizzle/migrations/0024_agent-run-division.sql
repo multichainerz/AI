@@ -1,0 +1,3 @@
+ALTER TABLE "AgentRun" ADD COLUMN "divisionId" uuid;--> statement-breakpoint
+ALTER TABLE "AgentRun" ADD CONSTRAINT "AgentRun_divisionId_fkey" FOREIGN KEY ("divisionId") REFERENCES "public"."Division"("id") ON DELETE set null ON UPDATE cascade;--> statement-breakpoint
+UPDATE "AgentRun" SET "divisionId" = "AgentProfile"."divisionId" FROM "AgentProfile" WHERE "AgentProfile"."id" = "AgentRun"."profileId" AND "AgentRun"."divisionId" IS NULL;

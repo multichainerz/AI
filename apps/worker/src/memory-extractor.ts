@@ -87,9 +87,10 @@ export class InferenceMemoryExtractor implements MemoryExtractor {
 
   async extract(exchange: MemoryExchange): Promise<string[]> {
     try {
-      const modelAlias = await this.defaultAgentModel();
-      if (!modelAlias) return [];
-      const connection = await this.resolver.resolveOne("INFERENCE");
+      const route = await this.defaultAgentRoute();
+      if (!route) return [];
+      const connection = await this.resolver.resolve(route.connectionId);
+      const modelAlias = route.modelAlias;
       const path = typeof connection.configuration.chatPath === "string"
         ? connection.configuration.chatPath
         : "/v1/chat/completions";
@@ -136,14 +137,14 @@ export class InferenceMemoryExtractor implements MemoryExtractor {
    * enforced. Before that there is no approved model to call, and guessing one
    * would send a division's exchanges somewhere nobody evaluated.
    */
-  private async defaultAgentModel(): Promise<string | null> {
+  private async defaultAgentRoute(): Promise<{ modelAlias: string; connectionId: string } | null> {
     const [enforced] = await this.database
       .select({ total: sql<number>`count(*)::int` })
       .from(modelDeployment)
       .where(and(eq(modelDeployment.workload, "AGENT"), isNotNull(modelDeployment.firstActivatedAt)));
     if ((enforced?.total ?? 0) === 0) return null;
     const routes = await this.database
-      .select({ modelAlias: modelDeployment.modelAlias })
+      .select({ modelAlias: modelDeployment.modelAlias, connectionId: modelDeployment.connectionId })
       .from(modelDeployment)
       .where(and(
         eq(modelDeployment.workload, "AGENT"),
@@ -151,6 +152,7 @@ export class InferenceMemoryExtractor implements MemoryExtractor {
         eq(modelDeployment.isDefault, true),
       ))
       .limit(2);
-    return routes.length === 1 ? routes[0]!.modelAlias : null;
+    const route = routes.length === 1 ? routes[0] : undefined;
+    return route ? { modelAlias: route.modelAlias, connectionId: route.connectionId } : null;
   }
 }

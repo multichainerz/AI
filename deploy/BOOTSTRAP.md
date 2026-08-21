@@ -14,7 +14,7 @@ Behind an upstream TLS terminator, declare the scheme browsers really use — se
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh \
-  | sudo bash -s -- --public-scheme https
+  | sudo bash -s -- --public-scheme https --http-bind 127.0.0.1
 ```
 
 For an inspect-first workflow that does not open a full-screen pager:
@@ -23,10 +23,10 @@ For an inspect-first workflow that does not open a full-screen pager:
 curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
   https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
 sed -n '1,240p' orcasynapse-install.sh
-sudo bash orcasynapse-install.sh --public-scheme https
+sudo bash orcasynapse-install.sh --public-scheme https --http-bind 127.0.0.1
 ```
 
-The one-line form is the default convenience path; the inspect-first form is available for controlled environments without opening a terminal pager. Both accept `--public-scheme http|https`, and omitting it leaves the safe `http` default. The installer automatically uses plain output when no interactive terminal is attached, and `NO_COLOR=1` disables terminal colors.
+The one-line form is the default convenience path; the inspect-first form is available for controlled environments without opening a terminal pager. Both accept `--public-scheme http|https` and `--http-bind ADDRESS`. Omitting the scheme leaves the safe `http` default; omitting the bind publishes on every interface. The installer automatically uses plain output when no interactive terminal is attached, and `NO_COLOR=1` disables terminal colors.
 
 The bootstrap resolves `ORCASYNAPSE_REF` (default `main`) to an immutable Git commit, downloads that commit from GitHub, records the source identity under `/opt/orcasynapse`, and handles an existing path through the guarded recovery flow below. An acceptance environment should set an approved commit and checksum explicitly:
 
@@ -43,7 +43,7 @@ On a systemd host the installer also enables `orcasynapse-update.timer`, which r
 From an intact local release bundle, the equivalent host command is:
 
 ```bash
-sudo ./scripts/install-orcasynapse.sh --public-scheme https
+sudo ./scripts/install-orcasynapse.sh --public-scheme https --http-bind 127.0.0.1
 ```
 
 The installer runs six steps: it sizes and preflights the host; checks or installs Docker Compose v2, OpenSSL, and curl; builds the release; generates the database password, credential-encryption key, and permanent Installation Key in a root-only host directory; starts the stack with stock PostgreSQL 17 and waits for readiness; then provisions a PostgreSQL-backed local `admin` account. Application-secret files use a narrowly scoped container group so non-root services can read only the secrets explicitly mounted into them. It prints the one-time temporary password and requires replacement at first sign-in. It separately prints the Installation Key, which must be stored offline in the organization vault and is accepted only for local-account recovery.

@@ -3,6 +3,7 @@ import {
   agentProfile,
   agentProfileVersion,
   agentRun,
+  auditEvent,
   chatArtifact,
   chatArtifactContent,
   chatConversation,
@@ -118,6 +119,13 @@ describe("DrizzleChatArtifactManager", () => {
     });
     const [content] = await context.database.select().from(chatArtifactContent);
     expect(Buffer.from(content!.bytes).toString("utf8")).toContain("All clear.");
+    const [ingested] = await context.database.select().from(auditEvent);
+    expect(ingested).toMatchObject({
+      action: "chat.artifact_ingested",
+      resourceType: "AgentRun",
+      resourceId: RUN_ID,
+      outcome: "SUCCESS",
+    });
   });
 
   it("refuses a session this control plane never authorized", async () => {
@@ -340,6 +348,8 @@ describe("division-scoped reads", () => {
     });
     const { bytes: fetched } = await artifacts.download(owner, stored.id);
     expect(fetched.toString("utf8")).toBe("quarterly notes");
+    expect((await context.database.select().from(auditEvent)).map(({ action }) => action))
+      .toContain("chat.artifact_uploaded");
     // And the node path keeps its own label.
     await artifacts.ingest(NODE_ID, headers, upload());
     const listed = await artifacts.list(owner);

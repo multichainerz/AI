@@ -783,6 +783,28 @@ describe("DrizzleAgentProcessor memory extraction", () => {
     expect(rows[0]?.divisionId).toBe(alpha);
   });
 
+  it("keeps notes in the division the run executed under after the profile is re-homed", async () => {
+    const { runId, jobId } = await seed();
+    const alpha = await assignDivision(runId, "Alpha");
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      extractor(["Alpha still owns this note."]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+    const [beta] = await context.database.insert(division)
+      .values({ slug: `div-${randomUUID().slice(0, 8)}`, displayName: "Beta" }).returning({ id: division.id });
+    const [run] = await context.database
+      .select({ profileId: agentRun.profileId }).from(agentRun).where(eq(agentRun.id, runId)).limit(1);
+    await context.database.update(agentProfile)
+      .set({ divisionId: beta!.id }).where(eq(agentProfile.id, run!.profileId));
+    await processor.drainMemoryExtraction();
+
+    const rows = await context.database.select().from(scopedMemoryEntry);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.divisionId).toBe(alpha);
+  });
+
   /*
    * The one that decides whether this feature is safe to enable at all. A note
    * is worth less than the answer, so extraction failing must cost the note.

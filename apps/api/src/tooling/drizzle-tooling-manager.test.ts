@@ -15,6 +15,7 @@ import {
   scopedMemoryEntry,
   governedTool,
   governedToolCall,
+  localAdministrator,
   mcpGatewayCredential,
   toolApproval,
   toolRuntimeControl,
@@ -341,6 +342,26 @@ describe("DrizzleToolingManager run-scoped discovery", () => {
     await grantTool(version.id, tool.id, { allowedAdminRoles: ["AUDITOR"] });
 
     expect((await manager().listToolsForRun(authorization)).items).toHaveLength(0);
+  });
+
+  it("matches a requester recorded as the durable administrator account, not a live session", async () => {
+    await enableGateway();
+    const tool = await seedTool();
+    const { version, run, authorization } = await seedRunnableAgent();
+    const [account] = await context.database
+      .insert(localAdministrator)
+      .values({
+        username: `admin-${randomUUID().slice(0, 8)}`,
+        displayName: "Operator",
+        passwordHash: "x",
+        role: "PLATFORM_ADMIN",
+        passwordChangeRequired: false,
+      })
+      .returning({ id: localAdministrator.id });
+    await context.database.update(agentRun).set({ requestedBy: account!.id }).where(eq(agentRun.id, run.id));
+    await grantTool(version.id, tool.id);
+
+    expect((await manager().listToolsForRun(authorization)).items.map(({ id }) => id)).toEqual([tool.id]);
   });
 });
 

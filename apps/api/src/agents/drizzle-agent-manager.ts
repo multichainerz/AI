@@ -50,6 +50,7 @@ import {
   type AgentManager,
   type AgentPrincipal,
 } from "./agent-manager.js";
+import { principalAccountId } from "../chat/chat-manager.js";
 import { profileVisibleTo } from "./profile-visibility.js";
 
 interface StoredVersion {
@@ -878,7 +879,8 @@ export class DrizzleAgentManager implements AgentManager {
           profileVersion: version.version,
           profileDistributionDigest: version.distributionDigest,
           ownerSubject: principal.subject,
-          requestedBy: principal.id,
+          requestedBy: principalAccountId(principal) ?? principal.id,
+          divisionId: profile.divisionId ?? principal.divisionId ?? null,
           sessionId: options.sessionId ?? runId,
           // The inspected text, not the submitted text. This row is what the
           // worker hands to Hermes.

@@ -359,7 +359,7 @@ interface NativeSessionRun {
 
 const NATIVE_RUN_PREFIX = "hermes-native-";
 
-function nativeRunId(idempotencyKey: string): string {
+export function nativeRunId(idempotencyKey: string): string {
   return `${NATIVE_RUN_PREFIX}${createHash("sha256").update(idempotencyKey).digest("hex")}`;
 }
 

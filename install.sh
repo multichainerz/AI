@@ -630,6 +630,37 @@ orcasynapse_take_public_scheme_flag() {
   done
 }
 
+# Second copy of scripts/lib/http-bind.sh's parser, for the same reason as the
+# public-scheme copy above: this file is fetched standalone and cannot source
+# the library until the tree is on disk. The value is exported and
+# install-orcasynapse.sh treats a pre-set ORCASYNAPSE_HTTP_BIND as a declaration.
+orcasynapse_take_http_bind_flag() {
+  local value
+  ORCASYNAPSE_REMAINING_ARGS=()
+  while (( $# > 0 )); do
+    case "$1" in
+      --http-bind)
+        (( $# >= 2 )) || fail "--http-bind needs a value: --http-bind 127.0.0.1"
+        value="$2"
+        shift 2
+        ;;
+      --http-bind=*)
+        value="${1#*=}"
+        shift
+        ;;
+      *)
+        ORCASYNAPSE_REMAINING_ARGS+=("$1")
+        shift
+        continue
+        ;;
+    esac
+    [[ "${value}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ || "${value}" =~ ^\[[0-9A-Fa-f:]+\]$ ]] \
+      || fail "--http-bind must be an IPv4 address or a bracketed IPv6 address, not '${value}'"
+    ORCASYNAPSE_HTTP_BIND="${value}"
+    export ORCASYNAPSE_HTTP_BIND
+  done
+}
+
 install_bootstrap_dependencies() {
   if command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 \
     && command -v sha256sum >/dev/null 2>&1; then
@@ -1472,8 +1503,9 @@ main() {
   # Before the banner and before any network call: a mistyped scheme should cost
   # a line of output, not a download and a build.
   orcasynapse_take_public_scheme_flag "$@"
+  orcasynapse_take_http_bind_flag "${ORCASYNAPSE_REMAINING_ARGS[@]+"${ORCASYNAPSE_REMAINING_ARGS[@]}"}"
   if (( ${#ORCASYNAPSE_REMAINING_ARGS[@]} > 0 )); then
-    fail "unrecognised argument '${ORCASYNAPSE_REMAINING_ARGS[0]}'; this bootstrap takes only --public-scheme http|https"
+    fail "unrecognised argument '${ORCASYNAPSE_REMAINING_ARGS[0]}'; this bootstrap takes only --public-scheme http|https and --http-bind ADDRESS"
   fi
 
   banner

@@ -138,6 +138,10 @@ describe("DrizzleAiOpsManager overview", () => {
     expect(recovered.incidents.open).toBe(0);
     const [stored] = await context.database.select().from(operationalIncident);
     expect(stored).toMatchObject({ status: "RESOLVED", activeFingerprint: null });
+    expect((await context.database.select().from(auditEvent)).map(({ action }) => action)).toEqual([
+      "operations.incident_auto_opened",
+      "operations.incident_auto_resolved",
+    ]);
   });
 
   it("raises a critical incident when a collaborator cannot be read", async () => {

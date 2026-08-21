@@ -3,6 +3,7 @@ import {
   agentProfile,
   agentProfileVersion,
   agentRun,
+  auditEvent,
   chatConversation,
   chatMessage,
   chatSchedule,
@@ -120,6 +121,8 @@ describe("ScheduleRuntime firing", () => {
     expect(after.lastOutcome).toBe("OK");
     expect(after.enabled).toBe(true);
     expect(after.nextRunAt.getTime()).toBeGreaterThan(Date.now());
+    expect((await context.database.select().from(auditEvent)).map(({ action }) => action))
+      .toEqual(["chat.schedule_fired"]);
   });
 
   it("claims a due schedule exactly once even when two cycles overlap", async () => {
@@ -183,6 +186,7 @@ describe("ScheduleRuntime refusals", () => {
     const after = await reload(schedule.id);
     expect(after.lastOutcome).toBe("SKIPPED");
     expect(after.enabled).toBe(true);
+    expect(await context.database.select().from(auditEvent)).toHaveLength(0);
   });
 
   it("disables itself when the refusal would repeat identically forever", async () => {
@@ -195,6 +199,8 @@ describe("ScheduleRuntime refusals", () => {
     expect(after.lastOutcome).toBe("DISABLED");
     expect(after.enabled).toBe(false);
     expect(after.lastDetail).toMatch(/Internal codename/);
+    expect((await context.database.select().from(auditEvent)).map(({ action }) => action))
+      .toEqual(["chat.schedule_disabled"]);
   });
 
   it("disables itself on an archived conversation", async () => {

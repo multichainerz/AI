@@ -466,7 +466,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
 
   async list(): Promise<HermesRuntimeNode[]> {
     // A node that stopped reporting must not keep presenting as available.
-    await this.database
+    const offlined = await this.database
       .update(hermesRuntimeNode)
       .set({ status: "OFFLINE", revision: increment(hermesRuntimeNode.revision) })
       .where(and(
@@ -475,7 +475,18 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           isNull(hermesRuntimeNode.lastSeenAt),
           lt(hermesRuntimeNode.lastSeenAt, new Date(Date.now() - NODE_STALE_AFTER_MS)),
         ),
-      ));
+      ))
+      .returning({ id: hermesRuntimeNode.id, slug: hermesRuntimeNode.slug });
+    if (offlined.length > 0) {
+      await this.database.insert(auditEvent).values(offlined.map((node) => ({
+        actorType: "SERVICE" as const,
+        action: "hermes.node.marked_offline",
+        resourceType: "HermesRuntimeNode",
+        resourceId: node.id,
+        outcome: "FAILURE",
+        metadata: { slug: node.slug, reason: "heartbeat-stale" },
+      })));
+    }
     const nodes = await this.database
       .select({ node: hermesRuntimeNode, connectionStatus: serviceConnection.status })
       .from(hermesRuntimeNode)

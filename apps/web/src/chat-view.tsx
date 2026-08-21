@@ -662,6 +662,9 @@ export function ChatView({
   // see it. See `submit` for why the state flag beside it is not enough.
   const sending = useRef(false);
   const [uploading, setUploading] = useState(false);
+  const selectionGeneration = useRef(0);
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = active?.id ?? null;
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messageScroller = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDivElement>(null);
@@ -737,6 +740,7 @@ export function ChatView({
       return;
     }
     let current = true;
+    const generation = selectionGeneration.current;
     setLoading(true);
     void Promise.all([
       getChatConversations(),
@@ -761,7 +765,10 @@ export function ChatView({
         const activeProfiles = profileList.items.filter(({ status }) => status === "ACTIVE");
         setProfiles(activeProfiles);
         setSelectedProfileId((selected) => selected || activeProfiles[0]?.id || "");
-        if (items[0]) setActive(await getChatConversation(items[0].id));
+        if (!items[0] || selectionGeneration.current !== generation) return;
+        const loaded = await getChatConversation(items[0].id);
+        if (!current || selectionGeneration.current !== generation) return;
+        setActive(loaded);
       })
       .catch((cause) => current && handleError(cause, "Unable to load conversations."))
       .finally(() => current && setLoading(false));
@@ -1013,6 +1020,7 @@ export function ChatView({
   }, [unlocked, active?.id, activePending?.id]);
 
   const selectConversation = async (id: string) => {
+    selectionGeneration.current += 1;
     setLoading(true);
     setError(null);
     try {
@@ -1026,6 +1034,7 @@ export function ChatView({
   };
 
   const newConversation = () => {
+    selectionGeneration.current += 1;
     setActive(null);
     setDraft("");
     setSuggestions(pickChatSuggestions());
@@ -1040,6 +1049,7 @@ export function ChatView({
    * still fold them into a single `setActive`.
    */
   function describeStreamEvent(event: ChatStreamEvent) {
+    if (event.conversationId !== activeIdRef.current) return;
     if (event.type === "started") setCurrentActivity("Hermes run queued");
     if (event.type === "state") {
       setCurrentActivity(event.status === "WAITING_FOR_APPROVAL"
@@ -1106,7 +1116,7 @@ export function ChatView({
      * restored the draft: the message was sent *and* back in the composer. A
      * ref closes in the same tick it is set, which is the only thing that can.
      */
-    if (!content || sending.current || working || !unlocked || active?.status === "ARCHIVED") return;
+    if (!content || sending.current || working || uploading || !unlocked || active?.status === "ARCHIVED") return;
     if (administratorReadiness?.ready === false) {
       setError(administratorReadiness.detail);
       return;
@@ -1393,7 +1403,7 @@ export function ChatView({
   const routeReady = administratorReadiness?.ready !== false && profileAvailable;
   const chatReady = routeReady && active?.status !== "ARCHIVED";
   const charactersLeft = COMPOSER_LIMIT - draft.length;
-  const sendable = draft.trim().length > 0 && chatReady;
+  const sendable = draft.trim().length > 0 && chatReady && !uploading;
   const normalizedHistoryFilter = historyFilter.trim().toLowerCase();
   const visibleConversations = normalizedHistoryFilter
     ? conversations.filter((conversation) => [conversation.title, conversation.profileName, conversation.lastMessagePreview]

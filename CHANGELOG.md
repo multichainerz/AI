@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.6.9 — 2026-08-22
+
+Stamps run division, expands the audit trail, and restyles dashboard health.
+
+### Upgrade notes
+
+- **API, web, worker and database must ship together.** `AgentRun` gains
+  `divisionId` (migration 0024). Memory extraction reads that stamp rather
+  than the profile's live division. Fastify `POST /internal/v1/chat/completions`
+  is 16 MiB; nginx is 8m on `/api/` and 16m on `/internal/v1/`.
+
+### Changes
+
+- add `AgentRun.divisionId` and extract memory against that stamp
+- persist the native Hermes run id before start so a lease steal cannot
+  double-submit
+- raise Fastify completions to 16 MiB and nginx to 8m on `/api/` and 16m on
+  `/internal/v1/`
+- record `chat.artifact_uploaded` / `ingested`, `chat.schedule_fired` /
+  `disabled`, `operations.incident_auto_opened` / `resolved`,
+  `onboarding.component_updated` / `step_updated`, `hermes.node.marked_offline`
+- derive dashboard Fully Operational / Degraded / Need Setup / Offline from
+  platform signals
+- restyle Setup steps, drop the overlapping connector, and shorten Operations
+  Services copy
+- accept `--http-bind` on the VM1 installer
+- serialise local-person login lockout; stop the artifact publisher following
+  session symlinks
+- keep Session from sending while an upload is in flight
+
 ## v9.6.8 — 2026-08-20
 
 Names the division beside the account it bounds.

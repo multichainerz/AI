@@ -110,4 +110,19 @@ describe("OrcaSynapse API", () => {
     // The single pool must be released when startup fails partway through.
     expect(closeDatabase).toHaveBeenCalledOnce();
   });
+
+  it("answers 400 rather than 500 for unparseable JSON", async () => {
+    const app = await createApp({ logger: false, runtime: { bootstrapState: "READY" } });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/session/local",
+      headers: { "content-type": "application/json" },
+      payload: Buffer.from("{", "utf8"),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).not.toMatchObject({ error: "INTERNAL_ERROR" });
+  });
 });

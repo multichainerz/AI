@@ -104,15 +104,16 @@ export async function registerInferenceGatewayRoutes(
   });
 
   /*
-   * 8 MiB, on this one route only, because the body is the whole transcript.
-   * Hermes replays every prior message per turn, and the policy itself may
-   * permit 256k-character answers -- two of those, JSON-escaped, already
-   * brush the 1 MiB default. The ceiling has to hold the conversation the
-   * guardrail ceilings permit, or a long-running session dies with a 413
-   * that no policy screen explains. Every other route keeps the tight
-   * default as its own defense.
+   * 16 MiB, on this one route only, because the body is the whole transcript
+   * plus any inline images Hermes replays. The policy itself may permit
+   * 256k-character answers -- two of those, JSON-escaped, already brush the
+   * 1 MiB default -- and a 4 MiB PNG is ~5.6 MiB base64. The ceiling has to
+   * hold the conversation the guardrail ceilings permit, or a long-running
+   * session dies with a 413 that no policy screen explains. Every other
+   * route keeps the tight default as its own defense. Nginx
+   * `client_max_body_size` on `/internal/v1/` must stay at least this high.
    */
-  app.post("/chat/completions", { bodyLimit: 8 * 1_048_576 }, async (request, reply) => {
+  app.post("/chat/completions", { bodyLimit: 16 * 1_048_576 }, async (request, reply) => {
     const gateway = gatewayOrLocked(options, reply);
     if (!gateway) return reply;
     const parsed = inferenceGatewayChatRequestSchema.safeParse(request.body);

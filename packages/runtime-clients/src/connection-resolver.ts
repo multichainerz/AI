@@ -39,8 +39,30 @@ export class DrizzleRuntimeConnectionResolver {
         `Exactly one enabled and healthy ${kind} connection is required.`,
       );
     }
+    return this.hydrate(connection);
+  }
+
+  async resolve(id: string): Promise<RuntimeConnection> {
+    const [connection] = await this.database
+      .select({ id: serviceConnection.id, status: serviceConnection.status, baseUrl: serviceConnection.baseUrl, kind: serviceConnection.kind, configuration: serviceConnection.configuration })
+      .from(serviceConnection)
+      .where(and(eq(serviceConnection.id, id), eq(serviceConnection.enabled, true)))
+      .limit(1);
+    if (!connection || connection.status !== "HEALTHY") {
+      throw new RuntimeConnectionError("The approved inference route is not enabled and healthy.");
+    }
+    return this.hydrate(connection);
+  }
+
+  private async hydrate(connection: {
+    id: string;
+    kind: ServiceKind;
+    status: string;
+    baseUrl: string | null;
+    configuration: unknown;
+  }): Promise<RuntimeConnection> {
     if (!connection.baseUrl) {
-      throw new RuntimeConnectionError(`${kind} endpoint URL is required.`);
+      throw new RuntimeConnectionError(`${connection.kind} endpoint URL is required.`);
     }
 
     const storedSecrets = await this.database

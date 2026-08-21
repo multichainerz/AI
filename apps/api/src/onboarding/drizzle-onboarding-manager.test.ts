@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import {
   agentProfile,
   agentProfileVersion,
+  auditEvent,
   componentCompatibility,
   createTestDatabase,
   guardrailPolicy,
@@ -157,6 +158,8 @@ describe("DrizzleOnboardingManager contracts and stages", () => {
     const evidence = await context.database.select().from(onboardingEvidence);
     expect(evidence).toHaveLength(1);
     expect(evidence[0]).toMatchObject({ source: "EXTERNAL_ATTESTATION", code: "external-attestation-signed-installer" });
+    expect((await context.database.select().from(auditEvent)).map(({ action }) => action))
+      .toContain("onboarding.component_updated");
   });
 
   it("refuses a contract update against a stale revision or a missing key", async () => {
@@ -183,6 +186,8 @@ describe("DrizzleOnboardingManager contracts and stages", () => {
       status: "IN_PROGRESS", note: "Connecting the inference server.", expectedRevision: step.revision,
     } as never);
     expect(after.steps.find(({ key }) => key === "ai-services")?.status).toBe("IN_PROGRESS");
+    expect((await context.database.select().from(auditEvent)).map(({ action }) => action))
+      .toContain("onboarding.step_updated");
   });
 });
 
@@ -393,5 +398,8 @@ describe("calculateOnboardingGate", () => {
     expect(calculateOnboardingGate(production, [], [], { status: "VERIFIED" } as never, "UNAVAILABLE").blockers)
       .toEqual(["Production readiness: the readiness authority is unavailable"]);
     expect(calculateOnboardingGate(production, [], [], { status: "VERIFIED" } as never, "READY").ready).toBe(true);
+    expect(calculateOnboardingGate(production, [], [], { status: "VERIFIED" } as never, "NOT_READY").ready).toBe(true);
+    expect(calculateOnboardingGate(production, [], [], { status: "VERIFIED" } as never, "NOT_READY", 3).blockers)
+      .toEqual(["Production readiness: status is not ready"]);
   });
 });

@@ -1644,6 +1644,12 @@ export const agentRun = pgTable("AgentRun", {
 	profileVersion: integer().notNull(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	requestedBy: uuid().notNull(),
+	/**
+	 * Division at execution time. Extraction reads this rather than the
+	 * profile's live division, so re-homing a profile cannot place notes from
+	 * an earlier conversation into the new division.
+	 */
+	divisionId: uuid(),
 	status: agentRunStatus().default('QUEUED').notNull(),
 	input: text().notNull(),
 	output: text(),
@@ -1736,6 +1742,11 @@ export const agentRun = pgTable("AgentRun", {
 			foreignColumns: [agentProfile.id],
 			name: "AgentRun_profileId_fkey"
 		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.divisionId],
+			foreignColumns: [division.id],
+			name: "AgentRun_divisionId_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
 	foreignKey({
 			columns: [table.profileVersionId],
 			foreignColumns: [agentProfileVersion.id],

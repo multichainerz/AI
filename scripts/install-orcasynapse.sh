@@ -4,6 +4,7 @@ set -Eeuo pipefail
 umask 077
 
 ORCASYNAPSE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ORCASYNAPSE_HTTP_PORT_DECLARED="${ORCASYNAPSE_HTTP_PORT:+environment}"
 ORCASYNAPSE_HTTP_PORT="${ORCASYNAPSE_HTTP_PORT:-8080}"
 ORCASYNAPSE_SECRET_DIR="${ORCASYNAPSE_ROOT}/.local/secrets"
 # Where the update agent is fetched from later, carried so that a fork or a
@@ -183,7 +184,7 @@ start_stack() {
 
 wait_for_orcasynapse() {
   local deadline=$((SECONDS + 300))
-  until curl --fail --silent --show-error "http://127.0.0.1:${ORCASYNAPSE_HTTP_PORT}/readyz" >/dev/null 2>&1; do
+  until curl --fail --silent --show-error "$(orcasynapse_readyz_url)" >/dev/null 2>&1; do
     if (( SECONDS >= deadline )); then
       docker compose --project-directory "${ORCASYNAPSE_ROOT}" ps >&2 || true
       docker compose --project-directory "${ORCASYNAPSE_ROOT}" logs --no-color --tail 120 api >&2 || true
@@ -481,6 +482,7 @@ main() {
   orcasynapse_persist_http_bind
   # The port too, so the break-glass rotation reads it back instead of
   # re-defaulting to 8080 and relocating a deployment that had been moved.
+  orcasynapse_resolve_http_port
   orcasynapse_persist_http_port
   # Before install_host_dependencies, not after: this is the last point at which
   # an undersized host can be turned away without an apt transaction and an

@@ -176,6 +176,7 @@ describe("the setup wizard", () => {
     await open();
 
     expect(rail().getAllByRole("button")).toHaveLength(3);
+    expect(screen.getByRole("list", { name: "Setup steps" }).querySelectorAll(".h-px")).toHaveLength(0);
     expect(screen.getByRole("region", { name: "Step 1: Connect an inference server" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: /^Step 2:/ })).toBeNull();
     expect(screen.queryByRole("region", { name: /^Step 3:/ })).toBeNull();
