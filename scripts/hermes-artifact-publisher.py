@@ -344,14 +344,22 @@ def scan() -> int:
 
 
 def inbox_api_key() -> str:
-    env = os.environ.get("ORCASYNAPSE_HERMES_INBOX_KEY", "").strip()
-    if env:
-        return env
+    # systemd EnvironmentFile injects API_SERVER_KEY before this process starts.
+    # Opening data/.env from a root unit with CapabilityBoundingSet= empty
+    # fails EACCES: that bounding set drops CAP_DAC_OVERRIDE, and the file is
+    # 0600 orcasynapse-hermes. Prefer the environment; the file is the fallback
+    # when the unit runs as the Hermes account.
+    for name in ("ORCASYNAPSE_HERMES_INBOX_KEY", "API_SERVER_KEY"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
     env_path = STATE_ROOT / "data" / ".env"
     try:
         for line in env_path.read_text(encoding="utf-8").splitlines():
             if line.startswith("API_SERVER_KEY="):
-                return line.split("=", 1)[1].strip()
+                key = line.split("=", 1)[1].strip()
+                if key:
+                    return key
     except OSError as error:
         raise PublishError(f"could not read the Hermes API key: {error}") from error
     raise PublishError("Hermes API_SERVER_KEY is missing; inbox refuses to start")

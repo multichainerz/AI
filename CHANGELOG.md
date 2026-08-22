@@ -5,6 +5,19 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.8.5 — 2026-08-22
+
+Stops the Session inbox crash-looping on EACCES against Hermes' 0600 `.env`.
+
+### Upgrade notes
+
+- **Repair or re-enroll VM2.** `orcasynapse-hermes-inbox` now runs as the Hermes account and loads `data/.env` the same way the gateway does. A unit still running as root with an empty capability set cannot read that file and will keep restarting.
+
+### Changes
+
+- run the Session inbox as `orcasynapse-hermes` and inject `API_SERVER_KEY` via `EnvironmentFile`
+- prefer the environment key over opening `data/.env` from the sandboxed process
+
 ## v9.8.4 — 2026-08-22
 
 Stops a Session image upload from dying as an opaque "fetch failed" before Hermes starts.

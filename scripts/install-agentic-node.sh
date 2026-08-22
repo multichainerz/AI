@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v9.8.4"
+INSTALLER_VERSION="v9.8.5"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -2059,11 +2059,15 @@ PartOf=${NODE_TARGET}.target
 Type=simple
 Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
 Environment=ORCASYNAPSE_HERMES_INBOX_BIND=0.0.0.0:8643
+# Same 0600 key file the gateway uses. systemd reads it as root before
+# dropping to ${HERMES_USER}. A root unit with CapabilityBoundingSet= empty
+# cannot open that file (no CAP_DAC_OVERRIDE) and crash-looped EACCES.
+EnvironmentFile=${STATE_ROOT}/data/.env
 ExecStart=${HERMES_PYTHON} /usr/local/lib/orcasynapse/hermes-artifact-publisher.py --serve-inbox
 Restart=on-failure
 RestartSec=3s
-User=root
-Group=root
+User=${HERMES_USER}
+Group=${HERMES_USER}
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
@@ -2081,7 +2085,11 @@ ReadWritePaths=${STATE_ROOT}
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
-  systemctl enable --now "${INBOX_SERVICE}.service" >/dev/null
+  systemctl enable "${INBOX_SERVICE}.service" >/dev/null
+  # restart, not enable --now: a crash-looping unit is already enabled, and
+  # --now will not pick up the rewritten User=/EnvironmentFile= on its own.
+  systemctl restart "${INBOX_SERVICE}.service" >/dev/null \
+    || warning "The session inbox did not start; journalctl -u ${INBOX_SERVICE} -n 50"
 }
 
 # The node's operator CLI: status, update, sync, doctor, logs, decommission.

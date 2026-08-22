@@ -178,6 +178,32 @@ class ArtifactPublisherTests(unittest.TestCase):
         self.module.scan()
         self.assertEqual([entry["path"] for entry in self.sent[0]["body"]["artifacts"]], ["out/report.md"])
 
+    def test_inbox_key_prefers_the_environment_over_the_dotenv(self) -> None:
+        env = Path(os.environ["ORCASYNAPSE_HERMES_STATE_ROOT"]) / "data" / ".env"
+        env.parent.mkdir(parents=True, exist_ok=True)
+        env.write_text("API_SERVER_KEY=from-file\n", encoding="utf-8")
+        os.environ["API_SERVER_KEY"] = "from-env"
+        try:
+            self.assertEqual(self.module.inbox_api_key(), "from-env")
+        finally:
+            del os.environ["API_SERVER_KEY"]
+        self.assertEqual(self.module.inbox_api_key(), "from-file")
+
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses DAC; EACCES is the sandboxed inbox's bug")
+    def test_inbox_key_names_eacces_when_the_dotenv_is_unreadable(self) -> None:
+        os.environ.pop("API_SERVER_KEY", None)
+        os.environ.pop("ORCASYNAPSE_HERMES_INBOX_KEY", None)
+        env = Path(os.environ["ORCASYNAPSE_HERMES_STATE_ROOT"]) / "data" / ".env"
+        env.parent.mkdir(parents=True, exist_ok=True)
+        env.write_text("API_SERVER_KEY=secret\n", encoding="utf-8")
+        env.chmod(0)
+        try:
+            with self.assertRaises(self.module.PublishError) as raised:
+                self.module.inbox_api_key()
+            self.assertIn("Permission denied", str(raised.exception))
+        finally:
+            env.chmod(0o600)
+
     def test_writes_an_inbox_file_under_the_session(self) -> None:
         dest = self.module.write_inbox_file("session-1", "notes.txt", b"hello")
         self.assertEqual(dest.read_bytes(), b"hello")

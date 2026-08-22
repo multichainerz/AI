@@ -12,3 +12,7 @@ directory.
 The Hermes POST is the typed prompt only. Images and text are not inlined on
 the wire; the agent opens the inbox path with native file tools. If the inbox
 PUT fails, the run fails closed — it does not start Hermes without the file.
+
+The inbox unit runs as `orcasynapse-hermes` and loads `data/.env` through
+systemd `EnvironmentFile`, the same 0600 key the gateway uses. A root unit
+with an empty `CapabilityBoundingSet` cannot open that file.
