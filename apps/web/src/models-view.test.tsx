@@ -66,6 +66,20 @@ const draftRoute = model({
 
 const models = [model({}), draftRoute];
 
+const sampleObservation: ModelObservation = {
+  id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  connectionId: "conn-1",
+  alias: "local-qwen",
+  displayName: "Local Qwen",
+  observedContextWindowTokens: null,
+  observedMaxOutputTokens: null,
+  inputModalities: [],
+  ownedBy: "vllm",
+  lastSeenAt: "2026-08-22T00:00:00.000Z",
+  missingFromUpstream: false,
+  admittedWorkloads: [],
+};
+
 /** What the API would return now, which a conflict test moves underneath the screen. */
 let catalogue: ModelDeployment[] = models;
 let observed: ModelObservation[] = [];
@@ -108,7 +122,6 @@ async function view() {
         session={session}
         connections={connections}
         onConfigureConnections={vi.fn()}
-        onOpenOperations={vi.fn()}
         onSessionExpired={vi.fn()}
       />
     </main>,
@@ -189,12 +202,17 @@ describe("a route another operator moved first", () => {
 });
 
 describe("naming a new route", () => {
+  async function admitObserved() {
+    observed = [sampleObservation];
+    await view();
+    fireEvent.click(screen.getByRole("button", { name: "Admit" }));
+  }
+
   it("lets a hyphen be typed into the slug, because every seeded slug has one", async () => {
     // Trimming the trailing hyphen on each keystroke deletes the separator
     // before the next character arrives, so 'chat-frontline' would be
     // unreachable by typing.
-    await view();
-    fireEvent.click(screen.getByRole("button", { name: "New model route" }));
+    await admitObserved();
     const slug = screen.getByLabelText(/^Slug/);
     fireEvent.change(slug, { target: { value: "" } });
 
@@ -203,8 +221,7 @@ describe("naming a new route", () => {
   });
 
   it("trims a half-typed trailing hyphen when the field is left", async () => {
-    await view();
-    fireEvent.click(screen.getByRole("button", { name: "New model route" }));
+    await admitObserved();
     const slug = screen.getByLabelText(/^Slug/);
     fireEvent.change(slug, { target: { value: "" } });
 
@@ -226,8 +243,7 @@ describe("naming a new route", () => {
      * jsdom has no layout, so this asserts the structure that makes scrolling
      * possible rather than the scrolling itself.
      */
-    await view();
-    fireEvent.click(screen.getByRole("button", { name: "New model route" }));
+    await admitObserved();
 
     const body = screen.getByTestId("route-editor-body");
     expect(body.className).toContain("overflow-y-auto");
@@ -245,44 +261,15 @@ describe("naming a new route", () => {
 });
 
 describe("models catalogue", () => {
-  it("counts the catalogue by the things an operator decides about", async () => {
+  it("does not restate route status as catalogue KPIs", async () => {
     await view();
-    const summary = screen.getByLabelText("Model catalogue summary");
-
-    // Two routes, one active, one default, two workloads.
-    expect(within(summary).getByText("Admitted routes")).toBeTruthy();
-    expect(within(summary).getAllByText("2")).not.toHaveLength(0);
-  });
-
-  it("stops presenting the loaded window as the catalogue's size", async () => {
-    /*
-     * `DrizzleModelManager.list` is a bare `limit: 200` and the contract has no
-     * total, so at the cap `models.length` is the size of the response and not
-     * of the catalogue -- while the label above it says "Catalogue routes" and
-     * the caption below says "Versioned records". Both describe the table.
-     */
-    catalogue = Array.from({ length: 200 }, (_, index) => model({
-      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      slug: `route-${index}`,
-      displayName: `Route ${index}`,
-    }));
-    render(
-      <main>
-        <ModelsView
-          session={session}
-          connections={connections}
-          onConfigureConnections={vi.fn()}
-          onOpenOperations={vi.fn()}
-          onSessionExpired={vi.fn()}
-        />
-      </main>,
-    );
-    const summary = await screen.findByLabelText("Model catalogue summary");
-
-    await waitFor(() => expect(within(summary).getByText("200+")).toBeTruthy());
-    expect(within(summary).getByText("Newest 200 loaded")).toBeTruthy();
-    expect(within(summary).queryByText("Versioned records")).toBeNull();
-    expect(within(summary).getByText("Admitted routes")).toBeTruthy();
+    expect(screen.queryByLabelText("Model catalogue summary")).toBeNull();
+    expect(screen.queryByText("Admitted routes")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Observed catalogue" })).toBeTruthy();
+    expect(screen.getByText("Laguna Hermes")).toBeTruthy();
+    expect(screen.getByText("Default")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open Operations" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New model route" })).toBeNull();
   });
 
   it("defaults Activate to make-default for AGENT routes, not CHAT", async () => {
@@ -302,7 +289,6 @@ describe("models catalogue", () => {
           session={session}
           connections={connections}
           onConfigureConnections={vi.fn()}
-          onOpenOperations={vi.fn()}
           onSessionExpired={vi.fn()}
         />
       </main>,
@@ -350,7 +336,6 @@ describe("models catalogue", () => {
           session={session}
           connections={connections}
           onConfigureConnections={vi.fn()}
-          onOpenOperations={vi.fn()}
           onSessionExpired={vi.fn()}
         />
       </main>,
@@ -361,19 +346,7 @@ describe("models catalogue", () => {
   });
 
   it("does not prefill Laguna dummy limits when observed capabilities are unknown", async () => {
-    observed = [{
-      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      connectionId: "conn-1",
-      alias: "local-qwen",
-      displayName: "Local Qwen",
-      observedContextWindowTokens: null,
-      observedMaxOutputTokens: null,
-      inputModalities: [],
-      ownedBy: "vllm",
-      lastSeenAt: "2026-08-22T00:00:00.000Z",
-      missingFromUpstream: false,
-      admittedWorkloads: [],
-    }];
+    observed = [sampleObservation];
     catalogue = [];
     render(
       <main>
@@ -381,7 +354,6 @@ describe("models catalogue", () => {
           session={session}
           connections={connections}
           onConfigureConnections={vi.fn()}
-          onOpenOperations={vi.fn()}
           onSessionExpired={vi.fn()}
         />
       </main>,

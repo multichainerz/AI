@@ -28,13 +28,10 @@ import {
   Field,
   Input,
   LockedScreen,
-  Metric,
-  MetricRow,
   MicroLabel,
   Panel,
   Select,
   StatusText,
-  WorkspaceDock,
   WorkspaceIntro,
   cn,
   toneFor,
@@ -44,7 +41,6 @@ interface ModelsViewProps {
   session: AdministratorSession | null;
   connections: ServiceConnectionSummary[];
   onConfigureConnections: () => void;
-  onOpenOperations: () => void;
   onSessionExpired: () => void;
 }
 
@@ -67,8 +63,6 @@ const connectionKinds: Readonly<Record<ModelWorkload, readonly string[]>> = {
   CHAT: ["INFERENCE"],
   AGENT: ["INFERENCE"],
 };
-
-const CATALOGUE_WINDOW = 200;
 
 const modalityLabels: Record<ModelInputModality, string> = {
   text: "Text",
@@ -153,7 +147,6 @@ export function ModelsView({
   session,
   connections,
   onConfigureConnections,
-  onOpenOperations,
   onSessionExpired,
 }: ModelsViewProps) {
   const [models, setModels] = useState<ModelDeployment[]>([]);
@@ -218,14 +211,6 @@ export function ModelsView({
     if (eligibleConnections.some(({ id }) => id === draft.connectionId)) return;
     setDraft((current) => ({ ...current, connectionId: eligibleConnections[0]?.id ?? "" }));
   }, [eligibleConnections, draft.connectionId]);
-
-  const startCreate = () => {
-    setEditing(null);
-    setDraft(emptyDraft(refreshConnection?.id ?? connections.find(({ kind }) => kind === "INFERENCE")?.id ?? ""));
-    setShowEditor(true);
-    setError(null);
-    setMessage(null);
-  };
 
   const startAdmit = (observation: ModelObservation) => {
     const limits = prefillLimits(observation);
@@ -388,8 +373,6 @@ export function ModelsView({
     />;
   }
 
-  const activeCount = models.filter(({ status }) => status === "ACTIVE").length;
-  const defaultCount = models.filter(({ isDefault }) => isDefault).length;
   const query = filter.trim().toLowerCase();
   const visibleObservations = observations.filter((item) => {
     if (!query) return true;
@@ -401,15 +384,11 @@ export function ModelsView({
     <WorkspaceIntro
       icon={<Boxes className="size-4" aria-hidden="true" />}
       title="Models"
-      actions={<>
-        <Button onClick={onOpenOperations}>Open Operations</Button>
-        {canManage && <Button onClick={startCreate}>New model route</Button>}
-        {canManage && (
+      actions={canManage ? (
           <Button variant="primary" onClick={() => void refresh()} disabled={busy || !refreshConnection}>
             {busy ? "Refreshing..." : "Refresh from endpoint"}
           </Button>
-        )}
-      </>}
+        ) : undefined}
     >
       <p className="mb-0 text-body text-muted">What this deployment is allowed to send Hermes.</p>
       <div className="flex flex-wrap items-center gap-2">
@@ -424,19 +403,6 @@ export function ModelsView({
       </div>
     </WorkspaceIntro>
 
-    <WorkspaceDock>
-      <MetricRow className="border-b-0 pb-0 lg:grid-cols-4" aria-label="Model catalogue summary">
-        <Metric label="Observed" value={observations.length} caption="Last refresh snapshot" />
-        <Metric
-          label="Admitted routes"
-          value={models.length >= CATALOGUE_WINDOW ? `${CATALOGUE_WINDOW}+` : models.length}
-          caption={models.length >= CATALOGUE_WINDOW ? `Newest ${CATALOGUE_WINDOW} loaded` : "Versioned records"}
-        />
-        <Metric label="Active routes" value={activeCount} tone={activeCount > 0 ? "good" : "neutral"} caption="Serving now" />
-        <Metric label="Defaults" value={defaultCount} caption="Per workload" />
-      </MetricRow>
-    </WorkspaceDock>
-
     {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
     {message && <Alert className="shrink-0" tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
 
@@ -445,7 +411,7 @@ export function ModelsView({
         <header className="mb-4 flex shrink-0 items-start justify-between gap-6">
           <div className="min-w-0">
             <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
-              {editing ? `Edit ${editing.displayName}` : draft.modelAlias ? "Admit model route" : "New model route"}
+              {editing ? `Edit ${editing.displayName}` : "Admit model route"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
               {editing
@@ -532,7 +498,7 @@ export function ModelsView({
     <section className="grid min-h-0 content-start items-start gap-3 overflow-y-auto lg:grid-cols-2" aria-label="Configured model routes">
       {models.length === 0 && observations.length > 0 && (
         <EmptyState className="lg:col-span-2" title="No admitted routes yet">
-          Admit an observed id, or use New model route for an alias the server did not list.
+          Admit an observed id from the catalogue.
         </EmptyState>
       )}
       {models.map((model) => <Panel className="grid min-w-0 gap-4" key={model.id}>

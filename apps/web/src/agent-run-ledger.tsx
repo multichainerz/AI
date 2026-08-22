@@ -10,14 +10,12 @@ import {
 const EXECUTION_REASON = "Runtime and Profile Distribution boundaries verified by the platform administrator.";
 
 /**
- * The execution half of Profiles: whether Hermes may run, and what it has run.
+ * ExecutionBoundary is the control half of Profiles: whether Hermes may run.
+ * RunLedger and RunDetail are the reporting half, rendered by Operations →
+ * Agent runs rather than beside the Profile list they used to sit under.
  *
- * These three blocks were briefly a tab of their own called Runtime, which put
- * the answer to "is this agent working" on a different screen from the thing
- * that defines it. They are components rather than a route now, and deliberately
- * presentational: `agents-view.tsx` owns every piece of state they draw, because
- * the profile selected in its list is what scopes the ledger, and a second
- * component fetching runs on its own is how those two would drift apart.
+ * They are deliberately presentational: the parent owns every piece of state
+ * they draw, because scoping, polling and cancellation all live on one screen.
  */
 
 function friendlyTime(value: string | null): string {
@@ -216,12 +214,12 @@ interface RunLedgerProps {
 }
 
 /**
- * Recent runs, scoped by default to the Profile selected in the list beside it.
+ * Recent runs, optionally scoped to one Profile.
  *
- * A flat ledger under an unrelated profile list is the weakest way to put these
- * two things on one screen: runs are produced *by* profiles, and the selection
- * in the list is what says which. That selection had no job at all before this
- * -- it tinted a row and nothing more.
+ * The parent decides the default. Operations → Agent runs opens unscoped — it
+ * is a reporting surface, like the audit trail — and a filter narrows it.
+ * Profiles used to default the other way because the selected row in the list
+ * beside the ledger was the scope.
  *
  * The escape hatch is not a permanent toggle. A non-administrator's profile list
  * holds only ACTIVE profiles while their run list holds everything they ever

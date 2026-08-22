@@ -2,6 +2,7 @@ import {
   type AdministratorSession,
   type AiOpsComponent,
   type AiOpsOverview,
+  type ConnectionMonitoringControl,
   type GuardrailControl,
   type OperationalIncident,
   type RuntimeExecutorSnapshot,
@@ -15,11 +16,14 @@ import {
   createOperationalIncident,
   decideOperationalIncident,
   getAiOpsOverview,
+  getConnectionMonitoring,
   getOperationalIncidents,
+  updateConnectionMonitoring,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { Switch } from "@/components/ui/switch";
 import {
-  Alert, Button, EmptyState, HeroBanner, Input, LockedScreen, Metric, MetricRow, MicroLabel,
+  Alert, Button, EmptyState, Field, HeroBanner, Input, LockedScreen, Metric, MetricRow, MicroLabel,
   Panel, PanelHeading, Select, StatusText, Textarea, Tile, WorkspaceDock, WorkspaceIntro, cn, toneFor,
 } from "./ui/index.js";
 
@@ -53,7 +57,10 @@ interface OperationsViewProps {
   session: AdministratorSession | null;
   onConfigure: () => void;
   onSessionExpired: () => void;
+  onMonitoringChange?: (control: ConnectionMonitoringControl) => void;
 }
+
+const DEFAULT_CHECK_REASON = "Enable scheduled credential-aware checks.";
 
 type IncidentAction = { id: string; action: "acknowledge" | "resolve" } | null;
 
@@ -176,7 +183,21 @@ function incidentSort(items: OperationalIncident[]): OperationalIncident[] {
   });
 }
 
-export function OperationsView({ session, onConfigure, onSessionExpired }: OperationsViewProps) {
+function applyMonitoringDraft(control: ConnectionMonitoringControl | null): {
+  enabled: boolean;
+  intervalSeconds: number;
+  reason: string;
+} {
+  return {
+    enabled: control?.enabled ?? false,
+    intervalSeconds: control?.intervalSeconds ?? 300,
+    reason: (control?.reason && control.reason.trim().length >= 3)
+      ? control.reason
+      : DEFAULT_CHECK_REASON,
+  };
+}
+
+export function OperationsView({ session, onConfigure, onSessionExpired, onMonitoringChange }: OperationsViewProps) {
   const [overview, setOverview] = useState<AiOpsOverview | null>(null);
   const [incidents, setIncidents] = useState<OperationalIncident[]>([]);
   const [busy, setBusy] = useState(false);
@@ -198,9 +219,14 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
    */
   const [decisionOwner, setDecisionOwner] = useState("");
   const [showIncidentForm, setShowIncidentForm] = useState(false);
+  const [monitoring, setMonitoring] = useState<ConnectionMonitoringControl | null>(null);
+  const [checkEnabled, setCheckEnabled] = useState(false);
+  const [checkInterval, setCheckInterval] = useState(300);
+  const [checkReason, setCheckReason] = useState(DEFAULT_CHECK_REASON);
 
   const { unlocked, scopes } = adminAccess(session);
   const canOperate = scopes.includes("operations:execute");
+  const canWriteChecks = scopes.includes("connections:write");
 
   // Held in a ref so `handleError` keeps one identity for the life of the view.
   //
@@ -211,9 +237,13 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   // button, and cleared the error an operator was still reading. It was four
   // endpoints when release gates and pilot readiness were sub-tabs here.
   const latestOnSessionExpired = useRef(onSessionExpired);
+  const latestOnMonitoringChange = useRef(onMonitoringChange);
   useEffect(() => {
     latestOnSessionExpired.current = onSessionExpired;
   }, [onSessionExpired]);
+  useEffect(() => {
+    latestOnMonitoringChange.current = onMonitoringChange;
+  }, [onMonitoringChange]);
 
   const handleError = useCallback((cause: unknown, fallback: string) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) latestOnSessionExpired.current();
@@ -234,12 +264,19 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
        * the counts are taken from the overview; its `items` are unused here on
        * purpose, because rendering them would print the open incidents twice.
        */
-      const [nextOverview, nextIncidents] = await Promise.all([
+      const [nextOverview, nextIncidents, nextMonitoring] = await Promise.all([
         getAiOpsOverview(),
         getOperationalIncidents(),
+        getConnectionMonitoring().catch(() => null),
       ]);
       setOverview(nextOverview);
       setIncidents(incidentSort(nextIncidents.items));
+      setMonitoring(nextMonitoring);
+      const draft = applyMonitoringDraft(nextMonitoring);
+      setCheckEnabled(draft.enabled);
+      setCheckInterval(draft.intervalSeconds);
+      setCheckReason(draft.reason);
+      if (nextMonitoring) latestOnMonitoringChange.current?.(nextMonitoring);
     } catch (cause) {
       handleError(cause, "AI operations state could not be loaded.");
     } finally {
@@ -265,6 +302,31 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
     const weight = { UNAVAILABLE: 0, DEGRADED: 1, NOT_VERIFIED: 2, NOT_CONFIGURED: 3, HEALTHY: 4 } as const;
     return weight[left.status] - weight[right.status] || left.label.localeCompare(right.label);
   }), [overview]);
+
+  const saveChecks = async () => {
+    if (!canWriteChecks || checkReason.trim().length < 3) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const next = await updateConnectionMonitoring({
+        enabled: checkEnabled,
+        intervalSeconds: checkInterval,
+        reason: checkReason.trim(),
+      });
+      setMonitoring(next);
+      const draft = applyMonitoringDraft(next);
+      setCheckEnabled(draft.enabled);
+      setCheckInterval(draft.intervalSeconds);
+      setCheckReason(draft.reason);
+      latestOnMonitoringChange.current?.(next);
+      setMessage("Scheduled connection checks updated.");
+    } catch (cause) {
+      handleError(cause, "Scheduled connection checks could not be updated.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const decideIncident = async (event: FormEvent) => {
     event.preventDefault();
@@ -449,6 +511,82 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
               {!overview && <p className="m-0 text-body text-faint">Loading component state...</p>}
             </div>
           </Panel>
+
+          {/*
+           * Scheduled probes used to live on the connection editor, which made
+           * health cadence a property of whichever endpoint you happened to
+           * have open. The control is deployment-wide and the readings are
+           * this screen, so this is the only place that writes it.
+           */}
+          {overview ? (
+            <Panel>
+              <PanelHeading
+                kicker="Connections"
+                title="Scheduled checks"
+                description="Credential-aware probes of registered endpoints. Setup connects them; this page is the only place that turns the probes on."
+                actions={<StatusText tone={checkEnabled ? "good" : "neutral"}>{checkEnabled ? "On" : "Off"}</StatusText>}
+              />
+              {monitoring === null ? (
+                <p className="m-0 text-body text-muted">Scheduled checks are not available on this API.</p>
+              ) : (
+                <div className="grid gap-3">
+                  <p className="m-0 text-caption leading-relaxed text-muted">
+                    Checks use encrypted connector credentials inside OrcaSynapse and never expose them to the browser.
+                  </p>
+                  {canWriteChecks ? (
+                    <>
+                      <div className="flex items-center gap-3">
+                        <Switch
+                          checked={checkEnabled}
+                          onCheckedChange={setCheckEnabled}
+                          aria-label="Run scheduled checks"
+                        />
+                        <span className="text-body text-foreground">Run scheduled checks</span>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label="Cadence">
+                          <Select
+                            value={checkInterval}
+                            onChange={(event) => setCheckInterval(Number(event.target.value))}
+                          >
+                            <option value={60}>Every minute</option>
+                            <option value={300}>Every 5 minutes</option>
+                            <option value={900}>Every 15 minutes</option>
+                            <option value={3600}>Every hour</option>
+                          </Select>
+                        </Field>
+                        <Field label="Operator reason">
+                          <Input
+                            minLength={3}
+                            maxLength={500}
+                            value={checkReason}
+                            onChange={(event) => setCheckReason(event.target.value)}
+                          />
+                        </Field>
+                      </div>
+                      <div>
+                        <Button
+                          variant="primary"
+                          type="button"
+                          disabled={busy || checkReason.trim().length < 3}
+                          onClick={() => void saveChecks()}
+                        >
+                          {busy ? "Applying…" : "Save checks"}
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="m-0 text-body text-muted">
+                      {checkEnabled
+                        ? `On · ${checkInterval === 60 ? "every minute" : checkInterval === 300 ? "every 5 minutes" : checkInterval === 900 ? "every 15 minutes" : checkInterval === 3600 ? "every hour" : `every ${checkInterval}s`}.`
+                        : "Off."}
+                      {monitoring.reason ? ` ${monitoring.reason}` : ""}
+                    </p>
+                  )}
+                </div>
+              )}
+            </Panel>
+          ) : null}
 
         </div>
 

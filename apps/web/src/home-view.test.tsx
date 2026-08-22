@@ -304,7 +304,7 @@ describe("Home", () => {
 
     // Failed responses route to the ledger.
     await user.click(screen.getByRole("button", { name: /24 failed responses/ }));
-    expect(onSelect).toHaveBeenLastCalledWith("Agents");
+    expect(onSelect).toHaveBeenLastCalledWith("AgentRuns");
 
     // A readiness gap routes to the exact setup step that repairs it.
     await user.click(screen.getByRole("button", { name: /Isolated agent runtime/ }));
@@ -571,7 +571,7 @@ describe("Home", () => {
     expect(screen.getByText("Failed")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /Division analyst/ }));
-    expect(onSelect).toHaveBeenLastCalledWith("Agents");
+    expect(onSelect).toHaveBeenLastCalledWith("AgentRuns");
   });
 
   it("says sessions will appear rather than drawing an empty ledger as loading", async () => {

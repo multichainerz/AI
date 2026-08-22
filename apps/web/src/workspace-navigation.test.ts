@@ -93,9 +93,9 @@ describe("workspace navigation", () => {
       Dashboard: "Activity, readiness and next actions",
       Session: "Governed conversations",
       Files: "Documents your agents produced",
-      Agents: "Profiles and runs, skills, memory and tools",
+      Agents: "Profiles, skills, memory and tools",
       Gateway: "Models, guardrails and usage for the governed inference path",
-      Operations: "Health, incidents and the audit trail",
+      Operations: "Health, agent runs and the audit trail",
       Settings: "Setup, access and system updates",
     });
 
@@ -208,10 +208,8 @@ describe("workspace navigation", () => {
      * "Hermes corpus" named a storage mechanism rather than either of the two
      * unrelated things stored in it, so it became Skills and Memory. Runtime
      * went the other way: it was briefly a fifth tab holding the kill switch,
-     * the run counters and the execution ledger, and that fragmented one
-     * workflow -- define a Profile, watch what it does, decide whether it may
-     * run -- across two screens whose only join was a cross-tab button. One
-     * tab owns all three again.
+     * the run counters and the execution ledger. Profiles kept the switch;
+     * the ledger and run inspection live under Operations → Agent runs.
      *
      * The assertion is the order and the labels, because the tab strip is the
      * only place this structure is visible.
@@ -235,21 +233,27 @@ describe("workspace navigation", () => {
     }
   });
 
-  it("keeps the retired Runtime address pointing at the tab that absorbed it", () => {
+  it("keeps the retired Runtime address pointing at the tab that absorbed the ledger", () => {
     /*
-     * `#agents/runtime` addressed a screen that is now part of Profiles, and
-     * every part of what it held moved there rather than being dropped. A
-     * bookmark to it therefore has a correct destination, and letting it fall
-     * through to the default would drop the operator out of the area entirely
-     * -- the same reasoning `#agents/corpus` is kept alive by.
+     * `#agents/runtime` addressed a screen that first folded into Profiles and
+     * then split: the kill switch stayed on Profiles, the execution ledger
+     * moved to Operations → Agent runs. A bookmark to it therefore has a
+     * correct destination, and letting it fall through to the default would
+     * drop the operator out of reporting entirely -- the same reasoning
+     * `#agents/corpus` is kept alive by.
      */
     expect(pathForView("Agents")).toBe("#agents/profiles");
     expect(pathForView("Skills")).toBe("#agents/skills");
     expect(pathForView("Memory")).toBe("#agents/memory");
     expect(pathForView("Integrations")).toBe("#agents/tools");
+    expect(pathForView("AgentRuns")).toBe("#operations/runs");
 
-    expect(viewFromHash("#agents/runtime")).toBe("Agents");
-    expect(viewFromHash("#runtime")).toBe("Agents");
+    expect(viewFromHash("#agents/runtime")).toBe("AgentRuns");
+    expect(viewFromHash("#runtime")).toBe("AgentRuns");
+    expect(viewFromHash("#operations/runs")).toBe("AgentRuns");
+    expect(viewFromHash("#operations/agent-runs")).toBe("AgentRuns");
+    expect(viewFromHash("#runs")).toBe("AgentRuns");
+    expect(viewFromHash("#agent-runs")).toBe("AgentRuns");
     expect(viewFromHash("#agents/profiles")).toBe("Agents");
     expect(viewFromHash("#agents/skills")).toBe("Skills");
     expect(viewFromHash("#agents/memory")).toBe("Memory");
@@ -257,6 +261,7 @@ describe("workspace navigation", () => {
     for (const view of ["Agents", "Skills", "Memory"] as const) {
       expect(productAreaForView(view)).toBe("Agents");
     }
+    expect(productAreaForView("AgentRuns")).toBe("Operations");
   });
 
   it("gives every Setup step an address that round-trips", () => {
@@ -310,15 +315,16 @@ describe("workspace navigation", () => {
     expect(productAreaForView("Application")).toBe("Settings");
   });
 
-  it("gives Operations two tabs after both evidence surfaces were removed", () => {
+  it("gives Operations three tabs after both evidence surfaces were removed", () => {
     /*
      * This area was one tab called "Health & evidence" holding four sub-tabs.
      * Release gates went with the evaluation subsystem it governed; Pilot
      * readiness was deleted rather than moved, because `ProductionReadinessControl`
      * has no create route and no seed anywhere in the repository, so the screen
-     * could never show a row.
+     * could never show a row. Agent runs is the reporting surface that used to
+     * sit on Profiles beside the kill switch.
      *
-     * Nothing pinned this list, so reviving either as a tab -- or renaming
+     * Nothing pinned this list, so reviving either retired tab -- or renaming
      * "Audit trail" back to something the area no longer has -- was a change
      * every test agreed with. It is the same literal assertion Agents and
      * Settings already carry, for the same reason: a tab strip is the only
@@ -326,12 +332,14 @@ describe("workspace navigation", () => {
      */
     expect(sectionNavigationFor("Operations")).toEqual([
       { label: "Health", view: "Operations", icon: "health" },
+      { label: "Agent runs", view: "AgentRuns", icon: "runs" },
       { label: "Audit trail", view: "Audit", icon: "audit" },
     ]);
 
     expect(pathForView("Operations")).toBe("#operations/health");
+    expect(pathForView("AgentRuns")).toBe("#operations/runs");
     expect(pathForView("Audit")).toBe("#operations/audit");
-    for (const view of ["Operations", "Audit"] as const) {
+    for (const view of ["Operations", "AgentRuns", "Audit"] as const) {
       expect(productAreaForView(view)).toBe("Operations");
       expect(viewFromHash(pathForView(view))).toBe(view);
     }

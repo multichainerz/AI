@@ -101,6 +101,7 @@ export function StepList({
               aria-current={active ? "step" : undefined}
               className={cn(
                 "w-full items-start justify-start gap-3 rounded-md px-3 py-3 text-left hover:bg-raised hover:text-foreground",
+                horizontal && "sm:px-2.5 sm:py-2",
                 // Raised, not `bg-soft`. Soft is accent at 10–18%, so the open
                 // row went lavender in light and purple in dark. Ghost hover
                 // is the same token — override it or the rail flashes purple.

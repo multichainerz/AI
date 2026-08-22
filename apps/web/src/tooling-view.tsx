@@ -17,7 +17,7 @@ import {
 import { adminAccess } from "./admin-access.js";
 import { ConfigurationSetsPanel } from "./configuration-sets-panel.js";
 import {
-  Alert, Button, EmptyState, Field, Input, LockedScreen, MicroLabel,
+  Alert, Button, EmptyState, Field, Input, LockedScreen,
   Panel, PanelHeading, StatusText, Tile, WorkspaceIntro, cn,
 } from "./ui/index.js";
 
@@ -97,8 +97,6 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
    */
   const [draft, setDraft] = useState<Record<string, boolean>>({});
   const [draftReason, setDraftReason] = useState("");
-  const [stagedName, setStagedName] = useState("");
-  const [stagedReason, setStagedReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -256,14 +254,6 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     return () => { active = false; window.clearInterval(timer); };
   }, [unlocked]);
 
-  const action = async (key: string, operation: () => Promise<unknown>, message: string) => {
-    if (busy) return;
-    setBusy(key); setError(null); setNotice(null);
-    try { await operation(); await load(); setNotice(message); }
-    catch (cause) { fail(cause); }
-    finally { setBusy(null); }
-  };
-
   const saveDraft = async (event: FormEvent) => {
     event.preventDefault();
     const entries = Object.entries(draft);
@@ -289,17 +279,6 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     } finally {
       setBusy(null);
     }
-  };
-
-  const stage = async (event: FormEvent) => {
-    event.preventDefault();
-    const name = stagedName.trim();
-    if (name.length < 1 || stagedReason.trim().length < 3) return;
-    await action(`staged-${name}`, async () => {
-      await decideToolsetAdmission(name, true, stagedReason.trim());
-      setStagedName("");
-      setStagedReason("");
-    }, `${name} is allowed. It will appear above once the runtime reports it.`);
   };
 
   if (!unlocked) {
@@ -527,57 +506,10 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         >
           {catalogueRead
             ? "There is nothing else to allow or block. A tool group appears here as soon as the runtime offers one."
-            : "The runtime did not answer, so nothing can be listed. A decision recorded below is in place for when it does."}
+            : "The runtime did not answer, so nothing can be listed."}
         </EmptyState>
       )}
       </div>
-
-      {canManage && (
-        <div className="mt-3 shrink-0 border-t border-border pt-3">
-          <MicroLabel className="block">Not listed above</MicroLabel>
-          <p className="mb-0 mt-1 max-w-[72ch] text-caption leading-relaxed text-muted">
-            Allow a tool the runtime has not reported yet, named exactly as the runtime spells it. It takes
-            effect the moment the runtime offers it.
-          </p>
-          {/*
-            * `flex-wrap` is load-bearing, not tidiness: without it the two
-            * fields and the button refuse to reflow and the row squeezes them
-            * into a third of the panel instead of taking a second line.
-            */}
-          <form
-            className="mt-2.5 flex flex-wrap items-end gap-2.5"
-            onSubmit={(event) => void stage(event)}
-          >
-            <Field label="Tool name" className="min-w-[180px] flex-1">
-              <Input
-                value={stagedName}
-                maxLength={120}
-                placeholder="clarify"
-                onChange={(event) => setStagedName(event.target.value)}
-              />
-            </Field>
-            <Field label="Why it is allowed" className="min-w-[220px] flex-[2]">
-              <Input
-                value={stagedReason}
-                minLength={3}
-                maxLength={500}
-                placeholder="Reviewed with the data owner"
-                onChange={(event) => setStagedReason(event.target.value)}
-              />
-            </Field>
-            {/* Outline, not `secondary`: the secondary fill measures
-                rgb(28,28,36) against a rgb(22,22,28) panel, so the one control
-                the empty-runtime state offers had no visible edge at all. */}
-            <Button
-              type="submit"
-              className="shrink-0"
-              disabled={busy !== null || stagedName.trim().length < 1 || stagedReason.trim().length < 3}
-            >
-              {busy === `staged-${stagedName.trim()}` ? "Saving…" : "Record decision"}
-            </Button>
-          </form>
-        </div>
-      )}
     </Panel>
 
     {/*

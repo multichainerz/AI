@@ -60,7 +60,6 @@ const cases: LockedCase[] = [
         session={signedOut}
         connections={[]}
         onConfigureConnections={elevate}
-        onOpenOperations={navigate}
         onSessionExpired={vi.fn()}
       />);
     },

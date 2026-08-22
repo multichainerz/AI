@@ -16,7 +16,6 @@ describe("ConnectionDrawer inference endpoint", () => {
     const html = renderToStaticMarkup(<ConnectionDrawer
       busy={false}
       connections={[]}
-      monitoring={null}
       error={null}
       diagnostic={null}
       initialKind="INFERENCE"
@@ -29,7 +28,6 @@ describe("ConnectionDrawer inference endpoint", () => {
       onTest={vi.fn(async () => undefined)}
       onDiscoverInference={vi.fn(async () => null)}
       onLoadInferenceCatalogue={vi.fn(async () => null)}
-      onUpdateMonitoring={vi.fn(async () => undefined)}
       onLoadRevisions={vi.fn(async () => undefined)}
       onRollback={vi.fn(async () => undefined)}
     />);
@@ -50,6 +48,8 @@ describe("ConnectionDrawer inference endpoint", () => {
     expect(html).toContain("Agentic System");
     expect(html).not.toContain(">Hermes<");
     expect(html).not.toContain("Configuration history");
+    expect(html).not.toContain("Connection monitoring");
+    expect(html).not.toContain("Save monitoring");
   });
 
   it("renders the inference editor in place when Setup embeds it", () => {
@@ -65,13 +65,27 @@ describe("ConnectionDrawer inference endpoint", () => {
     expect(html).not.toContain("role=\"dialog\"");
     expect(html).not.toContain("Agentic System");
     expect(html).not.toContain("Connect a model server");
+    expect(html).not.toContain("Configuration history");
+  });
+
+  it("does not put configuration history on the Setup editor even when a connection exists", () => {
+    const html = renderToStaticMarkup(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      embedded
+      connections={[liveInference]}
+    />);
+
+    expect(html).toContain("id=\"connection-form\"");
+    expect(html).not.toContain("Configuration history");
+    expect(html).not.toContain("View history");
+    expect(html).not.toContain("Refresh history");
   });
 });
 
 const props: Omit<ComponentProps<typeof ConnectionDrawer>, "initialKind"> = {
   busy: false,
   connections: [],
-  monitoring: null,
   error: null,
   diagnostic: null,
   open: true,
@@ -83,7 +97,6 @@ const props: Omit<ComponentProps<typeof ConnectionDrawer>, "initialKind"> = {
   onTest: vi.fn(async () => undefined),
   onDiscoverInference: vi.fn(async () => null),
   onLoadInferenceCatalogue: vi.fn(async () => null),
-  onUpdateMonitoring: vi.fn(async () => undefined),
   onLoadRevisions: vi.fn(async () => undefined),
   onRollback: vi.fn(async () => undefined),
 };

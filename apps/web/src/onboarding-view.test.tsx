@@ -86,18 +86,12 @@ const enabledRuntime = { enabled: true } as unknown as AgentRuntimeControl;
 
 const connectionEditor = {
   busy: false,
-  monitoring: null,
   error: null,
   diagnostic: null,
-  revisionConnectionId: null,
-  revisionHistory: null,
   onSave: vi.fn(async () => undefined),
   onTest: vi.fn(async () => undefined),
   onDiscoverInference: vi.fn(async () => null),
   onLoadInferenceCatalogue: vi.fn(async () => null),
-  onUpdateMonitoring: vi.fn(async () => undefined),
-  onLoadRevisions: vi.fn(async () => undefined),
-  onRollback: vi.fn(async () => undefined),
 };
 
 const callbacks = {

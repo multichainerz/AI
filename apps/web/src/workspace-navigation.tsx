@@ -4,6 +4,7 @@ import {
   Boxes,
   Brain,
   HeartPulse,
+  History,
   ListChecks,
   LockKeyhole,
   ScrollText,
@@ -32,6 +33,7 @@ export type ActiveView =
   | "Guardrails"
   | "People"
   | "Operations"
+  | "AgentRuns"
   | "Audit";
 
 /*
@@ -103,7 +105,7 @@ export const primaryNavigationGroups: ReadonlyArray<{
        * Files. The rail's flat order is unchanged, so no link or bookmark
        * moved; only the heading above these four is new.
        */
-      { area: "Agents", icon: "agents", target: "Agents", description: "Profiles and runs, skills, memory and tools" },
+      { area: "Agents", icon: "agents", target: "Agents", description: "Profiles, skills, memory and tools" },
       /*
        * Ahead of Operations: you configure the governed inference path, then you
        * watch it. The description must literally contain every tab label in this
@@ -111,7 +113,7 @@ export const primaryNavigationGroups: ReadonlyArray<{
        * stops a tooltip drifting away from the tabs it summarises.
        */
       { area: "Gateway", icon: "gateway", target: "Models", description: "Models, guardrails and usage for the governed inference path" },
-      { area: "Operations", icon: "operations", target: "Operations", description: "Health, incidents and the audit trail" },
+      { area: "Operations", icon: "operations", target: "Operations", description: "Health, agent runs and the audit trail" },
       { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, access and system updates" },
     ],
   },
@@ -139,17 +141,16 @@ export function primaryNavigationItems(placement: NavigationPlacement): Readonly
 const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNavigationItem>>> = {
   /*
    * Four tabs, one job each. The order is the operator's sequence -- define a
-   * Profile and watch what it does, then govern what it knows and what it may
-   * reach.
+   * Profile, then govern what it knows and what it may reach.
    *
    * "Hermes corpus" was named after the storage mechanism rather than either of
    * the two unrelated things stored in it, so it became Skills and Memory.
    * Runtime went the other way. It briefly held the kill switch, the run
-   * counters and the execution ledger as a fifth tab, and that split one
-   * workflow down the middle: the question "is this Profile working" was
-   * answered on a different screen from the one that defines it, joined only by
-   * a cross-tab button. Profiles owns all three again -- what an agent is, what
-   * it is doing, and whether it may run at all.
+   * counters and the execution ledger as a fifth tab; Profiles then absorbed
+   * all three so "is this Profile working" lived on the same screen as the
+   * thing that defines it. The ledger and run inspection have moved again, to
+   * Operations → Agent runs, because they are reporting rather than definition.
+   * The kill switch stays here: it is the precondition for everything below it.
    */
   Agents: [
     { label: "Profiles", view: "Agents", icon: "profiles" },
@@ -158,10 +159,12 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
     { label: "Tools", view: "Integrations", icon: "tools" },
   ],
   /*
-   * Two tabs: is it broken *now*, and what happened *then*.
+   * Three tabs: is it broken *now*, what agents have run, and what happened
+   * *then*. Agent runs used to sit on Profiles beside the kill switch, which
+   * mixed control (may it execute) with reporting (what did it execute).
    *
-   * This was one tab called "Health & evidence" holding four sub-tabs — the
-   * only three-level navigation left in the product besides Setup. "Evidence"
+   * This area was one tab called "Health & evidence" holding four sub-tabs —
+   * the only three-level navigation left in the product besides Setup. "Evidence"
    * was never a category; it is a word that meant something different in each
    * of those sub-tabs, so it named a tab whose contents an operator could not
    * predict.
@@ -174,6 +177,7 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
    */
   Operations: [
     { label: "Health", view: "Operations", icon: "health" },
+    { label: "Agent runs", view: "AgentRuns", icon: "runs" },
     { label: "Audit trail", view: "Audit", icon: "audit" },
   ],
   /*
@@ -247,6 +251,7 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Guardrails: "Gateway",
   Usage: "Gateway",
   Operations: "Operations",
+  AgentRuns: "Operations",
   Audit: "Operations",
 };
 
@@ -265,6 +270,7 @@ const pathByView: Record<ActiveView, string> = {
   Guardrails: "#gateway/guardrails",
   Usage: "#gateway/usage",
   Operations: "#operations/health",
+  AgentRuns: "#operations/runs",
   Audit: "#operations/audit",
 };
 
@@ -327,17 +333,22 @@ export function viewFromHash(hash: string): ActiveView {
     case "#audit":
       return "Audit";
     /*
-     * `#agents/runtime` addressed a fifth tab that Profiles has absorbed
-     * whole -- the kill switch, the run counters and the execution ledger all
-     * live there now -- so the old address has a correct destination rather
-     * than falling through to Overview and dropping the operator out of the
-     * area. Same reasoning as `#agents/corpus` below.
+     * `#agents/runtime` addressed a fifth tab that first folded into Profiles
+     * and then split again: the kill switch stayed on Profiles, the execution
+     * ledger and run inspection live under Operations → Agent runs. The old
+     * address follows the ledger rather than the switch, because that is what
+     * an operator opening a "runtime" bookmark is looking at.
      */
     case "#agents":
     case "#agents/profiles":
+      return "Agents";
     case "#agents/runtime":
     case "#runtime":
-      return "Agents";
+    case "#operations/runs":
+    case "#operations/agent-runs":
+    case "#runs":
+    case "#agent-runs":
+      return "AgentRuns";
     /*
      * `#agents/corpus` addressed one screen that is now two. Skills is where
      * the majority of it went -- the file tree, the mutation queue and the
@@ -507,6 +518,7 @@ function SectionGlyph({ name }: { name: string }) {
     guardrails: <Shield size={15} strokeWidth={1.8} />,
     usage: <Activity size={15} strokeWidth={1.8} />,
     health: <HeartPulse size={15} strokeWidth={1.8} />,
+    runs: <History size={15} strokeWidth={1.8} />,
     audit: <ScrollText size={15} strokeWidth={1.8} />,
     setup: <ListChecks size={15} strokeWidth={1.8} />,
     access: <LockKeyhole size={15} strokeWidth={1.8} />,

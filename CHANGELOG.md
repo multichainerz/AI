@@ -5,6 +5,22 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.7 — 2026-08-22
+
+Puts reporting in Operations and trims Setup, Models, and Tools to the jobs they own.
+
+### Changes
+
+- add Operations → Agent runs for the execution ledger and run inspection
+- keep the Hermes kill switch on Agents → Profiles; stop loading runs there
+- route Dashboard recent sessions and failed-response attention to Agent runs
+- land `#agents/runtime` on Agent runs
+- make Operations Health the source of truth for scheduled connection checks
+- compact Setup step 1; drop its configuration history and helper captions
+- restyle the internal/public endpoint picker
+- drop the Models KPI dock, Open Operations, and the blank new-model route
+- drop Tools "Not listed above"; tools appear when Hermes lists them
+
 ## v9.7.6 — 2026-08-22
 
 Leaves Hermes MCP discovery on until an operator pins it off.

@@ -421,7 +421,7 @@ function attentionItems(props: DashboardHeroProps): AttentionItem[] {
       tone: "bad",
       label: failed === 1 ? "1 failed response" : `${failed} failed responses`,
       detail: "In the last 24 hours · read the ledger",
-      action: "Agents",
+      action: "AgentRuns",
     });
   }
 
@@ -880,7 +880,7 @@ export function DashboardHero(props: DashboardHeroProps) {
                     variant="ghost"
                     size="auto"
                     key={run.id}
-                    onClick={() => props.onSelect("Agents")}
+                    onClick={() => props.onSelect("AgentRuns")}
                     className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-3 whitespace-nowrap rounded border border-transparent px-2.5 py-2 text-left font-normal hover:border-border hover:bg-raised"
                   >
                     <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", RUN_TONE[run.status])} />

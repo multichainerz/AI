@@ -1,21 +1,18 @@
 import { DEFAULT_AGENT_PROFILE } from "@orcasynapse/contracts";
 import type {
-  AdminScope, AdministratorSession, AgentMetrics, AgentProfile, AgentRun, AgentRunEvent,
+  AdminScope, AdministratorSession, AgentMetrics, AgentProfile,
   AgentRuntimeControl, CreateAgentProfile, Division, SkillSet, ToolSet,
 } from "@orcasynapse/contracts";
 import { Bot, ChevronDown, RefreshCw as SyncIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { adminAccess } from "./admin-access.js";
-import { ExecutionBoundary, RunDetail, RunLedger } from "./agent-run-ledger.js";
-import { runningStatuses, statusTone } from "./agent-status.js";
+import { ExecutionBoundary } from "./agent-run-ledger.js";
+import { statusTone } from "./agent-status.js";
 import {
   OrcaSynapseApiError,
-  cancelAgentRun,
   createAgentProfile,
   getAgentMetrics,
   getAgentProfiles,
-  getAgentRunEvents,
-  getAgentRuns,
   getAgentRuntime,
   assignProfileDivision,
   getDivisions,
@@ -28,7 +25,7 @@ import {
 } from "./api.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, MicroLabel,
-  Panel, PanelHeading, Select, StatusText, Textarea, WorkspaceIntro, cn, toneFor,
+  Panel, PanelHeading, Select, StatusText, Textarea, WorkspaceIntro, toneFor,
 } from "./ui/index.js";
 
 interface AgentsViewProps {
@@ -126,12 +123,6 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
    */
   const [runtime, setRuntime] = useState<AgentRuntimeControl | null>(null);
   const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
-  const [runs, setRuns] = useState<AgentRun[]>([]);
-  const [runEvents, setRunEvents] = useState<AgentRunEvent[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState("");
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  /** False only after the operator asks to see runs the profile scope hides. */
-  const [runsScoped, setRunsScoped] = useState(true);
   const [profileDraft, setProfileDraft] = useState<CreateAgentProfile>(blankProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -150,7 +141,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
   const granted = (scope: AdminScope) => (session === undefined ? administrator : can(scope));
   /** Create, new version, activate, suspend: `POST`/`PATCH /admin/agents/profiles`. */
   const canManage = granted("agents:manage");
-  /** The execution boundary's switch, and cancelling a run as an administrator. */
+  /** The execution boundary's switch. Cancelling a run lives on Operations → Agent runs. */
   const canControl = granted("agents:control");
   /*
    * Verify & activate calls `POST /admin/onboarding/validate` before it touches
@@ -158,14 +149,9 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
    * both scopes or it fails on its first step with the Profile untouched.
    */
   const canActivate = canManage && granted("readiness:manage");
-  /*
-   * The enterprise cancel route authorises the caller against their own run
-   * rather than by scope, so this is an administrator's question only.
-   */
-  const canCancelRuns = administrator ? canControl : true;
 
   /*
-   * Held in a ref, and read through it, so the poll below survives a fresh
+   * Held in a ref, and read through it, so the load below survives a fresh
    * callback identity. `app.tsx` re-renders on its own interval and hands this
    * view a new `onSessionExpired` arrow every few seconds; depending on that
    * identity would tear down and rebuild the interval on each one, which is the
@@ -174,25 +160,9 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
   const latestOnSessionExpired = useRef(onSessionExpired);
   useEffect(() => { latestOnSessionExpired.current = onSessionExpired; }, [onSessionExpired]);
 
-  /** The window the poll reads, without making the interval depend on it. */
-  const runsRef = useRef<AgentRun[]>([]);
-
   const fail = (cause: unknown) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) latestOnSessionExpired.current();
     setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the agent operation.");
-  };
-
-  /*
-   * Runs move without being asked; profiles change only when someone on this
-   * screen changes them, and every one of those paths calls `load`. Keeping the
-   * two loaders apart is what lets the interval refetch the ledger every few
-   * seconds without also replacing the list an operator is reading.
-   */
-  const loadRuns = async () => {
-    const runList = await getAgentRuns(administrator);
-    runsRef.current = runList.items;
-    setRuns(runList.items);
-    if (administrator) setMetrics(await getAgentMetrics());
   };
 
   const loadProfiles = async () => {
@@ -205,15 +175,17 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     // do not know" is to withhold the session rather than offer one the run
     // would refuse.
     setExecutionEnabled(profileList.executionEnabled ?? null);
-    setSelectedProfileId((current) => current || profileList.items.find(({ status }) => status === "ACTIVE")?.id || "");
-    if (administrator) setRuntime(await getAgentRuntime());
+    if (administrator) {
+      setRuntime(await getAgentRuntime());
+      setMetrics(await getAgentMetrics());
+    }
   };
 
-  const load = async () => { await Promise.all([loadProfiles(), loadRuns()]); };
+  const load = async () => { await loadProfiles(); };
 
   useEffect(() => {
     if (!unlocked) {
-      setProfiles([]); setExecutionEnabled(null); setRuntime(null); setMetrics(null); setRuns([]); runsRef.current = [];
+      setProfiles([]); setExecutionEnabled(null); setRuntime(null); setMetrics(null);
       return;
     }
     let active = true;
@@ -232,10 +204,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         setDivisions(divisionList.items);
       })
       .catch(() => undefined);
-    const timer = window.setInterval(() => {
-      if (active && runsRef.current.some(({ status }) => runningStatuses.has(status))) void loadRuns().catch(() => undefined);
-    }, 2_500);
-    return () => { active = false; window.clearInterval(timer); };
+    return () => { active = false; };
   }, [unlocked, administrator]);
 
   const assignDivision = async (profile: AgentProfile, divisionId: string | null) => {
@@ -250,59 +219,12 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     }
   };
 
-  const selectedProfile = useMemo(
-    () => profiles.find(({ id }) => id === selectedProfileId) ?? null,
-    [profiles, selectedProfileId],
-  );
-
-  /*
-   * Runs belong to the Profile that produced them, so the list above scopes the
-   * ledger below. `AgentRun` carries `profileId`, which is the whole reason this
-   * can be a real relationship rather than two lists sharing a screen.
-   */
-  const ledgerScoped = runsScoped && selectedProfileId !== "";
-  const runsFor = (profileId: string) => runs.filter((run) => run.profileId === profileId);
-  const scopedRuns = useMemo(
-    () => (ledgerScoped ? runs.filter(({ profileId }) => profileId === selectedProfileId) : runs),
-    [runs, ledgerScoped, selectedProfileId],
-  );
-
-  const selectedRun = useMemo(
-    () => scopedRuns.find(({ id }) => id === selectedRunId) ?? scopedRuns[0] ?? null,
-    [scopedRuns, selectedRunId],
-  );
-
-  useEffect(() => {
-    if (!unlocked || !selectedRun) {
-      setRunEvents([]);
-      return;
-    }
-    let active = true;
-    void getAgentRunEvents(selectedRun.id, administrator)
-      .then((result) => { if (active) setRunEvents(result.items); })
-      .catch((cause) => { if (active) fail(cause); });
-    return () => { active = false; };
-  }, [unlocked, administrator, selectedRun?.id, selectedRun?.updatedAt]);
-
   const action = async (key: string, operation: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(key); setError(null);
     try { await operation(); await load(); }
     catch (cause) { fail(cause); }
     finally { setBusy(null); }
-  };
-
-  /*
-   * Selecting a Profile re-scopes the ledger, which is the only thing this has
-   * to do. The run selection is deliberately left alone: `selectedRun` falls
-   * back to the newest run in scope whenever the held id is not in it, so
-   * clearing the id here would change nothing except to forget a selection the
-   * operator may come back to. A line whose removal no test can notice is worse
-   * than none -- it implies a guarantee something else is already making.
-   */
-  const selectProfile = (profileId: string) => {
-    setSelectedProfileId(profileId);
-    setRunsScoped(true);
   };
 
   const verifyProfileForChat = async (profile: AgentProfile) => {
@@ -400,7 +322,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         title="Agent Profiles"
         mark="HA"
         headline="Authenticated workspace required"
-        reason="Sign in to see which profiles are active and what they have run. Administrators can also author immutable versions, verify them against Hermes, and control the global execution boundary."
+        reason="Sign in to see which profiles are active. Administrators can also author immutable versions, verify them against Hermes, and control the global execution boundary."
         actionLabel="Administrator setup"
         onAction={onConfigure}
       />
@@ -438,9 +360,6 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
    */
   const editingProfile = editingId === null ? undefined : profiles.find(({ id }) => id === editingId);
   const editingReleases = editingProfile?.status === "ACTIVE";
-  const editingRunning = editingProfile
-    ? runsFor(editingProfile.id).filter(({ status }) => runningStatuses.has(status)).length
-    : 0;
 
   return (
     <div className="workspace-stack agents-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
@@ -457,16 +376,17 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         </>}
       >
         {/*
-          * The screen reads in one direction: what may execute at all, what is
-          * defined, and what each definition has actually done. The boundary
-          * lives in this card because it frames the columns under it — and
-          * because an operator switching it off is not browsing.
+          * The screen reads in one direction: what may execute at all, then
+          * what is defined. What each definition has actually run lives under
+          * Operations → Agent runs. The boundary lives in this card because it
+          * frames the list under it — and because an operator switching it off
+          * is not browsing.
           */}
         {administrator ? (
           <ExecutionBoundary
             runtime={runtime}
             metrics={metrics}
-            runs={runs}
+            runs={[]}
             busy={busy}
             onToggle={(enabled, reason, extraction) => void action("runtime", () => updateAgentRuntime(enabled, reason, extraction))}
             canControl={canControl}
@@ -485,17 +405,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         {chatAvailable && <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenChat}>Open Session</Button>}
       </Alert>}
 
-      {/*
-        * 2x2, not three columns. Profiles and the ledger it scopes share the
-        * top row -- selecting on the left filters the right, so they read as
-        * one gesture. Run detail takes the whole second row: it is the densest
-        * panel here (timeline, digest, input, output), and at a third of the
-        * viewport each of those was a strip two words wide.
-        */}
-      <div className={cn(
-        "grid min-h-0 flex-1 gap-3 lg:grid-cols-2",
-        runs.length > 0 && "lg:grid-rows-[minmax(0,1fr)_minmax(0,1.1fr)]",
-      )}>
+      <div className="grid min-h-0 flex-1 gap-3">
       <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3">
         <PanelHeading
           className="mb-2 shrink-0"
@@ -514,22 +424,9 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           )}
           {profiles.map((profile) => <article
             key={profile.id}
-            className={cn(
-              "grid gap-2.5 rounded-lg border p-3 transition-colors",
-              selectedProfileId === profile.id
-                ? "border-border-strong bg-raised"
-                : "border-border bg-raised/40 hover:border-border-strong/70",
-            )}
+            className="grid gap-2.5 rounded-lg border border-border bg-raised/40 p-3"
           >
-            <Button
-              variant="ghost"
-              // Same reason as the run rows: stacked lines do not fit the
-              // default single-line height, and `p-0` keeps the article's own
-              // padding as the row's only inset.
-              size="auto"
-              className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 p-0 text-left"
-              onClick={() => selectProfile(profile.id)}
-            >
+            <div className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
               <span
                 aria-hidden="true"
                 className="grid h-10 w-10 place-items-center rounded-md bg-accent/10 font-mono text-caption font-bold text-accent"
@@ -540,34 +437,10 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
                 <strong className="block truncate text-label font-semibold text-text">{profile.version.displayName}</strong>
                 <p className="mb-0 mt-0.5 line-clamp-2 text-caption text-muted">{profile.version.purpose}</p>
               </div>
-              {/*
-                * Configuration status, then what that configuration is doing.
-                * "recent" is not hedging: the ledger is the newest 200 runs, so
-                * a figure derived from it is a window count and says so rather
-                * than posing as a lifetime total -- the deployment-wide totals
-                * are on the boundary above, where the API can back them.
-                *
-                * "by you" is the same honesty about the other axis.
-                * `GET /agents/runs` returns a non-administrator only their own
-                * runs, against a Profile that belongs to the whole deployment,
-                * so an unqualified "no recent runs" beside a Profile colleagues
-                * have run fifty times describes the reader, not the Profile.
-                */}
               <div className="grid justify-items-end gap-1">
                 <StatusText dot tone={toneFor(statusTone(profile.status))}>{profile.status.toLowerCase()}</StatusText>
-                {runsFor(profile.id).some(({ status }) => runningStatuses.has(status))
-                  ? <StatusText tone="accent">
-                    {runsFor(profile.id).filter(({ status }) => runningStatuses.has(status)).length} running
-                    {administrator ? "" : " for you"}
-                  </StatusText>
-                  : <StatusText>
-                    {runsFor(profile.id).length === 0
-                      ? "no recent runs"
-                      : `${runsFor(profile.id).length} recent run${runsFor(profile.id).length === 1 ? "" : "s"}`}
-                    {administrator ? "" : " by you"}
-                  </StatusText>}
               </div>
-            </Button>
+            </div>
             {/*
               * The facts the old dot-separated mono line crammed into one
               * truncating string, as chips that wrap instead of vanishing. The
@@ -638,39 +511,6 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           </article>)}
         </div>
       </Panel>
-
-      {/*
-        * The ledger, scoped to the Profile selected beside it, and the one run
-        * being read. This pairing was the whole of the Runtime tab; what it
-        * lacked was the sentence joining it to a Profile, which it could not
-        * state because the Profile list was on another screen.
-        */}
-        <RunLedger
-          runs={scopedRuns}
-          total={runs.length}
-          profileName={selectedProfile?.version.displayName ?? null}
-          scoped={ledgerScoped}
-          administrator={administrator}
-          selectedRunId={selectedRun?.id ?? null}
-          onSelectRun={setSelectedRunId}
-          onScopeChange={setRunsScoped}
-        />
-        {/*
-          * Withheld only when the deployment has produced nothing at all. A
-          * pane inviting the operator to select one of no runs is scaffolding
-          * that makes a fresh install look half-built -- and a profile with no
-          * runs of its own still gets one, because the escape hatch beside it
-          * means there is something to select.
-          */}
-        {/* The span is on a wrapper because RunDetail is a Panel that sizes
-            itself; the wrapper owns the grid placement, the panel the chrome. */}
-        {runs.length > 0 && <div className="grid min-h-0 lg:col-span-2"><RunDetail
-          run={selectedRun}
-          events={runEvents}
-          busy={busy}
-          canCancel={canCancelRuns}
-          onCancel={(run) => void action(`cancel-${run.id}`, () => cancelAgentRun(run.id, administrator))}
-        /></div>}
       </div>
 
       {/*
@@ -687,10 +527,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         title={editingId ? "Create a new profile version" : "Create agent profile"}
         description={editingId
           ? (editingReleases
-            ? "Saving writes a new immutable revision and releases it immediately — Sessions use it from their next message."
-              + (editingRunning > 0
-                ? ` ${editingRunning} run${editingRunning === 1 ? " is" : "s are"} executing on the current version and will stop when this releases.`
-                : "")
+            ? "Saving writes a new immutable revision and releases it immediately — Sessions use it from their next message. Any run still executing on the current version will stop when this releases."
             : "Saving writes a new immutable revision. The current version stays in the ledger until this profile is activated.")
           : "Name it, then write how it should think and act."}
         footer={<>

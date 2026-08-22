@@ -25,6 +25,17 @@ describe("WorkspaceContextBar", () => {
     expect(screen.getByRole("button", { name: "Skills" }).querySelector("svg")).toBeTruthy();
   });
 
+  it("draws an icon beside every Operations tab", () => {
+    render(<WorkspaceContextBar area="Operations" activeView="AgentRuns" onSelect={() => undefined} />);
+
+    const nav = screen.getByRole("navigation", { name: "Operations sections" });
+    expect(nav.querySelectorAll("svg")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Health" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Agent runs" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Audit trail" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Agent runs" }).getAttribute("aria-current")).toBe("page");
+  });
+
   it("marks the active section as the current page", () => {
     render(<WorkspaceContextBar area="Agents" activeView="Skills" onSelect={() => undefined} />);
 

@@ -2,7 +2,6 @@ import {
   isOpenRouterEndpoint,
   OPENROUTER_INFERENCE,
   type CreateServiceConnection,
-  type ConnectionMonitoringControl,
   type ConnectionTestResult,
   type ConfigurationRevisionList,
   type Environment,
@@ -15,7 +14,7 @@ import {
   type ServiceKind,
 } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ChevronDown, Cpu, Globe, Server, Shield } from "lucide-react";
+import { Check, Cpu, Globe, Server, Shield } from "lucide-react";
 import { slugAsTyped, slugify } from "./slug.js";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
 import { Alert, Button, Dialog, Field, Input, Mark, MicroLabel, Select, StatusText, toneFor } from "./ui/index.js";
@@ -36,22 +35,20 @@ export interface ConnectionDraft extends CreateServiceConnection {
 interface ConnectionDrawerProps {
   busy: boolean;
   connections: ServiceConnectionSummary[];
-  monitoring: ConnectionMonitoringControl | null;
   error: string | null;
   diagnostic: ConnectionTestResult | null;
   initialKind: ServiceKind;
   open: boolean;
-  revisionConnectionId: string | null;
-  revisionHistory: ConfigurationRevisionList | null;
+  revisionConnectionId?: string | null;
+  revisionHistory?: ConfigurationRevisionList | null;
   onClose: () => void;
   onOpenAgenticSystem: () => void;
   onSave: (draft: ConnectionDraft) => Promise<void>;
   onTest: (id: string) => Promise<void>;
   onDiscoverInference: (input: InferenceDiscoveryRequest) => Promise<InferenceDiscoveryResult | null>;
   onLoadInferenceCatalogue: (input: InferenceCatalogueRequest) => Promise<InferenceCatalogueResult | null>;
-  onUpdateMonitoring: (input: { enabled: boolean; intervalSeconds: number; reason: string }) => Promise<void>;
-  onLoadRevisions: (connectionId: string) => Promise<void>;
-  onRollback: (
+  onLoadRevisions?: (connectionId: string) => Promise<void>;
+  onRollback?: (
     connectionId: string,
     targetRevision: number,
     expectedActiveRevision: number,
@@ -147,7 +144,6 @@ function EndpointOption(props: {
   icon: ReactNode;
   kicker: string;
   title: string;
-  caption: string;
   onSelect: () => void;
 }) {
   return (
@@ -155,32 +151,43 @@ function EndpointOption(props: {
       type="button"
       role="radio"
       aria-checked={props.selected}
-      variant="outline"
+      aria-label={`${props.kicker}: ${props.title}`}
+      variant="ghost"
       size="auto"
       className={cn(
-        "h-full min-h-[10.5rem] w-full flex-col items-start justify-start gap-3 whitespace-normal rounded-lg p-4 text-left font-normal shadow-none",
+        "relative h-full min-h-0 w-full items-center justify-start gap-3 whitespace-normal rounded-none border-0 px-3 py-2.5 text-left font-normal shadow-none focus-visible:z-10",
         props.selected
-          ? "border-accent bg-soft text-foreground hover:bg-soft hover:text-foreground"
-          : "border-border bg-raised text-muted-foreground hover:border-border-strong hover:bg-raised hover:text-foreground",
+          ? "bg-soft text-foreground hover:bg-soft hover:text-foreground"
+          : "bg-surface text-muted-foreground hover:bg-raised hover:text-foreground",
       )}
       onClick={props.onSelect}
     >
-      <span className="flex w-full items-start justify-between gap-3">
-        <Mark className={props.selected ? undefined : "bg-secondary text-muted-foreground"}>
-          {props.icon}
-        </Mark>
+      {props.selected ? (
         <span
           aria-hidden="true"
-          className={cn(
-            "mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border",
-            props.selected ? "border-accent bg-accent" : "border-border-strong bg-transparent",
-          )}
+          className="absolute inset-x-0 top-0 h-0.5 bg-accent sm:inset-y-0 sm:left-0 sm:right-auto sm:h-auto sm:w-0.5"
         />
-      </span>
-      <span className="grid min-w-0 gap-1">
+      ) : null}
+      <Mark
+        size="sm"
+        className={props.selected ? undefined : "bg-secondary text-muted-foreground"}
+      >
+        {props.icon}
+      </Mark>
+      <span className="grid min-w-0 flex-1 gap-0.5">
         <MicroLabel className={props.selected ? "text-accent" : undefined}>{props.kicker}</MicroLabel>
-        <span className="block font-display text-[16px] font-semibold tracking-[-0.02em] text-text">{props.title}</span>
-        <span className="block text-caption font-medium leading-snug text-muted">{props.caption}</span>
+        <span className="block font-display text-[14px] font-semibold tracking-[-0.02em] text-text">{props.title}</span>
+      </span>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "grid size-4 shrink-0 place-items-center border",
+          props.selected
+            ? "border-accent-fill bg-accent-fill text-white"
+            : "border-border-strong bg-transparent",
+        )}
+      >
+        {props.selected ? <Check className="size-2.5" strokeWidth={3} /> : null}
       </span>
     </Button>
   );
@@ -196,9 +203,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const [configuration, setConfiguration] = useState<ServiceConnectionConfiguration>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [rollbackCandidate, setRollbackCandidate] = useState<number | null>(null);
-  const [monitoringEnabled, setMonitoringEnabled] = useState(false);
-  const [monitoringInterval, setMonitoringInterval] = useState(300);
-  const [monitoringReason, setMonitoringReason] = useState("Enable scheduled credential-aware checks.");
+
   const [inferenceDiscovery, setInferenceDiscovery] = useState<InferenceDiscoveryResult | null>(null);
   const [inferenceEndpointMode, setInferenceEndpointMode] = useState<InferenceEndpointMode>("local");
   const [openRouterCatalogue, setOpenRouterCatalogue] = useState<InferenceCatalogueResult | null>(null);
@@ -245,12 +250,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
       : existing ? "Save changes" : "Create connection";
 
   useEffect(() => setSelectedKind(props.initialKind), [props.initialKind]);
-
-  useEffect(() => {
-    setMonitoringEnabled(props.monitoring?.enabled ?? false);
-    setMonitoringInterval(props.monitoring?.intervalSeconds ?? 300);
-    setMonitoringReason(props.monitoring?.reason ?? "Enable scheduled credential-aware checks.");
-  }, [props.monitoring]);
 
   useEffect(() => {
     setDisplayName(existing?.displayName ?? `${definition.name} Primary`);
@@ -409,7 +408,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
 
 
   const form = (
-      <form id="connection-form" className="grid gap-5" onSubmit={submitConnection}>
+      <form id="connection-form" className={cn("grid", props.embedded ? "gap-3" : "gap-5")} onSubmit={submitConnection}>
         {props.embedded ? null : (
         <div className="-mx-1 flex gap-1 border-b border-border" role="tablist" aria-label="Connection type">
           {connectionDefinitions.filter(({ kind }) => kind === "INFERENCE").map((item) => (
@@ -424,7 +423,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
         {props.error ? <Alert>{props.error}</Alert> : null}
 
         {existing ? (
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <StatusText tone={toneFor((diagnostic?.status ?? existing.status).toLowerCase())} dot>
                 {diagnostic
@@ -441,12 +440,14 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 * check reported, beside the button that runs the next one.
                 */}
               {existing.baseUrl ? (
-                <p className="mt-1 truncate font-mono text-micro text-faint">{existing.baseUrl}</p>
+                <p className="mt-0.5 truncate font-mono text-micro text-faint">{existing.baseUrl}</p>
               ) : null}
-              <p className="mt-1 text-caption leading-relaxed text-muted">
-                {diagnostic?.message ?? existing.lastHealthcheckMessage ?? "Run a credential-aware health check."}
-                {diagnostic ? ` · ${diagnostic.latencyMs} ms` : ""}
-              </p>
+              {props.embedded ? null : (
+                <p className="mt-1 text-caption leading-relaxed text-muted">
+                  {diagnostic?.message ?? existing.lastHealthcheckMessage ?? "Run a credential-aware health check."}
+                  {diagnostic ? ` · ${diagnostic.latencyMs} ms` : ""}
+                </p>
+              )}
             </div>
             <Button size="sm" disabled={props.busy} onClick={() => void props.onTest(existing.id)}>
               {props.busy
@@ -458,15 +459,16 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
 
         {selectedKind === "INFERENCE" ? (
           <div className="grid gap-3">
-            <div className="grid gap-2">
-              <MicroLabel>Choose an endpoint</MicroLabel>
-              <div role="radiogroup" aria-label="Endpoint type" className="grid gap-3 sm:grid-cols-2">
+              <div
+                role="radiogroup"
+                aria-label="Endpoint type"
+                className="grid gap-px overflow-hidden border border-border bg-border sm:grid-cols-2"
+              >
                 <EndpointOption
                   selected={!openRouterMode}
                   icon={<Server className="size-4" />}
                   kicker="On your network"
                   title="Local server"
-                  caption="vLLM, llama.cpp, SGLang, Ollama, or TGI. Discovery stays on this host."
                   onSelect={() => selectInferenceMode("local")}
                 />
                 <EndpointOption
@@ -474,21 +476,22 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   icon={<Globe className="size-4" />}
                   kicker="Public endpoint"
                   title="OpenRouter"
-                  caption="Hosted models. Verify a key to confirm the catalogue answers."
                   onSelect={() => selectInferenceMode("openrouter")}
                 />
               </div>
-            </div>
 
             {openRouterMode ? (
               <>
                 <Alert tone="warn">
-                  Prompts and completions leave this environment. OpenRouter and its downstream providers receive every
-                  message sent through this connection.
+                  Prompts leave this environment. OpenRouter and its providers receive every message on this connection.
                 </Alert>
                 <Field
                   label="OpenRouter API key"
-                  hint={storedInferenceKeyReusable ? "Stored key will be used if this is left blank." : "Required. OrcaSynapse stores it on VM1 and never sends it to Hermes."}
+                  hint={props.embedded
+                    ? undefined
+                    : storedInferenceKeyReusable
+                      ? "Stored key will be used if this is left blank."
+                      : "Required. OrcaSynapse stores it on VM1 and never sends it to Hermes."}
                 >
                   <Input
                     type="password"
@@ -530,54 +533,57 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
               </>
             ) : (
               <>
-                <div className="grid gap-1.5">
-                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                    <Field label="AI Inference address" htmlFor="inference-address">
-                      <Input
-                        id="inference-address"
-                        type="text"
-                        inputMode="url"
-                        value={baseUrl}
-                        onChange={(event) => {
-                          setBaseUrl(event.target.value);
-                          setInferenceDiscovery(null);
-                        }}
-                        placeholder="http://gpu-server.internal:8000 or .../v1"
-                        required
-                      />
-                    </Field>
-                    <Button
-                      variant="primary"
-                      disabled={props.busy || baseUrl.trim().length === 0}
-                      onClick={() => void discoverInference()}
-                    >
-                      {props.busy ? "Discovering…" : "Discover server"}
-                    </Button>
+                <div className="grid gap-3 lg:grid-cols-2 lg:items-start">
+                  <div className="grid gap-1.5">
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                      <Field label="AI Inference address" htmlFor="inference-address">
+                        <Input
+                          id="inference-address"
+                          type="text"
+                          inputMode="url"
+                          value={baseUrl}
+                          onChange={(event) => {
+                            setBaseUrl(event.target.value);
+                            setInferenceDiscovery(null);
+                          }}
+                          placeholder="http://gpu-server.internal:8000 or .../v1"
+                          required
+                        />
+                      </Field>
+                      <Button
+                        variant="primary"
+                        disabled={props.busy || baseUrl.trim().length === 0}
+                        onClick={() => void discoverInference()}
+                      >
+                        {props.busy ? "Discovering…" : "Discover server"}
+                      </Button>
+                    </div>
+                    {localNeedsDiscovery && inferenceDiscovery?.status !== "READY" ? (
+                      <p className="text-caption leading-relaxed text-warn">
+                        Discover the server before saving. A guessed `/v1` path will not match every engine.
+                      </p>
+                    ) : null}
                   </div>
-                  <p className="text-caption leading-relaxed text-muted">
-                    Paste the address you already use. Discover reads the backend and API paths from the server — they are not typed here.
-                  </p>
-                  {localNeedsDiscovery && inferenceDiscovery?.status !== "READY" ? (
-                    <p className="text-caption leading-relaxed text-warn">
-                      Discover the server before saving. A guessed `/v1` path will not match every engine.
-                    </p>
-                  ) : null}
+                  <Field
+                    label="API key"
+                    hint={props.embedded
+                      ? undefined
+                      : storedInferenceKeyReusable
+                        ? "Stored key will be used if this is left blank."
+                        : "Optional. Enter only if the server requires one."}
+                  >
+                    <Input
+                      type="password"
+                      value={secrets.apiKey ?? ""}
+                      onChange={(event) => {
+                        setSecrets((current) => ({ ...current, apiKey: event.target.value }));
+                        setInferenceDiscovery(null);
+                      }}
+                      autoComplete="new-password"
+                      placeholder={storedInferenceKeyReusable ? "Leave blank to use stored key" : "Enter only if the server requires one"}
+                    />
+                  </Field>
                 </div>
-                <Field
-                  label="API key"
-                  hint={storedInferenceKeyReusable ? "Stored key will be used if this is left blank." : "Optional. Enter only if the server requires one."}
-                >
-                  <Input
-                    type="password"
-                    value={secrets.apiKey ?? ""}
-                    onChange={(event) => {
-                      setSecrets((current) => ({ ...current, apiKey: event.target.value }));
-                      setInferenceDiscovery(null);
-                    }}
-                    autoComplete="new-password"
-                    placeholder={storedInferenceKeyReusable ? "Leave blank to use stored key" : "Enter only if the server requires one"}
-                  />
-                </Field>
 
                 {inferenceDiscovery ? (
                   <div className="grid gap-3">
@@ -621,16 +627,11 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
         ) : identityFields}
 
         {/*
-          * Gated on the connection existing, not on its kind.
-          *
-          * This read `existing && selectedKind === "OIDC"`, which was never
-          * about OIDC -- revisions are a property every connection has, and
-          * `onLoadRevisions` takes a connection id. With the federated identity
-          * form removed the kind test could only ever be false, so the choice
-          * was to delete a working feature or to state the condition it always
-          * meant. Configuration history now shows for any saved connection.
+          * Revisions are a property every connection has. Setup does not show
+          * them: that screen is connect-and-test, and the audit trail is
+          * Audit. Restore stays on the connection dialog.
           */}
-        {existing ? (
+        {existing && !props.embedded && props.onLoadRevisions && props.onRollback ? (
           <section className="grid gap-3" aria-labelledby="revision-history-title">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -641,7 +642,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 variant="ghost"
                 size="sm"
                 disabled={props.busy}
-                onClick={() => void props.onLoadRevisions(existing.id)}
+                onClick={() => void props.onLoadRevisions?.(existing.id)}
               >
                 {props.revisionConnectionId === existing.id ? "Refresh history" : "View history"}
               </Button>
@@ -674,7 +675,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                             disabled={props.busy}
                             onClick={() => {
                               setRollbackCandidate(null);
-                              void props.onRollback(
+                              void props.onRollback?.(
                                 existing.id,
                                 revision.revision,
                                 props.revisionHistory!.activeRevision,
@@ -696,65 +697,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             ) : null}
           </section>
         ) : null}
-
-        {/*
-          * Last, not first. This is an optional scheduled health check and it
-          * opened the modal -- above the connection it monitors, and above the
-          * fields an operator came here to fill in. Its own summary says
-          * "Optional"; it now sits where optional things belong.
-          */}
-        <details className="group border-t border-border pt-4">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-            <span>
-              <span className="block text-label font-semibold text-foreground">Connection monitoring</span>
-              <span className="block text-caption text-muted">Optional scheduled health checks</span>
-            </span>
-            <span className="flex items-center gap-2">
-              <StatusText tone={monitoringEnabled ? "good" : "neutral"}>{monitoringEnabled ? "On" : "Off"}</StatusText>
-              <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-            </span>
-          </summary>
-          <div className="mt-4 grid gap-3">
-            <p className="text-caption leading-relaxed text-muted">
-              Checks use encrypted connector credentials inside OrcaSynapse and never expose them to the browser.
-            </p>
-            <div className="flex items-center gap-3">
-              <Switch
-                checked={monitoringEnabled}
-                onCheckedChange={setMonitoringEnabled}
-                aria-label="Run scheduled checks"
-              />
-              <span className="text-body text-foreground">Run scheduled checks</span>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Cadence">
-                <Select value={monitoringInterval} onChange={(event) => setMonitoringInterval(Number(event.target.value))}>
-                  <option value={60}>Every minute</option>
-                  <option value={300}>Every 5 minutes</option>
-                  <option value={900}>Every 15 minutes</option>
-                  <option value={3600}>Every hour</option>
-                </Select>
-              </Field>
-              <Field label="Operator reason">
-                <Input minLength={3} maxLength={500} value={monitoringReason} onChange={(event) => setMonitoringReason(event.target.value)} />
-              </Field>
-            </div>
-            <div>
-              <Button
-                variant="primary"
-                type="button"
-                disabled={props.busy || monitoringReason.trim().length < 3}
-                onClick={() => void props.onUpdateMonitoring({
-                  enabled: monitoringEnabled,
-                  intervalSeconds: monitoringInterval,
-                  reason: monitoringReason.trim(),
-                })}
-              >
-                {props.busy ? "Applying…" : "Save monitoring"}
-              </Button>
-            </div>
-          </div>
-        </details>
         {props.embedded ? (
           <div className="flex justify-end">
             <Button variant="primary" type="submit" disabled={submitDisabled}>

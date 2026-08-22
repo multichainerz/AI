@@ -1,23 +1,19 @@
 /**
  * @vitest-environment jsdom
  *
- * Profiles, populated. One screen for what an agent is, what it has done, and
- * whether it may run at all.
+ * Profiles, populated. One screen for what an agent is and whether it may run
+ * at all. What it has run lives under Operations → Agent runs.
  *
- * Those three were briefly two screens: a Runtime tab held the kill switch, the
- * counters and the execution ledger, and `agent-runtime-view.test.tsx` covered
- * them there. Its assertions live here now, beside the configuration ones,
- * because they describe one workflow -- and the tests that matter most are the
- * ones no per-half file could have written: that selecting a Profile scopes the
- * ledger to the runs it produced, and that the boundary's fix is on this screen
- * rather than behind a cross-tab button.
+ * The kill switch used to sit on a Runtime tab, then on this screen beside the
+ * execution ledger. The ledger moved; the boundary stayed, because nothing in
+ * the list below can run while it is off.
  *
  * `VIEW_PREVIEW_OUT` writes the rendered markup so it can be looked at without
  * a session; see `chat-transcript.test.tsx`.
  */
 import { ADMIN_SCOPES } from "@orcasynapse/contracts";
 import type {
-  AdminScope, AdministratorSession, AgentProfile, AgentRun, AgentRunEvent,
+  AdminScope, AdministratorSession, AgentProfile, AgentRun,
 } from "@orcasynapse/contracts";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -63,11 +59,6 @@ const runs = [
   },
 ] as unknown as AgentRun[];
 
-/** Something to press Cancel on. The fixture runs above are all terminal. */
-const runningRun = {
-  ...runs[0]!, id: "r3", status: "RUNNING", output: null, completedAt: null,
-} as unknown as AgentRun;
-
 function sessionWith(role: AdministratorSession["role"], scopes: AdminScope[]): AdministratorSession {
   return {
     id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a", subject: "admin", role, scopes,
@@ -86,20 +77,13 @@ const auditor = sessionWith("AUDITOR", ["agents:read"]);
 const operations = sessionWith("OPERATIONS_ADMIN", ["agents:read", "agents:control", "readiness:manage"]);
 const platform = sessionWith("PLATFORM_ADMIN", [...ADMIN_SCOPES]);
 
-const events = [
-  { id: "e1", type: "RUN_STARTED", summary: null, toolName: null, childSessionId: null, status: null, occurredAt: "2026-08-07T09:00:01.000Z", durationMs: null, inputTokens: null, outputTokens: null },
-  { id: "e2", type: "RUN_COMPLETED", summary: "Answered from one source.", toolName: null, childSessionId: null, status: null, occurredAt: "2026-08-07T09:00:06.000Z", durationMs: 5_100, inputTokens: 880, outputTokens: 260 },
-] as unknown as AgentRunEvent[];
-
 const api = vi.hoisted(() => ({
   getAgentProfiles: vi.fn(),
   getAgentRuns: vi.fn(),
-  getAgentRunEvents: vi.fn(),
   getAgentRuntime: vi.fn(),
   getAgentMetrics: vi.fn(),
   getConnections: vi.fn(),
   updateAgentRuntime: vi.fn(),
-  cancelAgentRun: vi.fn(),
 }));
 
 vi.mock("./api.js", async (load) => ({ ...(await load<typeof import("./api.js")>()), ...api }));
@@ -136,7 +120,6 @@ interface ApiState {
 function setupApi({ profiles: profileList = profiles, runs: runList = runs, enabled = true, metrics = {} }: ApiState = {}) {
   api.getAgentProfiles.mockResolvedValue({ items: profileList, executionEnabled: enabled });
   api.getAgentRuns.mockResolvedValue({ items: runList });
-  api.getAgentRunEvents.mockResolvedValue({ items: events });
   api.getAgentRuntime.mockResolvedValue({ enabled, reason: "Verified against Hermes on node vm2-a." });
   api.getAgentMetrics.mockResolvedValue({
     profiles: profileList.length,
@@ -155,7 +138,7 @@ function setupApi({ profiles: profileList = profiles, runs: runList = runs, enab
  */
 async function view(over: Partial<typeof props> & { session?: AdministratorSession | null } = {}) {
   render(<main><AgentsView {...props} {...over} /></main>);
-  await waitFor(() => screen.getByLabelText("Execution ledger"));
+  await waitFor(() => screen.getByRole("heading", { name: "Hermes Profiles" }));
   if (process.env.VIEW_PREVIEW_OUT) {
     writeFileSync(process.env.VIEW_PREVIEW_OUT, document.body.innerHTML, "utf8");
   }
@@ -164,10 +147,6 @@ async function view(over: Partial<typeof props> & { session?: AdministratorSessi
 /** The boundary panel, addressed before anything is asserted about its contents. */
 function boundary(): HTMLElement {
   return screen.getByLabelText("Hermes execution boundary");
-}
-
-function ledger(): HTMLElement {
-  return screen.getByLabelText("Execution ledger");
 }
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -265,144 +244,14 @@ describe("agents", () => {
     expect(within(panel).queryByText(/No runs yet/)).toBeNull();
   });
 
-  it("scopes the ledger to the Profile selected in the list", async () => {
-    /*
-     * The join the split could not express. Runs are produced *by* profiles;
-     * a flat ledger under an unrelated list is the weakest way to put both on
-     * one screen, and the list's selection had no job at all before this.
-     */
+  it("does not load the run ledger — that lives under Operations", async () => {
     setupApi();
-    const user = userEvent.setup();
     await view();
-    expect(within(ledger()).getByText("What should we check before promoting?")).toBeTruthy();
-    expect(within(ledger()).queryByText("Summarise the enrolment runbook.")).toBeNull();
-
-    await user.click(screen.getByText("Draft agent"));
-    await waitFor(() => expect(within(ledger()).getByText("Summarise the enrolment runbook.")).toBeTruthy());
-    expect(within(ledger()).queryByText("What should we check before promoting?")).toBeNull();
-  });
-
-  it("offers the runs its own scoping hides, and nothing when it hides none", async () => {
-    /*
-     * A non-administrator's profile list holds only ACTIVE profiles while their
-     * run list holds everything they started, so runs from a since-suspended
-     * Profile would otherwise be unreachable. It is an escape hatch rather than
-     * a permanent toggle: on a single-profile deployment it never appears.
-     */
-    setupApi();
-    const user = userEvent.setup();
-    await view();
-    await user.click(within(ledger()).getByRole("button", { name: "Show all runs (2)" }));
-
-    // Widened, proved by the other Profile's run appearing and by the button
-    // offering the way back -- the sentence that used to announce it is gone.
-    await waitFor(() => expect(within(ledger()).getByText("Draft agent")).toBeTruthy());
-    expect(within(ledger()).getByRole("button", { name: "Show only Support analyst" })).toBeTruthy();
-
-    // Widening is a one-off answer to "where did my run go", not a mode. The
-    // next Profile selected re-scopes, or the list would stop meaning anything
-    // for whatever the operator did next.
-    await user.click(screen.getAllByText("Draft agent")[0]!);
-
-    cleanup();
-    setupApi({ profiles: [profiles[0]!], runs: [runs[0]!] });
-    await view();
-    expect(within(ledger()).getByText("What should we check before promoting?")).toBeTruthy();
-    expect(within(ledger()).queryByRole("button", { name: /Show all runs/ })).toBeNull();
-  });
-
-  it("names the Profile in the empty ledger a fresh install actually sees", async () => {
-    setupApi({ runs: [] });
-    await view();
-    expect(within(ledger()).getByText("Nothing has run under Support analyst")).toBeTruthy();
-  });
-
-  it("does not claim a Profile has never run when the window cannot see that far", async () => {
-    /*
-     * `listRuns` is a bare `limit: 200` and `AgentRunList` carries no total, so
-     * a full array means "at least 200 exist" and nothing more. Two sentences
-     * were asserted over it anyway: "Show all runs (200)", which reads as a
-     * deployment total and is false the moment a 201st run exists, and
-     * "Nothing has run under X" -- a claim about a Profile derived from a
-     * client-side filter of the newest 200 runs across *every* Profile, and so
-     * false for any Profile whose runs are all older than that window. The
-     * deployments where it is most wrong are the busy ones this ledger exists
-     * to serve.
-     */
-    const window200 = Array.from({ length: 200 }, (_, index) => ({
-      ...runs[1]!, id: `w${index}`, createdAt: "2026-08-08T09:00:00.000Z",
-    })) as AgentRun[];
-    setupApi({ runs: window200 });
-    await view();
-
-    // Support analyst is selected and has nothing in the window, which is the
-    // state the old copy described as "nothing has run".
-    const panel = ledger();
-    expect(within(panel).queryByText("Nothing has run under Support analyst")).toBeNull();
-    expect(within(panel).getByText("Nothing by Support analyst in the newest 200 runs")).toBeTruthy();
-    expect(within(panel).getByText(/older ones by Support analyst are not loaded/)).toBeTruthy();
-    expect(within(panel).getByText("Produced by Support analyst, within the newest 200 runs.")).toBeTruthy();
-
-    // And the escape hatch stops offering a total it does not have.
-    expect(within(panel).queryByRole("button", { name: "Show all runs (200)" })).toBeNull();
-    expect(within(panel).getByRole("button", { name: "Show the newest 200 runs" })).toBeTruthy();
-  });
-
-  it("drops the detail pane entirely when there is nothing anywhere to select", async () => {
-    /*
-     * The deployment this was designed against has one Profile and no runs. A
-     * second panel beside the empty ledger, inviting the operator to select one
-     * of the nothing that exists, is the kind of scaffolding that makes a fresh
-     * install look broken. It comes back the moment a run does.
-     */
-    setupApi({ runs: [] });
-    await view();
-    expect(ledger()).toBeTruthy();
+    expect(api.getAgentRuns).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Execution ledger")).toBeNull();
     expect(screen.queryByLabelText("Run detail")).toBeNull();
-
-    cleanup();
-    setupApi();
-    await view();
-    expect(screen.getByLabelText("Run detail")).toBeTruthy();
-  });
-
-  it("opens a run's bounded activity timeline without leaving the screen", async () => {
-    /*
-     * This asserted the footer's old claim that tool arguments are "never
-     * retained here", and the premise was false: the projection stores what
-     * Hermes reports a call with, and this timeline prints it -- for executed
-     * code, the source. A test pinning that sentence made the screen's most
-     * load-bearing false statement the one thing guaranteed not to change, so
-     * what is pinned now is the disclosure that replaced it.
-     */
-    setupApi();
-    const user = userEvent.setup();
-    await view();
-    await user.click(within(ledger()).getByText("What should we check before promoting?"));
-    const timeline = await screen.findByLabelText("Safe Hermes activity timeline");
-
-    expect(within(timeline).getByText(/an omission is not an absence/)).toBeTruthy();
-    expect(within(timeline).getByText(/Nothing strips a credential/)).toBeTruthy();
-    expect(within(timeline).queryByText(/never retained here/)).toBeNull();
-  });
-
-  it("tells each Profile row how much recent work it produced", async () => {
-    // Window-scoped, and worded that way: the run list is the newest 200, so a
-    // per-profile figure derived from it is not a lifetime total.
-    setupApi();
-    await view();
+    expect(screen.queryByText("no recent runs")).toBeNull();
     expect(screen.getByText("2 profiles")).toBeTruthy();
-    // One each, and singular -- the first render of this said "1 recent runs"
-    // on both rows, which no assertion about a count would have caught.
-    expect(screen.getAllByText("1 recent run")).toHaveLength(2);
-
-    cleanup();
-    // Two runs for the first Profile, none for the second: the plural, and the
-    // row that produced nothing saying so rather than saying nothing.
-    setupApi({ runs: [runs[0]!, { ...runs[0]!, id: "r3" }] });
-    await view();
-    expect(screen.getByText("2 recent runs")).toBeTruthy();
-    expect(screen.getByText("no recent runs")).toBeTruthy();
   });
 
   it("shows the distribution digest on the row, since that is what VM2 admits", async () => {
@@ -507,7 +356,7 @@ describe("agents", () => {
      * answers "may this session call admin routes at all" rather than which --
      * so every one of them rendered and every one of them 403'd.
      */
-    setupApi({ runs: [runningRun] });
+    setupApi();
     await view({ session: auditor });
     // The reads they do hold, first, so the absences below are judgements
     // about the controls rather than about a screen that never rendered.
@@ -519,16 +368,14 @@ describe("agents", () => {
     expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Verify & activate" })).toBeNull();
     expect(screen.queryByRole("switch", { name: /Disable execution|Enable execution/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Cancel run" })).toBeNull();
   });
 
   it("lets an OPERATIONS_ADMIN work the boundary without authoring a Profile", async () => {
-    // `agents:control` and no `agents:manage`: the switch and Cancel are
-    // theirs, and the API refuses every profile write.
-    setupApi({ runs: [runningRun] });
+    // `agents:control` and no `agents:manage`: the switch is theirs, and the
+    // API refuses every profile write. Cancelling a run lives on Agent runs.
+    setupApi();
     await view({ session: operations });
     expect(screen.getByRole("switch", { name: "Disable execution" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel run" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Create agent" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New version" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
@@ -539,14 +386,13 @@ describe("agents", () => {
     // The other direction. Gating that hides a control from a PLATFORM_ADMIN
     // is the same defect wearing the opposite sign, and is the failure a
     // scope-derived boolean makes easy.
-    setupApi({ runs: [runningRun] });
+    setupApi();
     await view({ session: platform });
     expect(screen.getByRole("button", { name: "Create agent" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "New version" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Suspend" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Verify & activate" })).toBeTruthy();
     expect(screen.getByRole("switch", { name: "Disable execution" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel run" })).toBeTruthy();
   });
 
   it("surfaces a failed Refresh instead of leaving stale profiles on screen", async () => {
@@ -582,66 +428,6 @@ describe("agents", () => {
     setupApi();
     await view();
     expect(screen.getByLabelText("Hermes execution boundary")).toBeTruthy();
-  });
-
-  it("says whose runs the per-profile counter counted", async () => {
-    /*
-     * `GET /agents/runs` returns a non-administrator their own runs, against a
-     * Profile that belongs to the whole deployment. "no recent runs" beside a
-     * Profile colleagues have run fifty times is a statement about the reader.
-     */
-    setupApi();
-    await view({ administrator: false });
-    expect(screen.getAllByText("1 recent run by you")).toHaveLength(2);
-
-    cleanup();
-    setupApi({ runs: [] });
-    await view({ administrator: false });
-    expect(screen.getAllByText("no recent runs by you")).toHaveLength(2);
-  });
-
-  it("says whose runs the ledger is showing", async () => {
-    /*
-     * `GET /admin/agents/runs` returns every run in the window; `GET
-     * /agents/runs` filters to the calling subject. Both render this one
-     * component with the same shape, so nothing but the copy distinguishes
-     * them -- and "Across every Profile, newest first." over one person's runs
-     * is a claim about the deployment the list cannot support. Same axis the
-     * Profile rows above already qualify with "by you".
-     */
-    setupApi();
-    const user = userEvent.setup();
-    await view({ administrator: false });
-    // A label beside the count now, not a sentence: the prose said the same
-    // thing three times over, once per scoping combination, while the only
-    // part a reader could not infer from the rows is whose runs these are.
-    expect(within(ledger()).getByText("Your runs")).toBeTruthy();
-    expect(within(ledger()).queryByText("All runs")).toBeNull();
-
-    // The widened view is the one that made the deployment-wide claim.
-    await user.click(within(ledger()).getByRole("button", { name: "Show all runs (2)" }));
-    await waitFor(() => expect(within(ledger()).getByText("Your runs")).toBeTruthy());
-
-    // An administrator's ledger really is deployment-wide, and still says so.
-    cleanup();
-    setupApi();
-    await view();
-    expect(within(ledger()).getByText("All runs")).toBeTruthy();
-  });
-
-  it("does not tell a non-administrator that nothing has run under a Profile others use", async () => {
-    /*
-     * The emptiest case is the one the wording gets most wrong: a second
-     * enterprise user opening a Profile colleagues have run fifty times was
-     * told "Nothing has run under Support analyst", which is not a hedge but a
-     * false statement about the deployment.
-     */
-    setupApi({ runs: [] });
-    await view({ administrator: false });
-    const panel = ledger();
-    expect(within(panel).getByText("You have not run Support analyst")).toBeTruthy();
-    expect(within(panel).queryByText("Nothing has run under Support analyst")).toBeNull();
-    expect(within(panel).getByText(/colleagues started against it are not shown/)).toBeTruthy();
   });
 
   it("no longer offers a field for Skills the Profile cannot deliver", async () => {
@@ -773,7 +559,7 @@ describe("agents", () => {
     expect(screen.queryByRole("button", { name: /Execution is off/ })).toBeNull();
   });
 
-  it("keeps both halves behind an authenticated workspace", () => {
+  it("keeps profiles behind an authenticated workspace", () => {
     setupApi();
     render(<AgentsView {...props} unlocked={false} />);
     expect(screen.getByRole("heading", { name: "Agent Profiles" })).toBeTruthy();

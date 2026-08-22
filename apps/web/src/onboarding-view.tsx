@@ -54,18 +54,12 @@ interface OnboardingViewProps {
   connectionEditor: Pick<
     ComponentProps<typeof ConnectionDrawer>,
     | "busy"
-    | "monitoring"
     | "error"
     | "diagnostic"
-    | "revisionConnectionId"
-    | "revisionHistory"
     | "onSave"
     | "onTest"
     | "onDiscoverInference"
     | "onLoadInferenceCatalogue"
-    | "onUpdateMonitoring"
-    | "onLoadRevisions"
-    | "onRollback"
   >;
   onOpenWorkspace: (workspace: "Chat" | "Agents") => void;
   onRuntimeNodesChange: (nodes: HermesRuntimeNode[]) => void;
@@ -280,20 +274,13 @@ export function OnboardingView({
           />
         </div>
       }
-    />
-
-    {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
-
-    {/*
-      * The run of steps lies across the top of the step it introduces, not in
-      * a side rail: the wizard reads top-to-bottom as "where am I, then the
-      * work", and the form below gets the full width a connection table and
-      * an enrollment panel actually need. Below `sm` the run stacks back into
-      * the vertical rail, which is the only shape three titled steps fit at
-      * phone width.
-      */}
-    <div className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-y-auto">
-      <Panel className="p-3">
+    >
+      {/*
+        * The run of steps sits in the intro card so step 1 does not spend a
+        * second panel repeating "where am I". Below `sm` the run stacks back
+        * into the vertical rail, which is the only shape three titled steps
+        * fit at phone width.
+        */}
       <StepList
         label="Setup steps"
         orientation="horizontal"
@@ -313,30 +300,34 @@ export function OnboardingView({
           onSelectStep?.(key as SetupStepKey);
         }}
       />
-      </Panel>
+    </WorkspaceIntro>
 
-      <div className="grid content-start gap-3">
+    {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
+
+    <div className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-hidden">
       {active && (
         <Panel
           aria-label={`Step ${active.ordinal}: ${active.title}`}
-          className="overflow-hidden p-0"
+          className="min-h-0 overflow-hidden p-0"
         >
           {/*
-            * The same marker the rail uses, so the open step is the rail row
-            * continued rather than a second, untitled card of work.
+            * Step 1 already names itself in the intro rail. Repeating the
+            * marker, kicker, title and status here was a second header over
+            * the form and is why this step scrolled on a laptop viewport.
             */}
-          <div className="flex items-start gap-3 p-5">
-            <Mark size="sm" className={cn("mt-0.5 border", stepMark[active.status])}>
-              {active.status === "done" ? "✓" : active.ordinal}
-            </Mark>
-            <PanelHeading
-              className="mb-0 min-w-0 flex-1"
-              kicker={`Step ${active.ordinal} of ${steps.length}`}
-              title={active.title}
-              description={active.purpose}
-              actions={<StatusText dot tone={stepTone[active.status]}>{stepStatusLabel[active.status]}</StatusText>}
-            />
-          </div>
+          {active.key !== "inference" && (
+            <div className="flex items-start gap-3 p-5">
+              <Mark size="sm" className={cn("mt-0.5 border", stepMark[active.status])}>
+                {active.status === "done" ? "✓" : active.ordinal}
+              </Mark>
+              <PanelHeading
+                className="mb-0 min-w-0 flex-1"
+                kicker={`Step ${active.ordinal} of ${steps.length}`}
+                title={active.title}
+                actions={<StatusText dot tone={stepTone[active.status]}>{stepStatusLabel[active.status]}</StatusText>}
+              />
+            </div>
+          )}
 
           {/*
             * Every reason, not the first five. The list this replaces printed a
@@ -349,11 +340,14 @@ export function OnboardingView({
             * them sat under what looked like the work.
             */}
           {active.blockedBy.length > 0 && (
-            <div className="border-t border-border bg-raised px-5 py-4">
-              <MicroLabel className="mb-2 block">Waiting on</MicroLabel>
-              <ul className="m-0 grid list-none gap-2 p-0" aria-label={`What step ${active.ordinal} is waiting on`}>
+            <div className={cn(
+              "bg-raised px-4 py-2.5",
+              active.key !== "inference" && "border-t border-border",
+            )}>
+              <MicroLabel className="mb-1.5 block">Waiting on</MicroLabel>
+              <ul className="m-0 grid list-none gap-1.5 p-0" aria-label={`What step ${active.ordinal} is waiting on`}>
                 {active.blockedBy.map((blocker) => (
-                  <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2.5 text-body text-text" key={blocker}>
+                  <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2 text-caption text-text" key={blocker}>
                     <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warn" />
                     {blocker}
                   </li>
@@ -362,7 +356,12 @@ export function OnboardingView({
             </div>
           )}
 
-          <div className="grid gap-3 border-t border-border p-5">
+          <div className={cn(
+            "grid gap-3 p-4",
+            (active.key !== "inference" || active.blockedBy.length > 0) && "border-t border-border",
+            active.key !== "inference" && "p-5",
+            active.key === "inference" && "min-h-0 overflow-y-auto",
+          )}>
           {active.key === "inference" && (
             <ConnectionDrawer
               embedded
@@ -370,20 +369,14 @@ export function OnboardingView({
               initialKind="INFERENCE"
               connections={connections}
               busy={connectionEditor.busy}
-              monitoring={connectionEditor.monitoring}
               error={connectionEditor.error}
               diagnostic={connectionEditor.diagnostic}
-              revisionConnectionId={connectionEditor.revisionConnectionId}
-              revisionHistory={connectionEditor.revisionHistory}
               onClose={() => undefined}
               onOpenAgenticSystem={() => undefined}
               onSave={connectionEditor.onSave}
               onTest={connectionEditor.onTest}
               onDiscoverInference={connectionEditor.onDiscoverInference}
               onLoadInferenceCatalogue={connectionEditor.onLoadInferenceCatalogue}
-              onUpdateMonitoring={connectionEditor.onUpdateMonitoring}
-              onLoadRevisions={connectionEditor.onLoadRevisions}
-              onRollback={connectionEditor.onRollback}
             />
           )}
 
@@ -449,7 +442,6 @@ export function OnboardingView({
         actions={<Button variant="primary" onClick={() => onOpenWorkspace("Chat")}>Open Session</Button>}
       />
     </Panel>}
-      </div>
     </div>
   </div>;
 }

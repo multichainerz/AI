@@ -91,6 +91,20 @@ vi.mock("./api.js", async () => {
     getAiOpsOverview: vi.fn(async () => overview),
     getOperationalIncidents: vi.fn(async () => ({ items: [openIncident, ownedIncident, resolvedIncident] })),
     decideOperationalIncident: vi.fn(async () => openIncident),
+    getConnectionMonitoring: vi.fn(async () => ({
+      enabled: true,
+      intervalSeconds: 300,
+      reason: "Pilot monitoring approved",
+      updatedAt: "2026-08-07T00:00:00.000Z",
+      updatedBy: null,
+    })),
+    updateConnectionMonitoring: vi.fn(async (input: { enabled: boolean; intervalSeconds: number; reason: string }) => ({
+      enabled: input.enabled,
+      intervalSeconds: input.intervalSeconds,
+      reason: input.reason,
+      updatedAt: "2026-08-07T11:00:00.000Z",
+      updatedBy: session.id,
+    })),
     /*
      * `getProductionReadiness` used to be stubbed here too, and so did the
      * evaluation reads before the whole evaluation subsystem was removed.
@@ -102,7 +116,7 @@ vi.mock("./api.js", async () => {
 });
 
 const { OperationsView, snapshotIsStale } = await import("./operations-view.js");
-const { decideOperationalIncident, getAiOpsOverview, getOperationalIncidents } = await import("./api.js");
+const { decideOperationalIncident, getAiOpsOverview, getOperationalIncidents, updateConnectionMonitoring } = await import("./api.js");
 
 async function view() {
   render(<main><OperationsView session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} /></main>);
@@ -206,6 +220,20 @@ describe("operations control room", () => {
     expect(await screen.findByText("Hermes node vm2-b unreachable")).toBeTruthy();
     expect(screen.getAllByText("Critical").length).toBeGreaterThan(0);
     expect(screen.getByText("Incidents")).toBeTruthy();
+  });
+
+  it("owns scheduled connection checks, so the connection editor does not", async () => {
+    await view();
+    expect(screen.getByRole("heading", { name: "Scheduled checks" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Run scheduled checks" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save checks" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("switch", { name: "Run scheduled checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save checks" }));
+    await waitFor(() => expect(vi.mocked(updateConnectionMonitoring)).toHaveBeenCalledWith({
+      enabled: false,
+      intervalSeconds: 300,
+      reason: "Pilot monitoring approved",
+    }));
   });
 
   it("renders no inline style, which the CSP would refuse in the built container", async () => {

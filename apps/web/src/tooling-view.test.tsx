@@ -444,22 +444,12 @@ describe("the removed MCP plane", () => {
 });
 
 describe("a tool the runtime has not reported", () => {
-  it("takes a name and a reason", async () => {
-    // `PUT /toolsets/:name` accepts any name, so a decision can be staged
-    // before the runtime offers the tool. Demoted behind a disclosure: it is
-    // not the thing an administrator came here to do.
-    const user = userEvent.setup();
+  it("cannot be named in by hand — the list is what the runtime offers", async () => {
     await view();
     const list = screen.getByLabelText("Session tools");
-    await user.type(within(list).getByLabelText(/tool name/i), "clarify");
-    await user.type(within(list).getByLabelText(/why/i), "Asks a question; touches no data.");
-    await user.click(within(list).getByRole("button", { name: /Record decision/i }));
-
-    await waitFor(() => expect(api.decideToolsetAdmission).toHaveBeenCalledWith(
-      "clarify",
-      true,
-      "Asks a question; touches no data.",
-    ));
+    expect(within(list).queryByText(/Not listed above/i)).toBeNull();
+    expect(within(list).queryByLabelText(/tool name/i)).toBeNull();
+    expect(within(list).queryByRole("button", { name: /Record decision/i })).toBeNull();
   });
 });
 

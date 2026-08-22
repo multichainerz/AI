@@ -63,7 +63,6 @@ import {
   rollbackConfiguration,
   testConnection,
   updateConnection,
-  updateConnectionMonitoring,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
 import { AdminSignInDialog } from "./admin-sign-in-dialog.js";
@@ -111,6 +110,7 @@ const UsageView = lazy(() => import("./usage-view.js").then((module) => ({ defau
 const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
 const ApplicationView = lazy(() => import("./application-view.js").then((module) => ({ default: module.ApplicationView })));
 const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ default: module.AuditView })));
+const AgentRunsView = lazy(() => import("./agent-runs-view.js").then((module) => ({ default: module.AgentRunsView })));
 
 /**
  * Navigation glyphs, dispatched by the icon key `workspace-navigation.tsx`
@@ -1132,19 +1132,6 @@ function App() {
     }
   };
 
-  const saveConnectionMonitoring = async (input: { enabled: boolean; intervalSeconds: number; reason: string }) => {
-    if (!adminSession) return;
-    setSettingsBusy(true);
-    setSettingsError(null);
-    try {
-      setConnectionMonitoring(await updateConnectionMonitoring(input));
-    } catch (error) {
-      setSettingsError(handleAdminError(error, "Unable to update scheduled monitoring."));
-    } finally {
-      setSettingsBusy(false);
-    }
-  };
-
   const selectView = (view: ActiveView, step?: SetupStepKey) => {
     setActiveView(view);
     setSetupStep(view === "Deployment" ? step ?? null : null);
@@ -1564,7 +1551,6 @@ function App() {
               session={adminSession}
               connections={managedConnections}
               onConfigureConnections={() => openConnectionSettings("INFERENCE")}
-              onOpenOperations={() => selectView("Operations")}
               onSessionExpired={forgetAdminSession}
             />
           ),
@@ -1669,18 +1655,12 @@ function App() {
               onConfigure={(kind) => openConnectionSettings(kind)}
               connectionEditor={{
                 busy: settingsBusy,
-                monitoring: connectionMonitoring,
                 error: settingsError,
                 diagnostic,
-                revisionConnectionId,
-                revisionHistory,
                 onSave: saveConnection,
                 onTest: runConnectionTest,
                 onDiscoverInference: discoverInference,
                 onLoadInferenceCatalogue: loadCatalogue,
-                onUpdateMonitoring: saveConnectionMonitoring,
-                onLoadRevisions: loadRevisions,
-                onRollback: restoreRevision,
               }}
               onOpenWorkspace={(workspace) => selectView(workspace)}
               onRuntimeNodesChange={setRuntimeNodes}
@@ -1700,11 +1680,21 @@ function App() {
               onSessionExpired={forgetAdminSession}
             />
           ),
+          AgentRuns: () => (
+            <AgentRunsView
+              unlocked={agentsUnlocked}
+              session={adminSession}
+              administrator={unlocked}
+              onConfigure={() => openConnectionSettings("HERMES")}
+              onSessionExpired={forgetAnySession}
+            />
+          ),
           Operations: () => (
             <OperationsView
               session={adminSession}
               onConfigure={() => openConnectionSettings()}
               onSessionExpired={forgetAdminSession}
+              onMonitoringChange={setConnectionMonitoring}
             />
           ),
           Overview: () => (
@@ -1731,7 +1721,6 @@ function App() {
       <ConnectionDrawer
         busy={settingsBusy}
         connections={managedConnections}
-        monitoring={connectionMonitoring}
         diagnostic={diagnostic}
         error={settingsError}
         initialKind={drawerKind}
@@ -1744,7 +1733,6 @@ function App() {
         onTest={runConnectionTest}
         onDiscoverInference={discoverInference}
         onLoadInferenceCatalogue={loadCatalogue}
-        onUpdateMonitoring={saveConnectionMonitoring}
         onLoadRevisions={loadRevisions}
         onRollback={restoreRevision}
       />
