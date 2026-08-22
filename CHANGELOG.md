@@ -5,6 +5,25 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.9 — 2026-08-22
+
+Lets an operator re-enroll or repair a VM2 node after revoke without a 404 or a stuck slug.
+
+### Upgrade notes
+
+- **API should ship before `--repair`.** `GET /install/agentic-node.sh` is no
+  longer 404 when Models is not seedable. Enrolment still refuses until there
+  is one healthy inference and an ACTIVE default AGENT.
+- A revoked node of the same slug can be invited again; Remove is no longer
+  required to free the name.
+
+### Changes
+
+- serve the Agentic System installer without the Models readiness 404
+- reissue an invitation for a revoked node of the same slug
+- offer Generate again after revoke, not only after Remove
+- stop prefixing the control-plane version with a second `v` in the node CLI
+
 ## v9.7.8 — 2026-08-22
 
 Fail-closes Session inbox, puts reporting and docs on the same map, and drops UI-dead control-plane routes.

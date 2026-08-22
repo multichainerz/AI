@@ -116,16 +116,14 @@ export async function registerRuntimeNodeInstallerRoutes(
   options: RuntimeNodeRouteOptions,
 ): Promise<void> {
   app.get("/agentic-node.sh", async (_request, reply) => {
-    const manager = options.manager;
-    if (!manager) {
-      return reply.code(404).send({
-        error: "AGENTIC_INSTALLER_UNAVAILABLE",
-        message: "No Agentic System installer is currently available.",
-      });
-    }
-
-    const readiness = await manager.installerReadiness();
-    if (!readiness.ready) {
+    /*
+     * The script itself carries no claim. Enrolment still refuses at
+     * `createInvitation` / `enroll` until inference and the default AGENT
+     * route exist. Gating the *download* on that same readiness 404'd
+     * `--repair` on an already-enrolled node whenever Models drifted —
+     * the one command that must keep working after a control-plane upgrade.
+     */
+    if (!options.manager) {
       return reply.code(404).send({
         error: "AGENTIC_INSTALLER_UNAVAILABLE",
         message: "No Agentic System installer is currently available.",

@@ -521,5 +521,9 @@ describe("the enrolled runtime's maintenance path", () => {
     });
     await panel();
     expect(screen.queryByRole("article", { name: "Runtime maintenance" })).toBeNull();
+    const generate = screen.getByRole("button", { name: "Generate installer" });
+    expect(generate).toHaveProperty("disabled", false);
+    expect(screen.getByText(/Generate a one-time command/)).toBeTruthy();
+    expect(screen.queryByText(/Revoke it before enrolling a replacement/)).toBeNull();
   });
 });

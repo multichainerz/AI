@@ -422,9 +422,9 @@ export function RuntimeNodesPanel({
                 ? "The architecture decision has not loaded, so production artefact requirements cannot be applied yet."
                 : awaitingNode
                   ? "The claim is live. Run the command on VM2; this step updates when the node heartbeats."
-                  : nodes.length === 0
-                    ? "Generate a one-time command, run it on the Ubuntu VM, and paste the claim when the installer asks."
-                    : "This installation holds one Hermes execution boundary. Revoke it before enrolling a replacement."}
+                  : activeRuntimeExists
+                    ? "This installation holds one Hermes execution boundary. Revoke it before enrolling a replacement."
+                    : "Generate a one-time command, run it on the Ubuntu VM, and paste the claim when the installer asks."}
         </p>
         <div className="flex shrink-0 flex-wrap gap-2">
           <Button disabled={busy !== null} onClick={() => void load()}><SyncIcon size={16} />Refresh</Button>

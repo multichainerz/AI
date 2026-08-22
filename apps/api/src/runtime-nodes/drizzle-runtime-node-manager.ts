@@ -629,9 +629,9 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       dashboardReady: prerequisites.dashboardReady,
       inferenceReady: prerequisites.inferenceReady,
       invitationReady,
-      // The installer contains no claim or reusable credential. Keep it
-      // available after enrollment so a partially installed node can rerun the
-      // exact same command and resume from its protected local journal.
+      // Whether a *new* enrolment can succeed. The installer *file* is served
+      // regardless, so `--repair` on an enrolled node is not 404'd when Models
+      // is not seedable.
       ready: prerequisites.dashboardReady && prerequisites.inferenceReady,
     };
   }
@@ -658,9 +658,31 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       const node = await this.database.transaction(async (transaction) => {
         const [existing] = await transaction
           .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.slug, input.slug)).limit(1);
-        if (existing?.identityPublicKeyPem || existing?.enrolledAt) {
+        const enrolled = Boolean(existing?.identityPublicKeyPem || existing?.enrolledAt);
+        if (enrolled && existing?.status !== "REVOKED") {
           throw new RuntimeNodeConflictError(`Hermes node '${input.slug}' is already enrolled.`);
         }
+        if (existing?.status === "REVOKED" && existing.serviceConnectionId) {
+          await transaction
+            .delete(serviceConnection)
+            .where(eq(serviceConnection.id, existing.serviceConnectionId));
+        }
+        const recycled = existing?.status === "REVOKED"
+          ? {
+              status: "PENDING" as const,
+              identityPublicKeyPem: null,
+              identityFingerprint: null,
+              hostname: null,
+              lastSeenAt: null,
+              enrolledAt: null,
+              revokedAt: null,
+              serviceConnectionId: null,
+              hermesVersion: null,
+              installerVersion: null,
+              units: null,
+              capabilities: [],
+            }
+          : {};
         const [pending] = existing
           ? await transaction
             .update(hermesRuntimeNode)
@@ -669,6 +691,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
               baseUrl: input.baseUrl,
               expectedHostname: input.expectedHostname ?? null,
               revision: increment(hermesRuntimeNode.revision),
+              ...recycled,
             })
             .where(eq(hermesRuntimeNode.id, existing.id))
             .returning()

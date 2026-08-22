@@ -18,7 +18,7 @@
 # so `orcasynapse-agent status` works in a script or a cron line unchanged.
 set -Eeuo pipefail
 
-CLI_VERSION="v9.7.8"
+CLI_VERSION="v9.7.9"
 
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_USER="${ORCASYNAPSE_HERMES_USER:-orcasynapse-hermes}"
@@ -72,9 +72,13 @@ installed_version() {
 }
 
 control_plane_version() {
-  local origin="$1"
-  curl --fail --silent --max-time 10 "${origin}/api/v1/platform" 2>/dev/null \
-    | jq -r '.version // empty' 2>/dev/null || printf ''
+  # `/api/v1/platform`.version is already `vX.Y.Z`. Prepending another `v`
+  # printed `vv9.7.8` and made a current node look drifted forever.
+  local origin="$1" raw
+  raw="$(curl --fail --silent --max-time 10 "${origin}/api/v1/platform" 2>/dev/null \
+    | jq -r '.version // empty' 2>/dev/null)" || raw=""
+  [[ -n "${raw}" ]] || { printf ''; return 0; }
+  printf 'v%s' "${raw#v}"
 }
 
 unit_state() {
@@ -134,10 +138,10 @@ command_status() {
     bad "No installer breadcrumb at ${STATE_ROOT}/installer-version — the enrollment is incomplete; run: orcasynapse-agent update"
   elif [[ -z "${remote_version}" ]]; then
     warn "Node installed with ${local_version}; OrcaSynapse at ${origin} is not answering, so drift is unknown"
-  elif [[ "${local_version}" == "v${remote_version}" ]]; then
+  elif [[ "${local_version}" == "${remote_version}" ]]; then
     ok "Node ${local_version} matches OrcaSynapse ${remote_version}"
   else
-    warn "Node installed with ${local_version}, OrcaSynapse serves v${remote_version} — run: orcasynapse-agent update"
+    warn "Node installed with ${local_version}, OrcaSynapse serves ${remote_version} — run: orcasynapse-agent update"
   fi
 }
 
@@ -150,7 +154,7 @@ command_update() {
   remote_version="$(control_plane_version "${origin}")"
   [[ -n "${remote_version}" ]] \
     || fail "OrcaSynapse at ${origin} is not answering; the node downloads its update from there, so fix that first"
-  if [[ "${local_version}" == "v${remote_version}" ]]; then
+  if [[ "${local_version}" == "${remote_version}" ]]; then
     say "Already current: node and OrcaSynapse are both at ${local_version}."
     return 0
   fi
@@ -160,7 +164,7 @@ command_update() {
   # service boundary from the release OrcaSynapse serves, and restarts Hermes
   # in place; identity, keys and policy are untouched.
   local command="curl -fsSL ${origin}/install/agentic-node.sh | sudo bash -s -- --repair"
-  say "Node is at ${local_version}; OrcaSynapse serves v${remote_version}."
+  say "Node is at ${local_version}; OrcaSynapse serves ${remote_version}."
   say ""
   say "  ${CYAN}${command}${RESET}"
   say ""

@@ -104,6 +104,9 @@ grep -Fq "${repair_fragment}" apps/web/src/runtime-nodes-panel.tsx \
   || fail "runtime-nodes-panel.tsx no longer offers the --repair maintenance command"
 grep -Fq "${repair_fragment}" scripts/orcasynapse-agent-cli.sh \
   || fail "orcasynapse-agent-cli.sh no longer prints the --repair maintenance command"
+if grep -Fq 'serves v${remote_version}' scripts/orcasynapse-agent-cli.sh; then
+  fail "orcasynapse-agent-cli.sh must not prefix platform.version with another v"
+fi
 
 # --- every script the API serves ships in its image --------------------------
 # apps/api reads these off disk at request time. Development serves them from

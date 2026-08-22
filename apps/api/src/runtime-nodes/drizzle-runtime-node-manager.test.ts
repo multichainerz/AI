@@ -443,6 +443,28 @@ describe("DrizzleHermesRuntimeNodeManager enrollment", () => {
     await expect(manager().createInvitation(principal, invitationInput()))
       .rejects.toThrow(/already enrolled/);
   });
+
+  it("reissues an invitation for a revoked node of the same slug", async () => {
+    const { node, identity } = await enrolledNode();
+    await manager().mutate(principal, node.id, {
+      action: "REVOKE", reason: "Host rebuilt", expectedRevision: node.revision,
+    } as never);
+
+    const reissued = await manager().createInvitation(principal, invitationInput());
+    expect(reissued.bundle.nodeId).toBe(node.id);
+    expect(reissued.node.status).toBe("PENDING");
+    expect(reissued.node.enrolledAt).toBeNull();
+    expect(reissued.node.identityFingerprint).toBeNull();
+    expect(await context.database
+      .select().from(serviceConnection).where(eq(serviceConnection.kind, "HERMES"))).toHaveLength(0);
+
+    const result = await manager().enroll(
+      enrollInput(reissued.bundle.nodeId, reissued.bundle.token, identity.publicKeyPem),
+      "203.0.113.10",
+    );
+    expect(result.node.status).not.toBe("REVOKED");
+    expect(result.node.enrolledAt).not.toBeNull();
+  });
 });
 
 describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () => {

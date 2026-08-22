@@ -185,22 +185,19 @@ describe("Hermes runtime-node routes", () => {
       .join("\n");
     expect(executedInstaller).not.toMatch(/\bdocker\b/);
 
+    // Enrolment still refuses at createInvitation when Models is not seedable.
+    // The download must not: `--repair` on an enrolled node is this same URL.
     for (const state of [
       { ready: false, dashboardReady: false, inferenceReady: true, invitationReady: true },
       { ready: false, dashboardReady: true, inferenceReady: false, invitationReady: true },
     ] as const) {
       runtimeNodeManager.installerReadiness = vi.fn(async () => state);
-      const blocked = await app.inject({ method: "GET", url: "/install/agentic-node.sh" });
-      expect(blocked.statusCode).toBe(404);
-      expect(blocked.json()).toMatchObject({ error: "AGENTIC_INSTALLER_UNAVAILABLE" });
-      expect(blocked.body).not.toContain("#!/usr/bin/env bash");
+      const served = await app.inject({ method: "GET", url: "/install/agentic-node.sh" });
+      expect(served.statusCode, served.body).toBe(200);
+      expect(served.body).toContain("#!/usr/bin/env bash");
+      expect(runtimeNodeManager.installerReadiness).not.toHaveBeenCalled();
       expect((await app.inject({ method: "GET", url: "/install/remove-agentic-node.sh" })).statusCode).toBe(200);
     }
-
-    runtimeNodeManager.installerReadiness = vi.fn(async () => ({
-      ready: true, dashboardReady: true, inferenceReady: true, invitationReady: false,
-    }));
-    expect((await app.inject({ method: "GET", url: "/install/agentic-node.sh" })).statusCode).toBe(200);
   });
 
   it("requires a protected admin session and forwards explicit permanent-removal confirmation", async () => {
