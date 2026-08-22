@@ -154,7 +154,6 @@ export interface ConversationUpload {
   name: string;
   mediaType: string;
   sizeBytes: number;
-  messageId: string | null;
   storage: "INLINE" | "NODE";
   diskPath?: string;
 }
@@ -1019,7 +1018,6 @@ export class DrizzleAgentProcessor {
         name: chatArtifact.name,
         mediaType: chatArtifact.mediaType,
         sizeBytes: chatArtifact.sizeBytes,
-        messageId: chatArtifact.messageId,
         storage: chatArtifact.storage,
       })
       .from(chatArtifact)

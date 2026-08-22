@@ -350,14 +350,6 @@ export interface HermesRunSubmission {
   admittedToolsets?: readonly string[];
 }
 
-export function nativeSessionChatBody(input: HermesRunSubmission): {
-  message: string;
-  instructions: string;
-  model: string;
-} {
-  return { message: input.input, instructions: input.instructions, model: input.modelAlias };
-}
-
 export interface HermesRunState {
   id: string;
   status: string;
@@ -796,7 +788,11 @@ export class HermesClient {
           "content-type": "application/json",
           ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
         },
-        body: JSON.stringify(nativeSessionChatBody(input)),
+        body: JSON.stringify({
+          message: input.input,
+          instructions: input.instructions,
+          model: input.modelAlias,
+        }),
       },
     );
     if (!response.ok) throw new Error(`Hermes rejected the native session stream with status ${response.status}.`);

@@ -1,7 +1,7 @@
 import { AGENT_RUN_ENDED_EVENT_TYPE } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient, hermesInboxOrigin, nativeSessionChatBody, SAFE_EVENT_TYPES } from "./hermes-client.js";
+import { HermesClient, hermesInboxOrigin, SAFE_EVENT_TYPES } from "./hermes-client.js";
 
 function resolver(): DrizzleRuntimeConnectionResolver {
   return {
@@ -115,7 +115,11 @@ describe("HermesClient native sessions", () => {
     };
     const id = await client.start(submission);
     const streamCall = fetcher.mock.calls.find(([input]) => input.toString().endsWith("/api/sessions/session-1/chat/stream"));
-    expect(String(streamCall?.[1]?.body)).toBe(JSON.stringify(nativeSessionChatBody(submission)));
+    expect(JSON.parse(String(streamCall?.[1]?.body))).toEqual({
+      message: "New question",
+      instructions: "Stay bounded",
+      model: "hermes-agent",
+    });
     const events: string[] = [];
     await client.events(id, (event) => { events.push(event.type); }, new AbortController().signal);
     await expect(client.status(id)).resolves.toMatchObject({ status: "completed", output: "Native answer", totalTokens: 14 });

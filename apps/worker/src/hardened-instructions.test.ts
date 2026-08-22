@@ -13,7 +13,7 @@ const run = (soulMd: string, instructions = "Answer support questions from the h
   ({ version: { soulMd, instructions }, sessionId } as never);
 
 function upload(overrides: Partial<ConversationUpload> & Pick<ConversationUpload, "artifactId" | "name" | "mediaType" | "sizeBytes">): ConversationUpload {
-  return { messageId: null, storage: "INLINE", ...overrides };
+  return { storage: "INLINE", ...overrides };
 }
 
 describe("hardenedInstructions", () => {

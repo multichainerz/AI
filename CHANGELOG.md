@@ -5,6 +5,15 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.4 — 2026-08-22
+
+Removes leftover Session-inject helpers after inbox materialize.
+
+### Changes
+
+- drop unused `messageId` on the worker upload DTO
+- inline the Hermes native-session POST body; remove `nativeSessionChatBody`
+
 ## v9.7.3 — 2026-08-22
 
 Stops inlining Session images and notes on the Hermes POST.

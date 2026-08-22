@@ -253,7 +253,7 @@ const BUILT_IN_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        artifactId: { type: "string", description: "The file's artifactId, as listed under ATTACHED FILES." },
+        artifactId: { type: "string", description: "The file's artifactId." },
         offset: { type: "number", description: "Character position to continue a long text file from. Omit to start at the beginning." },
       },
       required: ["artifactId"],
