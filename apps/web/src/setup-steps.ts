@@ -37,9 +37,10 @@ export interface SetupStepsInput {
  * guard lives in the API, the comment names it — a gate that moves upstream
  * should break a test here, not surprise an operator at the point of use.
  *
- * Endpoint health lives on step 1; the default AGENT route lives on step 2
- * because Gateway → Models is how the operator creates it. Dashboard
- * `inferenceReady` is the endpoint half only.
+ * Endpoint health lives on step 1; the first default AGENT is picked on
+ * step 2 (OpenRouter `:free` variants, or the local catalogue). Gateway →
+ * Models remains the place to admit more routes. Dashboard `inferenceReady`
+ * is the endpoint half only.
  */
 export function deriveSetupSteps(input: SetupStepsInput): SetupStep[] {
   const { readiness, connections, runtimeNodes, targetEnvironment } = input;
@@ -68,7 +69,7 @@ export function deriveSetupSteps(input: SetupStepsInput): SetupStep[] {
     );
   }
   if (healthy.length === 1 && !readiness.agentModelReady) {
-    runtimeBlockers.push("Activate a default Agent model on Gateway → Models.");
+    runtimeBlockers.push("Pick a default Agent model on this step before generating the installer.");
   }
   if (targetEnvironment === "PRODUCTION") {
     if (!/^[0-9a-f]{40}$/.test(input.hermesCommit ?? "")) {

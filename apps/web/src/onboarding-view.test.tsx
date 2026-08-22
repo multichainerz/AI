@@ -46,6 +46,10 @@ const api = vi.hoisted(() => ({
   getHermesRuntimeNodes: vi.fn(),
   runOnboardingValidation: vi.fn(),
   getModelDeployments: vi.fn(),
+  refreshConnectionModels: vi.fn(),
+  getModelObservations: vi.fn(),
+  createModelDeployment: vi.fn(),
+  changeModelDeploymentState: vi.fn(),
 }));
 
 vi.mock("./api.js", async () => {
@@ -155,6 +159,19 @@ beforeEach(() => {
       isDefault: true,
       connection: { id: "inference-connection" },
     }],
+  });
+  api.refreshConnectionModels.mockResolvedValue({
+    items: [],
+    connectionId: "inference-connection",
+    refreshedAt: null,
+    upserted: 0,
+    vanished: 0,
+    backfill: null,
+  });
+  api.getModelObservations.mockResolvedValue({
+    items: [],
+    connectionId: "inference-connection",
+    refreshedAt: null,
   });
   for (const spy of Object.values(callbacks)) spy.mockReset();
 });
@@ -362,5 +379,64 @@ describe("the setup wizard", () => {
     if (process.env.VIEW_PREVIEW_OUT) {
       writeFileSync(process.env.VIEW_PREVIEW_OUT, document.body.innerHTML, "utf8");
     }
+  });
+
+  it("picks the default Agent on step 2 so Generate does not require leaving Setup", async () => {
+    const user = userEvent.setup();
+    const free = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      connectionId: "inference-connection",
+      alias: "nvidia/nemotron-3-nano:free",
+      displayName: "Nemotron Nano (free)",
+      observedContextWindowTokens: 131_072,
+      observedMaxOutputTokens: 8_192,
+      inputModalities: ["text"],
+      ownedBy: "nvidia",
+      lastSeenAt: "2026-08-22T00:00:00.000Z",
+      missingFromUpstream: false,
+      admittedWorkloads: [],
+    };
+    api.getModelDeployments.mockResolvedValue({ items: [] });
+    api.refreshConnectionModels.mockResolvedValue({
+      items: [free],
+      connectionId: "inference-connection",
+      refreshedAt: "2026-08-22T00:00:00.000Z",
+      upserted: 1,
+      vanished: 0,
+      backfill: null,
+    });
+    api.createModelDeployment.mockResolvedValue({
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      slug: "nvidia-nemotron-3-nano-free",
+      modelAlias: free.alias,
+      workload: "AGENT",
+      status: "DRAFT",
+      isDefault: false,
+      revision: 1,
+      connection: { id: "inference-connection" },
+    });
+    api.changeModelDeploymentState.mockResolvedValue({ status: "ACTIVE", isDefault: true });
+
+    await open({
+      connections: [connection("INFERENCE", "https://openrouter.ai/api/v1")],
+      session: { ...session, scopes: ["models:manage", "readiness:manage"] } as AdministratorSession,
+      initialStep: "runtime",
+    });
+
+    expect(screen.getByRole("button", { name: "Generate installer" })).toHaveProperty("disabled", true);
+    const select = await screen.findByLabelText("Free OpenRouter model");
+    await waitFor(() => expect(select).toHaveProperty("value", free.alias));
+    api.getModelDeployments.mockResolvedValue({
+      items: [{
+        workload: "AGENT",
+        status: "ACTIVE",
+        isDefault: true,
+        connection: { id: "inference-connection" },
+      }],
+    });
+    await user.click(screen.getByRole("button", { name: "Use as default Agent" }));
+    await waitFor(() => expect(api.createModelDeployment).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Generate installer" })).toHaveProperty("disabled", false));
+    expect(screen.queryByRole("region", { name: "Default agent model" })).toBeNull();
   });
 });

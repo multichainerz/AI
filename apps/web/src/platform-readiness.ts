@@ -180,7 +180,7 @@ export function deriveWorkspaceReadiness(input: {
       target: "Deployment",
       title: "Finish the Agentic System",
       detail: !agentModelReady
-        ? "Activate a default Agent model on Gateway → Models."
+        ? "Pick a default Agent model on Settings → Setup."
         : "Enroll VM2 and wait for its signed Hermes heartbeat to become healthy.",
     };
   } else if (!executionReady) {

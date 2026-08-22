@@ -23,7 +23,7 @@ Activation requires the selected serving connection to be enabled and healthy, a
 
 A material edit (version, alias, limits, connection) returns a route to draft, so an activated route is always the exact version that was reviewed. The route version is immutable within a revision and the activation reason is retained in the audit trail.
 
-The internal inference gateway requires exactly one ACTIVE default Agent route. It does not fall back to a free-form connection alias, including on already-enrolled nodes that never activated a catalogue route.
+The internal inference gateway requires exactly one ACTIVE default Agent route. It does not fall back to a free-form connection alias, including on already-enrolled nodes that never activated a catalogue route. Setup step 2 can write that first default from the observed catalogue; this workspace is how later routes are admitted, activated, and suspended.
 
 ## Runtime behavior
 

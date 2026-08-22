@@ -152,7 +152,7 @@ describe("step 2 — the agent runtime", () => {
       readiness: readiness({ inferenceReady: true, agentModelReady: false }),
       connections: [inference()],
     }));
-    expect(blockers(steps, "runtime")).toContain("Activate a default Agent model on Gateway → Models.");
+    expect(blockers(steps, "runtime")).toContain("Pick a default Agent model on this step before generating the installer.");
     expect(steps[0]?.status).toBe("done");
     expect(steps[1]?.status).not.toBe("done");
   });
@@ -300,7 +300,7 @@ describe("the Dashboard and Setup on one deployment", () => {
     expect(workspace.chatReady).toBe(false);
     expect(allDone).toBe(false);
     expect(steps[0]?.status).toBe("done");
-    expect(steps.flatMap((step) => step.blockedBy)).toContain("Activate a default Agent model on Gateway → Models.");
+    expect(steps.flatMap((step) => step.blockedBy)).toContain("Pick a default Agent model on this step before generating the installer.");
   });
 
   it("agree that a second healthy inference connection blocks the path", () => {

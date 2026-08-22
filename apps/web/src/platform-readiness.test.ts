@@ -192,7 +192,7 @@ describe("deriveWorkspaceReadiness", () => {
     expect(readiness.nextChatStep).toMatchObject({
       target: "Deployment",
       title: "Finish the Agentic System",
-      detail: "Activate a default Agent model on Gateway → Models.",
+      detail: "Pick a default Agent model on Settings → Setup.",
     });
   });
 

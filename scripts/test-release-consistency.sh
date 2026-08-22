@@ -52,16 +52,19 @@ for manifest in apps/*/package.json packages/*/package.json; do
   [[ "${manifest_version}" == "${version}" ]] || fail "${manifest} is at ${manifest_version}, expected ${version}"
 done
 
-# --- the minor digit rolls at nine ------------------------------------------
-# OrcaSynapse numbers releases so that the minor runs 0-9 and then the major
-# increments: 2.9.0 was followed by 3.0.0, not 2.10.0. That rule was kept
-# through the 2.x line and then quietly lost -- 3.9.0 was followed by 3.10.0,
-# and eleven releases shipped before anyone noticed. It is checked here rather
-# than remembered, because the surface that broke it is the one nobody reads
-# twice.
+# --- minor and patch digits roll at nine ------------------------------------
+# OrcaSynapse numbers releases so that minor and patch each run 0-9: 9.7.9 is
+# followed by 9.8.0, not 9.7.10, and 2.9.0 was followed by 3.0.0, not 2.10.0.
+# The minor rule was kept through the 2.x line and then quietly lost -- 3.9.0
+# was followed by 3.10.0, and eleven releases shipped before anyone noticed.
+# Both digits are checked here rather than remembered.
+major="$(printf '%s' "${version}" | cut -d. -f1)"
 minor="$(printf '%s' "${version}" | cut -d. -f2)"
+patch="$(printf '%s' "${version}" | cut -d. -f3)"
 (( minor <= 9 )) \
-  || fail "the minor version must roll into a major at 9: ${version} should have become $(( $(printf '%s' "${version}" | cut -d. -f1) + 1 )).0.0"
+  || fail "the minor version must roll into a major at 9: ${version} should have become $((major + 1)).0.0"
+(( patch <= 9 )) \
+  || fail "the patch version must roll into a minor at 9: ${version} should have become ${major}.$((minor + 1)).0"
 
 contract_version="$(sed -nE 's/.*ORCASYNAPSE_VERSION = "([^"]+)".*/\1/p' packages/contracts/src/version.ts)"
 [[ "${contract_version}" == "v${version}" ]] \

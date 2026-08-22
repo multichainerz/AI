@@ -87,14 +87,15 @@ gate unrunnable:
 
 ## Release convention
 
-Versions are `vX.Y.Z`. **The minor digit runs 0-9 and then rolls into the
-major**: `2.9.0` was followed by `3.0.0`, not `2.10.0`, and `4.9.0` by `5.0.0`.
+Versions are `vX.Y.Z`. **Each of the minor and patch digits runs 0-9.** The
+patch rolls into the minor (`9.7.9` is followed by `9.8.0`, not `9.7.10`), and
+the minor rolls into the major (`2.9.0` was followed by `3.0.0`, not `2.10.0`).
 This is not semver — the major carries no compatibility meaning here, because
 database compatibility is gated by the schema epoch
 (`packages/database/src/drizzle/migrate.ts`) and nothing in the product branches
 on a version number. `scripts/test-release-consistency.sh` enforces the roll,
-because the rule held through the whole 2.x line and was then lost for eleven
-releases without anything noticing.
+because the minor rule held through the whole 2.x line and was then lost for
+eleven releases without anything noticing.
 
 Early releases carried an `ai-` prefix on the tag. The prefix is fully retired —
 no tag in this repository uses it — but `apps/api/src/platform-updates.ts` still

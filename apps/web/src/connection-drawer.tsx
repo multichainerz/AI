@@ -521,7 +521,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                       </span>
                     ) : null}
                     <span className="mt-1 block text-caption opacity-80">
-                      Activate a default Agent model on Gateway → Models.
+                      Then pick a default Agent model on Setup step 2. Paid models stay on Gateway → Models.
                     </span>
                   </Alert>
                 ) : null}

@@ -13,6 +13,13 @@ describe("mapObservedCatalogue", () => {
           top_provider: { max_completion_tokens: 8_192 },
         },
         { id: "~openai/gpt-latest", name: "dropped" },
+        {
+          id: "nvidia/nemotron-3-nano:free",
+          name: "Nemotron 3 Nano (free)",
+          context_length: 131_072,
+          architecture: { input_modalities: ["text"] },
+          top_provider: { max_completion_tokens: 8_192 },
+        },
       ],
     }, "openrouter")).toEqual([
       {
@@ -21,6 +28,14 @@ describe("mapObservedCatalogue", () => {
         observedContextWindowTokens: 200_000,
         observedMaxOutputTokens: 8_192,
         inputModalities: ["text", "image", "file"],
+        ownedBy: null,
+      },
+      {
+        alias: "nvidia/nemotron-3-nano:free",
+        displayName: "Nemotron 3 Nano (free)",
+        observedContextWindowTokens: 131_072,
+        observedMaxOutputTokens: 8_192,
+        inputModalities: ["text"],
         ownedBy: null,
       },
     ]);

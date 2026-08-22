@@ -390,11 +390,19 @@ export function OnboardingView({
               targetEnvironment={architecture?.targetEnvironment ?? null}
               inferenceReady={readiness.inferenceReady}
               agentModelReady={readiness.agentModelReady}
+              inferenceConnection={readiness.inferenceReady
+                ? connections.find((connection) => connection.kind === "INFERENCE" && connection.enabled && connection.status === "HEALTHY") ?? null
+                : null}
               onConfigureInference={() => {
                 setOpenStep("inference");
                 onSelectStep?.("inference");
               }}
               onNodesChange={onRuntimeNodesChange}
+              onAgentModelReady={() => {
+                void getModelDeployments().then(({ items }) => setModelDeployments(items)).catch((cause: unknown) => {
+                  if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
+                });
+              }}
               onSessionExpired={onSessionExpired}
             />
           )}

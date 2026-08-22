@@ -5,6 +5,21 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.8.0 — 2026-08-22
+
+Lets an operator pick the first default Agent model on Setup step 2, so the VM2 installer can be generated without leaving the wizard.
+
+### Upgrade notes
+
+- Enrolment still needs one healthy inference connection and one ACTIVE default AGENT route. The new picker writes that route on the same screen as Generate.
+- OpenRouter setups list official `:free` variants from the live catalogue, not the `openrouter/free` random router. Paid models stay on Gateway → Models.
+
+### Changes
+
+- pick the first default AGENT on Setup step 2 from OpenRouter `:free` variants or the local catalogue
+- keep Generate disabled until that route is ACTIVE and default
+- point dashboard, inference, and enrolment copy at Setup rather than Gateway → Models for the first Agent model
+
 ## v9.7.9 — 2026-08-22
 
 Lets an operator re-enroll or repair a VM2 node after revoke without a 404 or a stuck slug.

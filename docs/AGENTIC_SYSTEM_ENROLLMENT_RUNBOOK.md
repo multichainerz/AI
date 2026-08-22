@@ -14,9 +14,10 @@ VM2 runs exactly one agent runtime plane: the Hermes gateway/API server, install
 bullets below; the rest are facts the installer needs that nothing in the
 product checks for you.
 
-`inferenceReady` also requires exactly one ACTIVE default Agent model on
-Gateway → Models. The served alias lives on that route, not on the inference
-connection.
+`inferenceReady` also requires exactly one ACTIVE default Agent model. Setup
+step 2 writes the first one (OpenRouter official `:free` variants, or the
+local catalogue). Gateway → Models remains the place to admit more routes.
+The served alias lives on that route, not on the inference connection.
 
 There is also no PostgreSQL prerequisite, and this list claimed one for several
 releases by counting three enforced conditions where the function returns two
@@ -26,7 +27,7 @@ invitation request itself fail, which reads as an outage rather than as
 something an operator is being asked to go and fix.
 
 - OrcaSynapse is installed and the temporary local-administrator password has been replaced (`dashboardReady`);
-- exactly one AI Inference connection is enabled and healthy, and exactly one ACTIVE default AGENT route exists on Gateway → Models (`inferenceReady`) — *exactly* one of each, because `seedableInferenceModelAlias()` refuses to guess between two healthy connections or two defaults;
+- exactly one AI Inference connection is enabled and healthy, and exactly one ACTIVE default AGENT route exists (`inferenceReady`) — *exactly* one of each, because `seedableInferenceModelAlias()` refuses to guess between two healthy connections or two defaults;
 - VM2 is a clean Ubuntu systemd VM on x86_64 or aarch64 with outbound access to OrcaSynapse and the artifact sources during installation;
 - OrcaSynapse can reach the VM2 Hermes address on TCP 8642 and the Session inbox on TCP 8643;
 - the invitation uses a hostname/address that matches customer DNS and TLS policy.
@@ -35,10 +36,10 @@ Enter a Hermes commit in the dashboard invitation: the full 40-character git SHA
 
 ## Dashboard workflow
 
-1. Open **Gateway → Models** and admit exactly one ACTIVE default AGENT route on the unique healthy inference connection. Then open **Settings → Setup**. Step 2 (*Install the agent runtime*) is also addressable at `#settings/setup/runtime`.
+1. Open **Settings → Setup**. Step 2 (*Install the agent runtime*) is also addressable at `#settings/setup/runtime`. Pick the default Agent model on that step, then generate the installer. Additional or paid routes stay on **Gateway → Models**.
 2. Create an invitation with the runtime display name, slug, reachable Hermes base URL, approved Hermes commit, and short TTL.
 3. Copy the one-time claim. OrcaSynapse stores only its digest.
-4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard. The route is unavailable before dashboard setup and healthy AI Inference are present. It remains available afterward for protected local recovery, while a live claim is required to begin a new enrollment.
+4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard. The script is served once an administrator can manage the fleet; enrolment still refuses until inference is unique and healthy and an ACTIVE default AGENT exists. The download remains available afterward for `--repair`, while a live claim is required to begin a new enrollment.
 5. Run it against the same OrcaSynapse origin, then paste the claim at the hidden prompt:
 
    ```bash

@@ -5,6 +5,7 @@ import type {
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
   OnboardingTargetEnvironment,
+  ServiceConnectionSummary,
 } from "@orcasynapse/contracts";
 import { ChevronDown, RefreshCw as SyncIcon, Server, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -18,6 +19,7 @@ import {
 import { adminAccess } from "./admin-access.js";
 import { Alert, Button, CopyButton, Dialog, Field, Input, Mark, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
 import { Switch } from "@/components/ui/switch";
+import { SetupAgentModelPicker } from "./setup-agent-model-picker.js";
 
 /**
  * How often the fleet is re-read while this panel is mounted.
@@ -41,8 +43,11 @@ interface RuntimeNodesPanelProps {
   targetEnvironment: OnboardingTargetEnvironment | null;
   inferenceReady: boolean;
   agentModelReady: boolean;
+  /** Unique healthy inference connection, when step 1 is done. */
+  inferenceConnection?: ServiceConnectionSummary | null;
   onConfigureInference: () => void;
   onNodesChange?: (nodes: HermesRuntimeNode[]) => void;
+  onAgentModelReady?: () => void;
   onSessionExpired: () => void;
   session?: AdministratorSession | null;
 }
@@ -197,8 +202,10 @@ export function RuntimeNodesPanel({
   targetEnvironment,
   inferenceReady,
   agentModelReady,
+  inferenceConnection = null,
   onConfigureInference,
   onNodesChange,
+  onAgentModelReady,
   onSessionExpired,
   session,
 }: RuntimeNodesPanelProps) {
@@ -401,7 +408,7 @@ export function RuntimeNodesPanel({
   const generateTitle = !inferenceReady
     ? "Connect and test AI Inference before enrolling the agent runtime."
     : !agentModelReady
-      ? "Activate a default Agent model on Gateway → Models."
+      ? "Pick a default Agent model below."
       : !targetKnown
         ? "The architecture decision has not loaded, so the production artefact requirements cannot be applied."
         : activeRuntimeExists
@@ -417,7 +424,7 @@ export function RuntimeNodesPanel({
           {!inferenceReady
             ? "Finish connecting inference first. The installer is seeded with that route."
             : !agentModelReady
-              ? "Activate a default Agent model on Gateway → Models."
+              ? "Pick a default Agent model below."
               : !targetKnown
                 ? "The architecture decision has not loaded, so production artefact requirements cannot be applied yet."
                 : awaitingNode
@@ -442,6 +449,17 @@ export function RuntimeNodesPanel({
           )}
         </div>
       </div>
+
+      {inferenceReady && !agentModelReady && inferenceConnection ? (
+        <SetupAgentModelPicker
+          connection={inferenceConnection}
+          session={session ?? null}
+          onReady={() => {
+            onAgentModelReady?.();
+          }}
+          onSessionExpired={onSessionExpired}
+        />
+      ) : null}
 
       {/*
         * The hand-off, kept on the screen rather than inside the drawer that

@@ -814,7 +814,7 @@ function App() {
       detail: readiness.runtimeNodeReady && readiness.hermesReady && readiness.agentModelReady
         ? "VM2 is online and Hermes is reachable"
         : readiness.inferenceReady && !readiness.agentModelReady
-          ? "Activate a default Agent model on Gateway → Models."
+          ? "Pick a default Agent model on Settings → Setup."
           : "Enroll VM2 and verify Hermes health",
       ready: readiness.runtimeNodeReady && readiness.hermesReady && readiness.agentModelReady,
       action: "Deployment" as ActiveView,

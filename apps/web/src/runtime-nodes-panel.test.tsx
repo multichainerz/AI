@@ -8,7 +8,7 @@
  *
  * `VIEW_PREVIEW_OUT` dumps the rendered markup, as elsewhere.
  */
-import type { HermesRuntimeNode } from "@orcasynapse/contracts";
+import type { HermesRuntimeNode, ServiceConnectionSummary } from "@orcasynapse/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,6 +25,11 @@ const api = vi.hoisted(() => ({
   getHermesRuntimeNodes: vi.fn(),
   mutateHermesRuntimeNode: vi.fn(),
   createHermesNodeInvitation: vi.fn(),
+  refreshConnectionModels: vi.fn(),
+  getModelObservations: vi.fn(),
+  getModelDeployments: vi.fn(),
+  createModelDeployment: vi.fn(),
+  changeModelDeploymentState: vi.fn(),
 }));
 
 vi.mock("./api.js", async () => {
@@ -56,7 +61,22 @@ beforeEach(() => {
   api.mutateHermesRuntimeNode.mockReset();
   api.mutateHermesRuntimeNode.mockResolvedValue(undefined);
   api.createHermesNodeInvitation.mockReset();
+  api.refreshConnectionModels.mockReset();
+  api.refreshConnectionModels.mockResolvedValue({ items: [], connectionId: "conn-1", refreshedAt: null, upserted: 0, vanished: 0, backfill: null });
+  api.getModelObservations.mockReset();
+  api.getModelObservations.mockResolvedValue({ items: [], connectionId: "conn-1", refreshedAt: null });
+  api.getModelDeployments.mockReset();
+  api.getModelDeployments.mockResolvedValue({ items: [] });
 });
+
+const inferenceConnection = {
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  displayName: "OpenRouter",
+  kind: "INFERENCE",
+  enabled: true,
+  status: "HEALTHY",
+  baseUrl: "https://openrouter.ai/api/v1",
+} as ServiceConnectionSummary;
 
 async function panel(
   inferenceReady = true,
@@ -69,6 +89,7 @@ async function panel(
         targetEnvironment={targetEnvironment}
         inferenceReady={inferenceReady}
         agentModelReady={agentModelReady}
+        inferenceConnection={inferenceReady ? inferenceConnection : null}
         onConfigureInference={vi.fn()}
         onSessionExpired={vi.fn()}
       />
@@ -100,8 +121,67 @@ describe("the fresh-install state", () => {
     await panel(true, "DEVELOPMENT", false);
     const generate = screen.getByRole("button", { name: "Generate installer" });
     expect(generate).toHaveProperty("disabled", true);
-    expect(generate).toHaveProperty("title", "Activate a default Agent model on Gateway → Models.");
-    expect(screen.getByText("Activate a default Agent model on Gateway → Models.")).toBeTruthy();
+    expect(generate).toHaveProperty("title", "Pick a default Agent model below.");
+    expect(screen.getByRole("region", { name: "Default agent model" })).toBeTruthy();
+    expect(screen.getByLabelText("Free OpenRouter model")).toBeTruthy();
+  });
+
+  it("admits the default Agent on this step so Generate does not require leaving Setup", async () => {
+    const free = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      connectionId: inferenceConnection.id,
+      alias: "nvidia/nemotron-3-nano:free",
+      displayName: "Nemotron Nano (free)",
+      observedContextWindowTokens: 131_072,
+      observedMaxOutputTokens: 8_192,
+      inputModalities: ["text"],
+      ownedBy: "nvidia",
+      lastSeenAt: "2026-08-22T00:00:00.000Z",
+      missingFromUpstream: false,
+      admittedWorkloads: [],
+    };
+    api.refreshConnectionModels.mockResolvedValue({
+      items: [free],
+      connectionId: inferenceConnection.id,
+      refreshedAt: "2026-08-22T00:00:00.000Z",
+      upserted: 1,
+      vanished: 0,
+      backfill: null,
+    });
+    api.createModelDeployment.mockResolvedValue({
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      slug: "nvidia-nemotron-3-nano-free",
+      modelAlias: free.alias,
+      workload: "AGENT",
+      status: "DRAFT",
+      isDefault: false,
+      revision: 1,
+      connection: { id: inferenceConnection.id },
+    });
+    api.changeModelDeploymentState.mockResolvedValue({ status: "ACTIVE", isDefault: true });
+    const onAgentModelReady = vi.fn();
+    render(
+      <main>
+        <RuntimeNodesPanel
+          targetEnvironment="DEVELOPMENT"
+          inferenceReady
+          agentModelReady={false}
+          inferenceConnection={inferenceConnection}
+          onConfigureInference={vi.fn()}
+          onAgentModelReady={onAgentModelReady}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+
+    const select = await screen.findByLabelText("Free OpenRouter model");
+    await waitFor(() => expect(select).toHaveProperty("value", free.alias));
+    fireEvent.click(screen.getByRole("button", { name: "Use as default Agent" }));
+    await waitFor(() => expect(onAgentModelReady).toHaveBeenCalled());
+    expect(api.createModelDeployment).toHaveBeenCalledWith(expect.objectContaining({
+      modelAlias: "nvidia/nemotron-3-nano:free",
+      workload: "AGENT",
+    }));
   });
 });
 
