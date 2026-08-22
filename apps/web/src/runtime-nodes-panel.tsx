@@ -38,6 +38,7 @@ interface RuntimeNodesPanelProps {
    */
   targetEnvironment: OnboardingTargetEnvironment | null;
   inferenceReady: boolean;
+  agentModelReady: boolean;
   onConfigureInference: () => void;
   onNodesChange?: (nodes: HermesRuntimeNode[]) => void;
   onSessionExpired: () => void;
@@ -192,6 +193,7 @@ function defaultForm(): CreateHermesNodeInvitation {
 export function RuntimeNodesPanel({
   targetEnvironment,
   inferenceReady,
+  agentModelReady,
   onConfigureInference,
   onNodesChange,
   onSessionExpired,
@@ -317,7 +319,7 @@ export function RuntimeNodesPanel({
 
   const issueInvitation = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy || !inferenceReady || !targetKnown) return;
+    if (busy || !inferenceReady || !agentModelReady || !targetKnown) return;
     setBusy("invite");
     setError(null);
     try {
@@ -389,14 +391,16 @@ export function RuntimeNodesPanel({
     }
   };
 
-  const canGenerate = inferenceReady && targetKnown && !activeRuntimeExists;
+  const canGenerate = inferenceReady && agentModelReady && targetKnown && !activeRuntimeExists;
   const generateTitle = !inferenceReady
     ? "Connect and test AI Inference before enrolling the agent runtime."
-    : !targetKnown
-      ? "The architecture decision has not loaded, so the production artefact requirements cannot be applied."
-      : activeRuntimeExists
-        ? "Revoke the active execution boundary before enrolling its replacement."
-        : undefined;
+    : !agentModelReady
+      ? "Activate a default Agent model on Gateway → Models."
+      : !targetKnown
+        ? "The architecture decision has not loaded, so the production artefact requirements cannot be applied."
+        : activeRuntimeExists
+          ? "Revoke the active execution boundary before enrolling its replacement."
+          : undefined;
 
   return <div className="runtime-nodes-layout">
     <section className="grid gap-3" aria-label="Agent runtime">
@@ -406,13 +410,15 @@ export function RuntimeNodesPanel({
         <p className="m-0 max-w-[62ch] text-caption leading-relaxed text-muted">
           {!inferenceReady
             ? "Finish connecting inference first. The installer is seeded with that route."
-            : !targetKnown
-              ? "The architecture decision has not loaded, so production artefact requirements cannot be applied yet."
-              : awaitingNode
-                ? "The claim is live. Run the command on VM2; this step updates when the node heartbeats."
-                : nodes.length === 0
-                  ? "Generate a one-time command, run it on the Ubuntu VM, and paste the claim when the installer asks."
-                  : "This installation holds one Hermes execution boundary. Revoke it before enrolling a replacement."}
+            : !agentModelReady
+              ? "Activate a default Agent model on Gateway → Models."
+              : !targetKnown
+                ? "The architecture decision has not loaded, so production artefact requirements cannot be applied yet."
+                : awaitingNode
+                  ? "The claim is live. Run the command on VM2; this step updates when the node heartbeats."
+                  : nodes.length === 0
+                    ? "Generate a one-time command, run it on the Ubuntu VM, and paste the claim when the installer asks."
+                    : "This installation holds one Hermes execution boundary. Revoke it before enrolling a replacement."}
         </p>
         <div className="flex shrink-0 flex-wrap gap-2">
           <Button disabled={busy !== null} onClick={() => void load()}><SyncIcon size={16} />Refresh</Button>
@@ -570,7 +576,7 @@ export function RuntimeNodesPanel({
       * Drawer is OverlayChrome with one flag, so the focus trap, escape
       * handling and scroll lock are unchanged.
       */}
-    {editorOpen && inferenceReady && targetKnown && <Dialog
+    {editorOpen && inferenceReady && agentModelReady && targetKnown && <Dialog
       open
       icon={Server}
       title={invitation ? "Run this on VM2" : "Generate the VM2 installer"}

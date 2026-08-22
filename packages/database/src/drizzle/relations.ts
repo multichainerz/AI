@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, governedToolCall, toolApproval, modelDeployment, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, hermesCorpusSnapshot, hermesCorpusEntry, hermesCorpusMutation, hermesCorpusRevision, agentRunApproval } from "./schema.js";
+import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, governedToolCall, toolApproval, modelDeployment, modelObservation, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, hermesCorpusSnapshot, hermesCorpusEntry, hermesCorpusMutation, hermesCorpusRevision, agentRunApproval } from "./schema.js";
 
 export const enterpriseUserSessionRelations = relations(enterpriseUserSession, ({one}) => ({
 	enterpriseUser: one(enterpriseUser, {
@@ -23,6 +23,7 @@ export const serviceConnectionRelations = relations(serviceConnection, ({many}) 
 	secretRecords: many(secretRecord),
 	configurationRevisions: many(configurationRevision),
 	modelDeployments: many(modelDeployment),
+	modelObservations: many(modelObservation),
 	hermesRuntimeNodes: many(hermesRuntimeNode),
 }));
 
@@ -131,6 +132,13 @@ export const toolApprovalRelations = relations(toolApproval, ({one}) => ({
 export const modelDeploymentRelations = relations(modelDeployment, ({one}) => ({
 	serviceConnection: one(serviceConnection, {
 		fields: [modelDeployment.connectionId],
+		references: [serviceConnection.id]
+	}),
+}));
+
+export const modelObservationRelations = relations(modelObservation, ({one}) => ({
+	serviceConnection: one(serviceConnection, {
+		fields: [modelObservation.connectionId],
 		references: [serviceConnection.id]
 	}),
 }));

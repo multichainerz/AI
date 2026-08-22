@@ -45,6 +45,7 @@ const api = vi.hoisted(() => ({
   getOnboardingSnapshot: vi.fn(),
   getHermesRuntimeNodes: vi.fn(),
   runOnboardingValidation: vi.fn(),
+  getModelDeployments: vi.fn(),
 }));
 
 vi.mock("./api.js", async () => {
@@ -58,6 +59,7 @@ const session = { role: "PLATFORM_ADMIN", scopes: [], passwordChangeRequired: fa
 
 function connection(kind: ServiceKind, baseUrl: string): ServiceConnectionSummary {
   return {
+    id: `${kind.toLowerCase()}-connection`,
     kind,
     baseUrl,
     enabled: true,
@@ -152,6 +154,14 @@ beforeEach(() => {
   api.getOnboardingSnapshot.mockResolvedValue(snapshot);
   api.getHermesRuntimeNodes.mockResolvedValue({ items: [] });
   api.runOnboardingValidation.mockResolvedValue(snapshot);
+  api.getModelDeployments.mockResolvedValue({
+    items: [{
+      workload: "AGENT",
+      status: "ACTIVE",
+      isDefault: true,
+      connection: { id: "inference-connection" },
+    }],
+  });
   for (const spy of Object.values(callbacks)) spy.mockReset();
 });
 

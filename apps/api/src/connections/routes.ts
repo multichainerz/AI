@@ -7,6 +7,7 @@ import {
   inferenceCatalogueResultSchema,
   inferenceDiscoveryRequestSchema,
   inferenceDiscoveryResultSchema,
+  modelRefreshResultSchema,
   rollbackConfigurationRequestSchema,
   rollbackConfigurationResultSchema,
   serviceConnectionIdentifierSchema,
@@ -16,7 +17,12 @@ import {
   updateConnectionMonitoringControlSchema,
 } from "@orcasynapse/contracts";
 import type { FastifyInstance } from "fastify";
-import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
+import {
+  authenticateAdministrator,
+  requireAdmin,
+  type AdminSessionManager,
+} from "../auth/admin-session.js";
+import { ModelRefreshError, type InferenceRefreshService } from "../models/inference-refresh-service.js";
 import {
   ConnectionConflictError,
   ConnectionAuthorizationError,
@@ -37,6 +43,7 @@ interface ConnectionRouteDependencies {
   discoverer?: InferenceDiscoveryService;
   cataloguer?: InferenceCatalogueService;
   monitor?: ConnectionMonitoringManager;
+  refresher?: InferenceRefreshService;
 }
 
 export async function registerConnectionRoutes(
@@ -224,6 +231,59 @@ export async function registerConnectionRoutes(
       }
       if (error instanceof ConnectionRevisionConflictError) {
         return reply.code(409).send({ error: "REVISION_CONFLICT", message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post<{ Params: { id: string } }>("/:id/models/refresh", async (request, reply) => {
+    if (!dependencies.sessionManager) {
+      return reply.code(423).send({
+        error: "PLATFORM_LOCKED",
+        message: "OrcaSynapse administrator sessions are not ready.",
+      });
+    }
+    const authentication = await authenticateAdministrator(request, reply, dependencies.sessionManager);
+    if (authentication.outcome === "REFUSED") return;
+    if (authentication.outcome === "NO_SESSION") {
+      return reply.code(401).send({
+        error: "UNAUTHORIZED",
+        message: "An active administrator session with the required scope is required.",
+      });
+    }
+    const { principal } = authentication;
+    if (!principal.scopes.includes("models:manage") && !principal.scopes.includes("connections:test")) {
+      return reply.code(403).send({
+        error: "FORBIDDEN",
+        message: "The administrator session does not grant 'models:manage' or 'connections:test'.",
+      });
+    }
+    if (!serviceConnectionIdentifierSchema.safeParse(request.params.id).success) {
+      return reply.code(400).send({
+        error: "INVALID_CONNECTION",
+        message: "Connection identifier is invalid.",
+      });
+    }
+    if (!dependencies.refresher) {
+      return reply.code(503).send({
+        error: "REFRESH_UNAVAILABLE",
+        message: "Model catalogue refresh is not available.",
+      });
+    }
+    try {
+      return modelRefreshResultSchema.parse(await dependencies.refresher.refresh(principal, request.params.id));
+    } catch (error) {
+      if (error instanceof ConnectionNotFoundError) {
+        return reply.code(404).send({ error: "NOT_FOUND", message: error.message });
+      }
+      if (error instanceof ModelRefreshError && error.code === "AUTH_REJECTED") {
+        return reply.code(400).send({ error: "CATALOGUE_KEY_REJECTED", message: error.message });
+      }
+      if (error instanceof ModelRefreshError && error.code === "NOT_CONFIGURED") {
+        return reply.code(409).send({ error: "MODEL_REFRESH_NOT_CONFIGURED", message: error.message });
+      }
+      if (error instanceof ModelRefreshError) {
+        return reply.code(502).send({ error: "CATALOGUE_UPSTREAM_FAILED", message: error.message });
       }
       throw error;
     }

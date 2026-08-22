@@ -111,8 +111,12 @@ import {
   type RecordProductionReadinessApproval,
   modelDeploymentListSchema,
   modelDeploymentSchema,
+  modelObservationListSchema,
+  modelRefreshResultSchema,
   type ModelDeployment,
   type ModelDeploymentList,
+  type ModelObservationList,
+  type ModelRefreshResult,
   type CreateModelDeployment,
   type UpdateModelDeployment,
   type ChangeModelDeploymentState,
@@ -839,6 +843,22 @@ export async function getAgentMetrics(): Promise<AgentMetrics> {
 export async function getModelDeployments(): Promise<ModelDeploymentList> {
   const response = await fetch("/api/v1/admin/models", { credentials: "same-origin" });
   return modelDeploymentListSchema.parse(await parsedResponse(response));
+}
+
+export async function getModelObservations(connectionId: string): Promise<ModelObservationList> {
+  const response = await fetch(
+    `/api/v1/admin/models/observations?connectionId=${encodeURIComponent(connectionId)}`,
+    { credentials: "same-origin" },
+  );
+  return modelObservationListSchema.parse(await parsedResponse(response));
+}
+
+export async function refreshConnectionModels(connectionId: string): Promise<ModelRefreshResult> {
+  const response = await fetch(
+    `/api/v1/admin/connections/${encodeURIComponent(connectionId)}/models/refresh`,
+    { method: "POST", credentials: "same-origin" },
+  );
+  return modelRefreshResultSchema.parse(await parsedResponse(response));
 }
 
 export async function createModelDeployment(input: CreateModelDeployment): Promise<ModelDeployment> {

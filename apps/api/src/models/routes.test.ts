@@ -36,6 +36,11 @@ const route: ModelDeployment = {
   updatedBy: session.id,
   createdAt: "2026-07-30T00:00:00.000Z",
   updatedAt: "2026-07-30T00:00:00.000Z",
+  observedContextWindowTokens: null,
+  observedMaxOutputTokens: null,
+  inputModalities: [],
+  missingFromUpstream: false,
+  lastSeenAt: null,
 };
 
 class Sessions implements AdminSessionManager {
@@ -47,6 +52,9 @@ class Sessions implements AdminSessionManager {
 function manager(): ModelManager {
   return {
     list: vi.fn(async () => ({ items: [route] })),
+    listObservations: vi.fn(async () => ({ connectionId: CONNECTION_ID, refreshedAt: null, items: [] })),
+    replaceObservations: vi.fn(async () => ({ upserted: 0, vanished: 0 })),
+    maybeBackfillLegacyAlias: vi.fn(async () => null),
     create: vi.fn(async (): Promise<ModelDeployment> => ({ ...route, status: "DRAFT", isDefault: false, firstActivatedAt: null, revision: 1 })),
     update: vi.fn(async () => route),
     activate: vi.fn(async () => route),
@@ -76,6 +84,19 @@ describe("model catalogue routes", () => {
     expect((await app.inject({ method: "POST", url: `/api/v1/admin/models/${MODEL_ID}/activate`, headers, payload: { expectedRevision: 1, reason: "x" } })).statusCode).toBe(400);
     expect((await app.inject({ method: "POST", url: `/api/v1/admin/models/${MODEL_ID}/activate`, headers, payload: { expectedRevision: 1, reason: "Pilot approval", makeDefault: true } })).statusCode).toBe(200);
     expect(modelManager.activate).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }), MODEL_ID, expect.objectContaining({ makeDefault: true }));
+  });
+
+  it("lists observations for a connection", async () => {
+    const { app, modelManager } = await modelApp();
+    const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/v1/admin/models/observations?connectionId=${CONNECTION_ID}`,
+      headers,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toEqual({ connectionId: CONNECTION_ID, refreshedAt: null, items: [] });
+    expect(modelManager.listObservations).toHaveBeenCalledWith(CONNECTION_ID);
   });
 
   it("rejects malformed model identifiers before database access", async () => {

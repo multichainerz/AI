@@ -880,6 +880,27 @@ export const modelDeployment = pgTable("ModelDeployment", {
 	check("ModelDeployment_default_status_check", sql`("isDefault" = false) OR (status = 'ACTIVE'::"ModelDeploymentStatus")`),
 ]);
 
+export const modelObservation = pgTable("ModelObservation", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	connectionId: uuid().notNull(),
+	alias: varchar({ length: 200 }).notNull(),
+	displayName: varchar({ length: 300 }),
+	observedContextWindowTokens: integer(),
+	observedMaxOutputTokens: integer(),
+	inputModalities: text().array().default([]).notNull(),
+	ownedBy: varchar({ length: 200 }),
+	lastSeenAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	missingFromUpstream: boolean().default(false).notNull(),
+}, (table) => [
+	uniqueIndex("ModelObservation_connectionId_alias_key").using("btree", table.connectionId.asc().nullsLast(), table.alias.asc().nullsLast()),
+	index("ModelObservation_connectionId_idx").using("btree", table.connectionId.asc().nullsLast()),
+	foreignKey({
+			columns: [table.connectionId],
+			foreignColumns: [serviceConnection.id],
+			name: "ModelObservation_connectionId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
 export const promptTemplate = pgTable("PromptTemplate", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),

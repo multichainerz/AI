@@ -7,6 +7,7 @@ import {
   guardrailPolicy,
   hermesRuntimeNode,
   inferenceGatewayRequest,
+  modelDeployment,
   serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
@@ -82,11 +83,17 @@ function endlessChunkedError() {
 /**
  * Provisions the connections the gateway authenticates against. Only credential
  * resolution is faked: decrypting envelope secrets belongs to the connection
- * manager, not to the gateway under test.
+ * manager, not to the gateway under test. Seeds the ACTIVE default AGENT
+ * route the gateway now requires unless `seedDefaultAgent` is false.
  */
 async function harness(
   fetcher: typeof fetch = okResponse(),
   inferenceConfiguration: Record<string, unknown> = {},
+  options: {
+    seedDefaultAgent?: boolean;
+    connectionModelAlias?: string | null;
+    agentModelAlias?: string;
+  } = {},
 ) {
   const [hermesConnection] = await context.database
     .insert(serviceConnection)
@@ -112,7 +119,7 @@ async function harness(
     serviceConnectionId: hermesConnection!.id,
   });
 
-  await context.database.insert(serviceConnection).values({
+  const [inference] = await context.database.insert(serviceConnection).values({
     slug: `inference-${randomUUID().slice(0, 8)}`,
     displayName: "Inference",
     kind: "INFERENCE",
@@ -121,7 +128,39 @@ async function harness(
     status: "HEALTHY",
     baseUrl: "https://vllm.internal",
     configuration: {},
-  });
+  }).returning({ id: serviceConnection.id });
+
+  const agentModelAlias = options.agentModelAlias ?? "approved-agent";
+  if (options.seedDefaultAgent !== false) {
+    const maxOutputTokens = typeof inferenceConfiguration.maxOutputTokens === "number"
+      ? inferenceConfiguration.maxOutputTokens
+      : 4_096;
+    await context.database.insert(modelDeployment).values({
+      connectionId: inference!.id,
+      slug: `agent-${randomUUID().slice(0, 8)}`,
+      displayName: "Agent model",
+      workload: "AGENT",
+      modelAlias: agentModelAlias,
+      version: "1.0.0",
+      contextWindowTokens: 131_072,
+      maxOutputTokens,
+      maxConcurrentRequests: 2,
+      status: "ACTIVE",
+      isDefault: true,
+      firstActivatedAt: new Date(),
+    });
+  }
+
+  const mockConfiguration: Record<string, unknown> = {
+    inferenceBackend: "VLLM",
+    maxOutputTokens: 4_096,
+    ...inferenceConfiguration,
+  };
+  if (options.connectionModelAlias === undefined) {
+    mockConfiguration.modelAlias = "approved-agent";
+  } else if (options.connectionModelAlias !== null) {
+    mockConfiguration.modelAlias = options.connectionModelAlias;
+  }
 
   const connections = {
     resolveForDiagnostic: vi.fn(async (id: string) =>
@@ -139,12 +178,7 @@ async function harness(
           activeRevision: 1,
           kind: "INFERENCE" as const,
           baseUrl: "https://vllm.internal",
-          configuration: {
-            inferenceBackend: "VLLM",
-            modelAlias: "approved-agent",
-            maxOutputTokens: 4_096,
-            ...inferenceConfiguration,
-          },
+          configuration: mockConfiguration,
           secrets: { apiKey: "upstream-key" },
         },
     ),
@@ -159,6 +193,44 @@ async function harness(
 }
 
 describe("DrizzleInferenceGateway", () => {
+  it("forwards the default AGENT alias when the connection has no modelAlias", async () => {
+    const { gateway, fetcher } = await harness(okResponse(), {}, {
+      connectionModelAlias: null,
+      agentModelAlias: "catalogue-agent",
+    });
+
+    await gateway.chat("runtime-key", request, new AbortController().signal);
+
+    const body = JSON.parse(String(vi.mocked(fetcher).mock.calls[0]![1]!.body));
+    expect(body).toMatchObject({ model: "catalogue-agent" });
+  });
+
+  it("refuses when only a connection alias is set and no default AGENT route exists", async () => {
+    const { gateway, fetcher } = await harness(okResponse(), {}, {
+      seedDefaultAgent: false,
+      connectionModelAlias: "legacy-connection-alias",
+    });
+
+    await expect(gateway.chat("runtime-key", request, new AbortController().signal))
+      .rejects.toMatchObject({
+        code: "NOT_CONFIGURED",
+        message: "Exactly one evaluated default Agent model route must be active.",
+      });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("forwards the default AGENT alias rather than a leftover connection alias", async () => {
+    const { gateway, fetcher } = await harness(okResponse(), {}, {
+      connectionModelAlias: "legacy-connection-alias",
+      agentModelAlias: "catalogue-agent",
+    });
+
+    await gateway.chat("runtime-key", request, new AbortController().signal);
+
+    const body = JSON.parse(String(vi.mocked(fetcher).mock.calls[0]![1]!.body));
+    expect(body).toMatchObject({ model: "catalogue-agent" });
+  });
+
   it("rejects credentials that are not scoped to the enrolled runtime", async () => {
     const { gateway, fetcher } = await harness();
 

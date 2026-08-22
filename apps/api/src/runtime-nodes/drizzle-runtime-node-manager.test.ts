@@ -9,6 +9,7 @@ import {
   hermesNodeRequestNonce,
   hermesRuntimeNode,
   localAdministrator,
+  modelDeployment,
   platformArchitectureDecision,
   runtimeToolsetAdmission,
   secretRecord,
@@ -75,18 +76,59 @@ function nodeIdentity() {
   return { privateKey, publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString() };
 }
 
-/** Satisfies both installer prerequisites: an admin and one healthy inference route. */
-async function seedPrerequisites() {
+async function insertInference(overrides: Record<string, unknown> = {}): Promise<string> {
+  const [connection] = await context.database.insert(serviceConnection).values({
+    slug: `inference-${randomUUID().slice(0, 8)}`,
+    displayName: "Inference",
+    kind: "INFERENCE",
+    environment: "DEVELOPMENT",
+    enabled: true,
+    status: "HEALTHY",
+    baseUrl: "https://vllm.internal",
+    configuration: {},
+    ...overrides,
+  } as never).returning({ id: serviceConnection.id });
+  return connection!.id;
+}
+
+async function insertAgentRoute(connectionId: string, overrides: Record<string, unknown> = {}): Promise<void> {
+  await context.database.insert(modelDeployment).values({
+    connectionId,
+    slug: `agent-${randomUUID().slice(0, 8)}`,
+    displayName: "Agent model",
+    workload: "AGENT",
+    modelAlias: "hermes-agent",
+    version: "1.0.0",
+    contextWindowTokens: 131_072,
+    maxOutputTokens: 8_192,
+    maxConcurrentRequests: 2,
+    status: "ACTIVE",
+    isDefault: true,
+    firstActivatedAt: new Date(),
+    ...overrides,
+  } as never);
+}
+
+/** Satisfies both installer prerequisites: an admin, one healthy inference route, and a default AGENT model. */
+async function seedPrerequisites(options: {
+  connectionModelAlias?: string | null;
+  defaultAgentAlias?: string | null;
+} = {}): Promise<{ connectionId: string }> {
   await context.database.insert(localAdministrator).values({
     username: "admin", displayName: "Local Administrator",
     passwordHash: "argon2id$placeholder", role: "PLATFORM_ADMIN", passwordChangeRequired: false,
   });
-  await context.database.insert(serviceConnection).values({
-    slug: `inference-${randomUUID().slice(0, 8)}`,
-    displayName: "Inference", kind: "INFERENCE", environment: "DEVELOPMENT",
-    enabled: true, status: "HEALTHY", baseUrl: "https://vllm.internal",
-    configuration: { modelAlias: "hermes-agent" },
+  const connectionId = await insertInference({
+    configuration: options.connectionModelAlias === null
+      ? {}
+      : { modelAlias: options.connectionModelAlias ?? "hermes-agent" },
   });
+  if (options.defaultAgentAlias !== null) {
+    await insertAgentRoute(connectionId, {
+      modelAlias: options.defaultAgentAlias ?? "hermes-agent",
+    });
+  }
+  return { connectionId };
 }
 
 function invitationInput(overrides: Record<string, unknown> = {}) {
@@ -166,6 +208,44 @@ describe("DrizzleHermesRuntimeNodeManager readiness", () => {
     expect(await manager().installerReadiness()).toMatchObject({ inferenceReady: false });
     await expect(manager().createInvitation(principal, invitationInput()))
       .rejects.toThrow(/exactly one healthy AI Inference route/);
+  });
+
+  it("refuses enrolment without an ACTIVE default AGENT route even if the connection alias is set", async () => {
+    await seedPrerequisites({ defaultAgentAlias: null });
+
+    expect(await manager().installerReadiness()).toMatchObject({ inferenceReady: false, ready: false });
+    await expect(manager().createInvitation(principal, invitationInput()))
+      .rejects.toThrow(/Activate a default Agent model on Gateway → Models/);
+  });
+
+  it("is ready when the default AGENT route exists even if the connection alias is absent", async () => {
+    await seedPrerequisites({ connectionModelAlias: null, defaultAgentAlias: "catalogue-agent" });
+
+    expect(await manager().installerReadiness()).toMatchObject({ inferenceReady: true, ready: true });
+  });
+
+  it("refuses when the default AGENT route is on a different connection than the unique healthy inference", async () => {
+    await seedPrerequisites({ defaultAgentAlias: null });
+    const staleId = await insertInference({
+      displayName: "Stale inference",
+      enabled: false,
+      status: "DISABLED",
+      baseUrl: "https://vllm-old.internal",
+    });
+    await insertAgentRoute(staleId);
+
+    expect(await manager().installerReadiness()).toMatchObject({ inferenceReady: false, ready: false });
+    await expect(manager().createInvitation(principal, invitationInput()))
+      .rejects.toThrow(/Activate a default Agent model on Gateway → Models/);
+  });
+
+  it("refuses a unique ACTIVE AGENT that is not the default", async () => {
+    const { connectionId } = await seedPrerequisites({ defaultAgentAlias: null });
+    await insertAgentRoute(connectionId, { isDefault: false });
+
+    expect(await manager().installerReadiness()).toMatchObject({ inferenceReady: false, ready: false });
+    await expect(manager().createInvitation(principal, invitationInput()))
+      .rejects.toThrow(/Activate a default Agent model on Gateway → Models/);
   });
 });
 
@@ -262,6 +342,47 @@ describe("DrizzleHermesRuntimeNodeManager enrollment", () => {
     expect(revisions).toHaveLength(1);
     expect(revisions[0]?.revision).toBe(1);
     expect(identity.publicKeyPem).toContain("BEGIN PUBLIC KEY");
+  });
+
+  it("seeds VM2 from the default AGENT route rather than the connection alias", async () => {
+    await seedPrerequisites({ connectionModelAlias: "legacy-connection", defaultAgentAlias: "catalogue-agent" });
+    const invitation = await manager().createInvitation(principal, invitationInput());
+    const identity = nodeIdentity();
+    const result = await manager().enroll(
+      enrollInput(invitation.bundle.nodeId, invitation.bundle.token, identity.publicKeyPem),
+      "203.0.113.10",
+    );
+    expect(result.modelBootstrap.modelAlias).toBe("catalogue-agent");
+  });
+
+  it("refuses enroll when the default AGENT route is not on the unique healthy inference", async () => {
+    const { connectionId } = await seedPrerequisites();
+    const invitation = await manager().createInvitation(principal, invitationInput());
+    const identity = nodeIdentity();
+    await context.database
+      .update(serviceConnection)
+      .set({ enabled: false, status: "DISABLED" })
+      .where(eq(serviceConnection.id, connectionId));
+    await insertInference({
+      displayName: "Replacement inference",
+      baseUrl: "https://vllm-new.internal",
+    });
+
+    await expect(manager().enroll(
+      enrollInput(invitation.bundle.nodeId, invitation.bundle.token, identity.publicKeyPem),
+      "203.0.113.10",
+    )).rejects.toThrow(/Activate a default Agent model on Gateway → Models/);
+  });
+
+  it("seeds VM2 from the default AGENT route when the connection alias is absent", async () => {
+    await seedPrerequisites({ connectionModelAlias: null, defaultAgentAlias: "catalogue-agent" });
+    const invitation = await manager().createInvitation(principal, invitationInput());
+    const identity = nodeIdentity();
+    const result = await manager().enroll(
+      enrollInput(invitation.bundle.nodeId, invitation.bundle.token, identity.publicKeyPem),
+      "203.0.113.10",
+    );
+    expect(result.modelBootstrap.modelAlias).toBe("catalogue-agent");
   });
 
   it("consumes the claim so it cannot be enrolled twice", async () => {
@@ -715,19 +836,22 @@ describe("runtime node pure helpers", () => {
       .toBeNull();
   });
 
-  it("seeds a model alias only from exactly one usable inference route", () => {
-    expect(seedableInferenceModelAlias([])).toBeNull();
+  it("seeds a model alias only from one healthy endpoint and one default AGENT route", () => {
+    const route = (connectionId: string, modelAlias = "x") => ({ connectionId, modelAlias });
+    expect(seedableInferenceModelAlias([], [route("a")])).toBeNull();
     expect(seedableInferenceModelAlias([
-      { baseUrl: "https://a", configuration: { modelAlias: "x" } },
-      { baseUrl: "https://b", configuration: { modelAlias: "y" } },
-    ])).toBeNull();
-    expect(seedableInferenceModelAlias([{ baseUrl: null, configuration: { modelAlias: "x" } }])).toBeNull();
-    expect(seedableInferenceModelAlias([{ baseUrl: "https://a", configuration: {} }])).toBeNull();
-    expect(seedableInferenceModelAlias([{ baseUrl: "https://a", configuration: { modelAlias: " x " } }])).toBe("x");
-    expect(seedableInferenceModelAlias([{
-      baseUrl: "https://openrouter.ai",
-      configuration: { modelAlias: "anthropic/claude-sonnet-4" },
-    }])).toBe("anthropic/claude-sonnet-4");
+      { id: "a", baseUrl: "https://a" },
+      { id: "b", baseUrl: "https://b" },
+    ], [route("a")])).toBeNull();
+    expect(seedableInferenceModelAlias([{ id: "a", baseUrl: null }], [route("a")])).toBeNull();
+    expect(seedableInferenceModelAlias([{ id: "a", baseUrl: "https://a" }], [])).toBeNull();
+    expect(seedableInferenceModelAlias([{ id: "a", baseUrl: "https://a" }], [route("a"), route("a", "y")])).toBeNull();
+    expect(seedableInferenceModelAlias([{ id: "a", baseUrl: "https://a" }], [route("b")])).toBeNull();
+    expect(seedableInferenceModelAlias([{ id: "a", baseUrl: "https://a" }], [{ connectionId: "a", modelAlias: " x " }])).toBe("x");
+    expect(seedableInferenceModelAlias(
+      [{ id: "openrouter", baseUrl: "https://openrouter.ai" }],
+      [{ connectionId: "openrouter", modelAlias: "anthropic/claude-sonnet-4" }],
+    )).toBe("anthropic/claude-sonnet-4");
   });
 
   it("points the runtime at the control plane's internal gateway path", () => {

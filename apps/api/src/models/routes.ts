@@ -4,6 +4,8 @@ import {
   modelDeploymentListSchema,
   modelDeploymentIdentifierSchema,
   modelDeploymentSchema,
+  modelObservationListSchema,
+  serviceConnectionIdentifierSchema,
   updateModelDeploymentSchema,
 } from "@orcasynapse/contracts";
 import type { FastifyInstance } from "fastify";
@@ -25,6 +27,15 @@ export async function registerModelRoutes(app: FastifyInstance, dependencies: Mo
   app.get("/", async (request, reply) => {
     if (!(await requireAdmin(request, reply, dependencies.sessionManager, "models:read"))) return;
     return modelDeploymentListSchema.parse(await dependencies.manager!.list());
+  });
+
+  app.get("/observations", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, dependencies.sessionManager, "models:read"))) return;
+    const connectionId = (request.query as { connectionId?: unknown }).connectionId;
+    if (!serviceConnectionIdentifierSchema.safeParse(connectionId).success) {
+      return reply.code(400).send({ error: "INVALID_CONNECTION", message: "A connection identifier is required." });
+    }
+    return modelObservationListSchema.parse(await dependencies.manager!.listObservations(connectionId as string));
   });
 
   app.post("/", async (request, reply) => {

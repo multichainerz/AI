@@ -449,6 +449,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.connectionTestService ? { tester: runtime.connectionTestService } : {}),
         ...(runtime.inferenceDiscoveryService ? { discoverer: runtime.inferenceDiscoveryService } : {}),
         ...(runtime.inferenceCatalogueService ? { cataloguer: runtime.inferenceCatalogueService } : {}),
+        ...(runtime.inferenceRefreshService ? { refresher: runtime.inferenceRefreshService } : {}),
         ...(runtime.connectionMonitor ? { monitor: runtime.connectionMonitor } : {}),
       }),
     { prefix: "/api/v1/admin/connections" },

@@ -249,7 +249,7 @@ describe("DrizzleAgentManager profiles", () => {
    * every forwarded request, so a hand-typed profile alias was a manual copy
    * of platform state whose drift refused activations and 404'd upstreams.
    */
-  const seedAgentRoute = async (modelAlias: string) => {
+  const seedAgentRoute = async (modelAlias: string, overrides: Record<string, unknown> = {}) => {
     const [connection] = await context.database.insert(serviceConnection).values({
       slug: `inference-${randomUUID().slice(0, 8)}`,
       displayName: "Inference", kind: "INFERENCE", environment: "DEVELOPMENT",
@@ -261,7 +261,8 @@ describe("DrizzleAgentManager profiles", () => {
       status: "ACTIVE", connectionId: connection!.id, version: "1",
       contextWindowTokens: 128_000, maxOutputTokens: 8_192, maxConcurrentRequests: 4,
       isDefault: true, firstActivatedAt: new Date(),
-    });
+      ...overrides,
+    } as never);
   };
   const inputWithoutAlias = () => {
     const { modelAlias: _alias, ...input } = profileInput();
@@ -276,7 +277,7 @@ describe("DrizzleAgentManager profiles", () => {
     expect(created.version.modelAlias).toBe("served-by-vllm");
   });
 
-  it("derives the model from the enabled inference connection when no route exists", async () => {
+  it("refuses to derive a model from the connection alias when no default AGENT route exists", async () => {
     await context.database.insert(serviceConnection).values({
       slug: `inference-${randomUUID().slice(0, 8)}`,
       displayName: "Inference", kind: "INFERENCE", environment: "DEVELOPMENT",
@@ -284,14 +285,55 @@ describe("DrizzleAgentManager profiles", () => {
       configuration: { modelAlias: "connection-model" },
     });
 
-    const created = await manager().createProfile(principal, inputWithoutAlias());
+    await expect(manager().createProfile(principal, inputWithoutAlias()))
+      .rejects.toThrow(/Activate a default Agent model on Gateway → Models/);
+  });
 
-    expect(created.version.modelAlias).toBe("connection-model");
+  it("refuses to derive a model from a unique non-default ACTIVE AGENT route", async () => {
+    await seedAgentRoute("only-active", { isDefault: false });
+
+    await expect(manager().createProfile(principal, inputWithoutAlias()))
+      .rejects.toThrow(/Activate a default Agent model on Gateway → Models/);
+  });
+
+  it("does not copy a connection alias onto a profile when minting a version", async () => {
+    const created = await manager().createProfile(principal, profileInput());
+    await context.database.insert(serviceConnection).values({
+      slug: `inference-${randomUUID().slice(0, 8)}`,
+      displayName: "Inference", kind: "INFERENCE", environment: "DEVELOPMENT",
+      enabled: true, status: "HEALTHY", baseUrl: "https://inference.internal",
+      configuration: { modelAlias: "connection-model" },
+    });
+
+    const updated = await manager().updateProfile(principal, created.id, { displayName: "No connection alias" } as never);
+
+    expect(updated.version.modelAlias).toBe("hermes-agent");
+  });
+
+  it("refuses activation when the catalogue is latched and the stored alias is not an ACTIVE AGENT route", async () => {
+    const created = await manager().createProfile(principal, profileInput());
+    const [connection] = await context.database.insert(serviceConnection).values({
+      slug: `inference-${randomUUID().slice(0, 8)}`,
+      displayName: "Inference", kind: "INFERENCE", environment: "DEVELOPMENT",
+      enabled: true, status: "HEALTHY", baseUrl: "https://inference.internal",
+      configuration: { modelAlias: "hermes-agent" },
+    }).returning({ id: serviceConnection.id });
+    await context.database.insert(modelDeployment).values({
+      slug: `route-${randomUUID().slice(0, 8)}`,
+      displayName: "Other route", modelAlias: "other-agent", workload: "AGENT",
+      status: "ACTIVE", connectionId: connection!.id, version: "1",
+      contextWindowTokens: 128_000, maxOutputTokens: 8_192, maxConcurrentRequests: 4,
+      isDefault: true, firstActivatedAt: new Date(),
+    });
+    await allowActivation();
+
+    await expect(manager().activateProfile(principal, created.id))
+      .rejects.toThrow(/Activate the 'hermes-agent' agent model route before activating this profile/);
   });
 
   it("refuses creation when nothing names a model", async () => {
     await expect(manager().createProfile(principal, inputWithoutAlias()))
-      .rejects.toThrow(/Configure the AI Inference connection/);
+      .rejects.toThrow(/Activate a default Agent model on Gateway → Models/);
   });
 
   it("follows a route change on the next save", async () => {

@@ -30,6 +30,7 @@ import {
   hermesNodeRequestNonce,
   hermesRuntimeNode,
   localAdministrator,
+  modelDeployment,
   platformArchitectureDecision,
   runtimeToolsetAdmission,
   secretRecord,
@@ -107,23 +108,47 @@ type StoredNode = {
 type RuntimePrerequisites = {
   dashboardReady: boolean;
   inferenceReady: boolean;
+  uniqueHealthyInference: boolean;
 };
 
 type InferenceSeedCandidate = {
+  id: string;
   baseUrl: string | null;
-  configuration: unknown;
 };
 
-export function seedableInferenceModelAlias(connections: readonly InferenceSeedCandidate[]): string | null {
+type DefaultAgentRoute = {
+  modelAlias: string;
+  connectionId: string;
+};
+
+export function seedableInferenceModelAlias(
+  connections: readonly InferenceSeedCandidate[],
+  defaultAgentRoutes: readonly DefaultAgentRoute[],
+): string | null {
   if (connections.length !== 1 || !connections[0]?.baseUrl) return null;
-  const configuration = connections[0].configuration
-    && typeof connections[0].configuration === "object"
-    && !Array.isArray(connections[0].configuration)
-    ? connections[0].configuration as Record<string, unknown>
-    : {};
-  return typeof configuration.modelAlias === "string" && configuration.modelAlias.trim().length > 0
-    ? configuration.modelAlias.trim()
-    : null;
+  if (defaultAgentRoutes.length !== 1) return null;
+  const connection = connections[0]!;
+  const route = defaultAgentRoutes[0]!;
+  if (route.connectionId !== connection.id) return null;
+  const alias = route.modelAlias.trim();
+  return alias.length > 0 ? alias : null;
+}
+
+async function activeDefaultAgentRoutes(
+  executor: { select: OrcaSynapseDatabase["select"] },
+): Promise<DefaultAgentRoute[]> {
+  return executor
+    .select({
+      modelAlias: modelDeployment.modelAlias,
+      connectionId: modelDeployment.connectionId,
+    })
+    .from(modelDeployment)
+    .where(and(
+      eq(modelDeployment.workload, "AGENT"),
+      eq(modelDeployment.status, "ACTIVE"),
+      eq(modelDeployment.isDefault, true),
+    ))
+    .limit(2);
 }
 
 function digest(value: string): Uint8Array<ArrayBuffer> {
@@ -562,7 +587,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
   }
 
   private async runtimePrerequisites(): Promise<RuntimePrerequisites> {
-    const [administrators, inferenceConnections] = await Promise.all([
+    const [administrators, inferenceConnections, defaultAgentRoutes] = await Promise.all([
       this.database
         .select({ total: count() })
         .from(localAdministrator)
@@ -571,7 +596,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           eq(localAdministrator.passwordChangeRequired, false),
         )),
       this.database
-        .select({ baseUrl: serviceConnection.baseUrl, configuration: serviceConnection.configuration })
+        .select({ id: serviceConnection.id, baseUrl: serviceConnection.baseUrl })
         .from(serviceConnection)
         .where(and(
           eq(serviceConnection.kind, "INFERENCE"),
@@ -579,10 +604,13 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           eq(serviceConnection.status, "HEALTHY"),
         ))
         .limit(2),
+      activeDefaultAgentRoutes(this.database),
     ]);
+    const uniqueHealthyInference = inferenceConnections.length === 1 && Boolean(inferenceConnections[0]?.baseUrl);
     return {
       dashboardReady: (administrators[0]?.total ?? 0) > 0,
-      inferenceReady: seedableInferenceModelAlias(inferenceConnections) !== null,
+      uniqueHealthyInference,
+      inferenceReady: seedableInferenceModelAlias(inferenceConnections, defaultAgentRoutes) !== null,
     };
   }
 
@@ -596,7 +624,8 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     ]);
     const invitationReady = (activeInvitations[0]?.total ?? 0) > 0;
     return {
-      ...prerequisites,
+      dashboardReady: prerequisites.dashboardReady,
+      inferenceReady: prerequisites.inferenceReady,
       invitationReady,
       // The installer contains no claim or reusable credential. Keep it
       // available after enrollment so a partially installed node can rerun the
@@ -610,8 +639,11 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     if (!prerequisites.dashboardReady) {
       throw new RuntimeNodeConflictError("Complete the dashboard administrator setup before enrolling the Agentic System.");
     }
+    if (!prerequisites.uniqueHealthyInference) {
+      throw new RuntimeNodeConflictError("Configure and test exactly one healthy AI Inference route before enrolling Hermes.");
+    }
     if (!prerequisites.inferenceReady) {
-      throw new RuntimeNodeConflictError("Configure and test exactly one healthy AI Inference route with a served model before enrolling Hermes.");
+      throw new RuntimeNodeConflictError("Activate a default Agent model on Gateway → Models.");
     }
     const architecture = await this.architectureTarget();
     const productionViolation = enrollmentArtifactViolation(architecture, input);
@@ -800,7 +832,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       }
 
       const inferenceConnections = await transaction
-        .select()
+        .select({ id: serviceConnection.id, baseUrl: serviceConnection.baseUrl })
         .from(serviceConnection)
         .where(and(
           eq(serviceConnection.kind, "INFERENCE"),
@@ -808,9 +840,15 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           eq(serviceConnection.status, "HEALTHY"),
         ))
         .limit(2);
-      const modelAlias = seedableInferenceModelAlias(inferenceConnections);
+      const defaultAgentRoutes = await activeDefaultAgentRoutes(transaction);
+      const modelAlias = seedableInferenceModelAlias(inferenceConnections, defaultAgentRoutes);
       if (!modelAlias) {
-        throw new RuntimeNodeEnrollmentError("Exactly one healthy inference server route with a model alias is required.", "INVALID");
+        throw new RuntimeNodeEnrollmentError(
+          inferenceConnections.length === 1 && inferenceConnections[0]?.baseUrl
+            ? "Activate a default Agent model on Gateway → Models."
+            : "Exactly one healthy inference server route is required.",
+          "INVALID",
+        );
       }
       const gatewayKey = randomBytes(32).toString("base64url");
       const modelBootstrap = {

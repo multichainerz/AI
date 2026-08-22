@@ -17,6 +17,7 @@ import { deriveWorkspaceReadiness, type WorkspaceReadiness } from "./platform-re
 function readiness(overrides: Partial<WorkspaceReadiness> = {}): WorkspaceReadiness {
   return {
     inferenceReady: false,
+    agentModelReady: false,
     hermesReady: false,
     runtimeNodeReady: false,
     profileReady: false,
@@ -31,10 +32,11 @@ function readiness(overrides: Partial<WorkspaceReadiness> = {}): WorkspaceReadin
 
 function inference(overrides: Partial<ServiceConnectionSummary> = {}): ServiceConnectionSummary {
   return {
+    id: "inference-1",
     kind: "INFERENCE",
     enabled: true,
     status: "HEALTHY",
-    configuration: { modelAlias: "laguna-s" },
+    configuration: {},
     ...overrides,
   } as ServiceConnectionSummary;
 }
@@ -71,7 +73,7 @@ describe("the three setup steps", () => {
     expect(steps.map((step) => step.status)).toEqual(["current", "blocked", "blocked"]);
 
     const enrolled = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true }),
+      readiness: readiness({ inferenceReady: true, agentModelReady: true }),
       connections: [inference()],
     }));
     expect(enrolled.map((step) => step.status)).toEqual(["done", "current", "blocked"]);
@@ -80,7 +82,7 @@ describe("the three setup steps", () => {
   it("reports every step done once execution is ready", () => {
     const steps = deriveSetupSteps(input({
       readiness: readiness({
-        inferenceReady: true, hermesReady: true, runtimeNodeReady: true,
+        inferenceReady: true, agentModelReady: true, hermesReady: true, runtimeNodeReady: true,
         agenticInfrastructureReady: true, profileReady: true, executionReady: true,
       }),
       connections: [inference()],
@@ -95,17 +97,20 @@ describe("the three setup steps", () => {
 });
 
 describe("step 1 — the inference server", () => {
-  it("is not satisfied by a healthy connection with no served model", () => {
-    /*
-     * `seedableInferenceModelAlias` (drizzle-runtime-node-manager.ts:94-104)
-     * returns null without a non-empty `configuration.modelAlias`, so a
-     * connection that tests HEALTHY still cannot seed an enrolment.
-     */
+  it("is done with exactly one HEALTHY connection and an empty modelAlias", () => {
     const steps = deriveSetupSteps(input({
       readiness: readiness({ inferenceReady: true }),
-      connections: [inference({ configuration: {} as ServiceConnectionSummary["configuration"] })],
+      connections: [inference()],
     }));
-    expect(blockers(steps, "inference").join(" ")).toMatch(/served model/i);
+    expect(steps[0]?.status).toBe("done");
+    expect(blockers(steps, "inference")).toEqual([]);
+  });
+
+  it("is still blocked when the only inference row is untested", () => {
+    const steps = deriveSetupSteps(input({
+      connections: [inference({ status: "NOT_TESTED" })],
+    }));
+    expect(blockers(steps, "inference").join(" ")).toMatch(/health test/i);
     expect(steps[0]?.status).not.toBe("done");
   });
 
@@ -113,45 +118,16 @@ describe("step 1 — the inference server", () => {
     expect(blockers(deriveSetupSteps(input()), "inference").join(" ")).toMatch(/no inference connection/i);
   });
 
-  it("names the missing served model however many connections are healthy", () => {
-    /*
-     * The guard clause with the hole: `healthy.length === 1 && alias === null`
-     * sat after a branch that had already caught `length === 0`, so the `=== 1`
-     * only *excluded* the multi-connection case. Two healthy endpoints with no
-     * served model on either produced no step-1 blocker at all — the one state
-     * where the operator most needs to be told which of the two to fix.
-     */
+  it("stays Done when two healthy endpoints exist — the runtime step carries that blocker", () => {
     const steps = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true }),
-      connections: [
-        inference({ configuration: {} as ServiceConnectionSummary["configuration"] }),
-        inference({ configuration: {} as ServiceConnectionSummary["configuration"] }),
-      ],
+      readiness: readiness({ inferenceReady: false }),
+      connections: [inference(), inference()],
     }));
 
-    expect(blockers(steps, "inference").join(" ")).toMatch(/served model/i);
-    expect(steps[0]?.status).not.toBe("done");
-  });
-
-  it("does not flip step 1 backwards when the spare connection is disabled", () => {
-    /*
-     * The symptom the hole produced: with two model-less healthy connections
-     * step 1 read Done, and *disabling* one of them — strictly less deployment,
-     * strictly no new fault — moved it back to blocked. A step that walks
-     * backwards is read as the product losing state, not as a reason.
-     */
-    const modelless = { configuration: {} as ServiceConnectionSummary["configuration"] };
-    const both = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true }),
-      connections: [inference(modelless), inference(modelless)],
-    }));
-    const one = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true }),
-      connections: [inference(modelless), inference({ ...modelless, enabled: false })],
-    }));
-
-    expect(both[0]?.status).toBe(one[0]?.status);
-    expect(blockers(both, "inference")).toEqual(blockers(one, "inference"));
+    expect(steps[0]?.status).toBe("done");
+    expect(blockers(steps, "inference")).toEqual([]);
+    expect(blockers(steps, "runtime").join(" ")).toMatch(/exactly one/i);
+    expect(blockers(steps, "runtime").join(" ")).not.toMatch(/Gateway → Models/);
   });
 });
 
@@ -163,18 +139,29 @@ describe("step 2 — the agent runtime", () => {
      * enrolment rather than adding redundancy.
      */
     const steps = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true }),
+      readiness: readiness({ inferenceReady: false, agentModelReady: false }),
       connections: [inference(), inference()],
     }));
     expect(blockers(steps, "runtime").join(" ")).toMatch(/exactly one/i);
     expect(blockers(steps, "runtime").join(" ")).toMatch(/2/);
+    expect(blockers(steps, "runtime").join(" ")).not.toMatch(/Gateway → Models/);
+  });
+
+  it("blocks enrolment until an ACTIVE default AGENT route exists", () => {
+    const steps = deriveSetupSteps(input({
+      readiness: readiness({ inferenceReady: true, agentModelReady: false }),
+      connections: [inference()],
+    }));
+    expect(blockers(steps, "runtime")).toContain("Activate a default Agent model on Gateway → Models.");
+    expect(steps[0]?.status).toBe("done");
+    expect(steps[1]?.status).not.toBe("done");
   });
 
   it("waits for a heartbeat rather than treating enrolment as arrival", () => {
     // `enroll` leaves the node PENDING; status is first written by its own
     // heartbeat (drizzle-runtime-node-manager.ts:751-756).
     const steps = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true, hermesReady: true }),
+      readiness: readiness({ inferenceReady: true, agentModelReady: true, hermesReady: true }),
       connections: [inference()],
       runtimeNodes: [node({ status: "PENDING" })],
     }));
@@ -184,7 +171,7 @@ describe("step 2 — the agent runtime", () => {
   it("demands commit-pinned artifacts for PRODUCTION and not for PILOT", () => {
     // productionArtifactViolation (drizzle-runtime-node-manager.ts:161-174).
     const production = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true }),
+      readiness: readiness({ inferenceReady: true, agentModelReady: true }),
       connections: [inference()],
       targetEnvironment: "PRODUCTION",
       hermesCommit: "not-a-sha",
@@ -194,7 +181,7 @@ describe("step 2 — the agent runtime", () => {
     expect(blockers(production, "runtime").join(" ")).toMatch(/https/i);
 
     const pilot = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true }),
+      readiness: readiness({ inferenceReady: true, agentModelReady: true }),
       connections: [inference()],
       targetEnvironment: "PILOT",
       hermesCommit: "not-a-sha",
@@ -205,7 +192,7 @@ describe("step 2 — the agent runtime", () => {
 
   it("accepts a 40-character commit SHA over HTTPS for PRODUCTION", () => {
     const steps = deriveSetupSteps(input({
-      readiness: readiness({ inferenceReady: true }),
+      readiness: readiness({ inferenceReady: true, agentModelReady: true }),
       connections: [inference()],
       targetEnvironment: "PRODUCTION",
       hermesCommit: "a".repeat(40),
@@ -222,7 +209,7 @@ describe("step 3 — the agent profile", () => {
   it("distinguishes no active profile from a disabled execution boundary", () => {
     const noProfile = deriveSetupSteps(input({
       readiness: readiness({
-        inferenceReady: true, hermesReady: true, runtimeNodeReady: true,
+        inferenceReady: true, agentModelReady: true, hermesReady: true, runtimeNodeReady: true,
         agenticInfrastructureReady: true,
       }),
       connections: [inference()],
@@ -232,7 +219,7 @@ describe("step 3 — the agent profile", () => {
 
     const boundaryOff = deriveSetupSteps(input({
       readiness: readiness({
-        inferenceReady: true, hermesReady: true, runtimeNodeReady: true,
+        inferenceReady: true, agentModelReady: true, hermesReady: true, runtimeNodeReady: true,
         agenticInfrastructureReady: true, profileReady: true,
       }),
       connections: [inference()],
@@ -267,9 +254,9 @@ describe("step 3 — the agent profile", () => {
  *
  * They used to answer it three different ways: the Dashboard took the first
  * connection matching a kind and stopped at HEALTHY, Setup counted the enabled
- * healthy ones and read the served model off them, and the API did the second.
- * So clearing a model alias produced "3/3 ready — Open Session" on one screen
- * and "0 of 3 — blocked" on the other, from one poll of one payload.
+ * healthy ones, and the API seeded from the connection alias. After v9.7.0
+ * both screens treat the endpoint and the default AGENT route as separate
+ * facts, so a missing Models default cannot make step 1 look unfinished.
  *
  * These cases are the contract between them: whatever the derivation says, both
  * screens say the same thing, in both directions.
@@ -278,9 +265,21 @@ describe("the Dashboard and Setup on one deployment", () => {
   const hermes = () => ({ kind: "HERMES", enabled: true, status: "HEALTHY", configuration: {} }) as ServiceConnectionSummary;
   const profiles = [{ status: "ACTIVE" } as AgentProfile];
   const runtimeControl = { enabled: true } as AgentRuntimeControl;
+  const defaultAgent = [{
+    workload: "AGENT" as const,
+    status: "ACTIVE" as const,
+    isDefault: true,
+    connection: { id: "inference-1" },
+  }];
 
-  function bothScreens(connections: ServiceConnectionSummary[], runtimeNodes: HermesRuntimeNode[]) {
-    const workspace = deriveWorkspaceReadiness({ connections, runtimeNodes, profiles, runtime: runtimeControl });
+  function bothScreens(
+    connections: ServiceConnectionSummary[],
+    runtimeNodes: HermesRuntimeNode[],
+    modelDeployments = defaultAgent,
+  ) {
+    const workspace = deriveWorkspaceReadiness({
+      connections, runtimeNodes, profiles, runtime: runtimeControl, modelDeployments,
+    });
     const steps = deriveSetupSteps({ readiness: workspace, connections, runtimeNodes, targetEnvironment: "DEVELOPMENT" });
     return { workspace, steps, allDone: steps.length === 3 && steps.every((step) => step.status === "done") };
   }
@@ -294,23 +293,27 @@ describe("the Dashboard and Setup on one deployment", () => {
     expect(allDone).toBe(true);
   });
 
-  it("agree that a cleared served model blocks the path", () => {
+  it("agree that a missing default AGENT route blocks chat and the runtime step, not step 1", () => {
+    const { workspace, steps, allDone } = bothScreens([inference(), hermes()], [node()], []);
+
+    expect(workspace.inferenceReady).toBe(true);
+    expect(workspace.chatReady).toBe(false);
+    expect(allDone).toBe(false);
+    expect(steps[0]?.status).toBe("done");
+    expect(steps.flatMap((step) => step.blockedBy)).toContain("Activate a default Agent model on Gateway → Models.");
+  });
+
+  it("agree that a second healthy inference connection blocks the path", () => {
     const { workspace, steps, allDone } = bothScreens(
-      [inference({ configuration: {} as ServiceConnectionSummary["configuration"] }), hermes()],
+      [inference(), inference({ id: "inference-2" }), hermes()],
       [node()],
     );
 
     expect(workspace.chatReady).toBe(false);
     expect(allDone).toBe(false);
-    expect(steps.flatMap((step) => step.blockedBy).join(" ")).toMatch(/served model/i);
-  });
-
-  it("agree that a second healthy inference connection blocks the path", () => {
-    const { workspace, steps, allDone } = bothScreens([inference(), inference(), hermes()], [node()]);
-
-    expect(workspace.chatReady).toBe(false);
-    expect(allDone).toBe(false);
+    expect(steps[0]?.status).toBe("done");
     expect(steps.flatMap((step) => step.blockedBy).join(" ")).toMatch(/exactly one/i);
+    expect(steps.flatMap((step) => step.blockedBy).join(" ")).not.toMatch(/Gateway → Models/);
   });
 
   it("agree that a node which stopped beating is not answering", () => {

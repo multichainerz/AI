@@ -36,6 +36,7 @@ import type { AiOpsManager } from "./ai-ops/ai-ops-manager.js";
 import { DrizzleAiOpsManager } from "./ai-ops/drizzle-ai-ops-manager.js";
 import type { ModelManager } from "./models/model-manager.js";
 import { DrizzleModelManager } from "./models/drizzle-model-manager.js";
+import { InferenceRefreshService } from "./models/inference-refresh-service.js";
 import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
 import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.js";
 import { DrizzleAuditManager, type AuditManager } from "./audit/audit-manager.js";
@@ -69,6 +70,7 @@ export interface RuntimeServices {
   connectionTestService?: ConnectionTestService;
   inferenceDiscoveryService?: InferenceDiscoveryService;
   inferenceCatalogueService?: InferenceCatalogueService;
+  inferenceRefreshService?: InferenceRefreshService;
   connectionMonitor?: ConnectionMonitorService;
   operationsManager?: OperationsManager;
   chatManager?: ChatManager;
@@ -146,6 +148,7 @@ export function createRuntimeServices(): RuntimeServices {
     const operationsManager = new DrizzleOperationsManager(database);
     const connectionResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
     const modelManager = new DrizzleModelManager(database);
+    const inferenceRefreshService = new InferenceRefreshService(connectionManager, modelManager);
     const guardrailManager = new DrizzleGuardrailManager(database);
     const promptManager = new DrizzlePromptManager(database);
     const configurationSetManager = new DrizzleConfigurationSetManager(database);
@@ -205,6 +208,7 @@ export function createRuntimeServices(): RuntimeServices {
       connectionTestService,
       inferenceDiscoveryService,
       inferenceCatalogueService,
+      inferenceRefreshService,
       connectionMonitor,
       operationsManager,
       chatManager,

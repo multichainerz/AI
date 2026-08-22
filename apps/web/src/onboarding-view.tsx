@@ -3,6 +3,7 @@ import type {
   AgentProfile,
   AgentRuntimeControl,
   HermesRuntimeNode,
+  ModelDeployment,
   OnboardingSnapshot,
   ServiceConnectionSummary,
   ServiceKind,
@@ -13,6 +14,7 @@ import { ConnectionDrawer } from "./connection-drawer.js";
 import { adminAccess } from "./admin-access.js";
 import {
   OrcaSynapseApiError,
+  getModelDeployments,
   getOnboardingSnapshot,
   runOnboardingValidation,
 } from "./api.js";
@@ -117,6 +119,7 @@ export function OnboardingView({
 }: OnboardingViewProps) {
   const { unlocked } = adminAccess(session);
   const [snapshot, setSnapshot] = useState<OnboardingSnapshot | null>(null);
+  const [modelDeployments, setModelDeployments] = useState<ModelDeployment[]>([]);
   const [openStep, setOpenStep] = useState<SetupStepKey | null>(initialStep);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +145,7 @@ export function OnboardingView({
   useEffect(() => {
     if (!unlocked) {
       setSnapshot(null);
+      setModelDeployments([]);
       return;
     }
     let active = true;
@@ -152,7 +156,17 @@ export function OnboardingView({
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) latestOnSessionExpired.current();
       else setError(cause instanceof Error ? cause.message : "Application settings could not be loaded.");
     });
-    return () => { active = false; };
+    const loadModels = () => {
+      void getModelDeployments().then(({ items }) => {
+        if (active) setModelDeployments(items);
+      }).catch((cause: unknown) => {
+        if (!active) return;
+        if (cause instanceof OrcaSynapseApiError && cause.status === 401) latestOnSessionExpired.current();
+      });
+    };
+    loadModels();
+    const timer = window.setInterval(loadModels, 15_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [unlocked]);
 
   /**
@@ -199,7 +213,9 @@ export function OnboardingView({
     />;
   }
 
-  const readiness = deriveWorkspaceReadiness({ connections, runtimeNodes, profiles, runtime: agentRuntime });
+  const readiness = deriveWorkspaceReadiness({
+    connections, runtimeNodes, profiles, runtime: agentRuntime, modelDeployments,
+  });
   const architecture = snapshot?.architecture ?? null;
 
   /*
@@ -375,6 +391,7 @@ export function OnboardingView({
             <RuntimeNodesPanel
               targetEnvironment={architecture?.targetEnvironment ?? null}
               inferenceReady={readiness.inferenceReady}
+              agentModelReady={readiness.agentModelReady}
               onConfigureInference={() => {
                 setOpenStep("inference");
                 onSelectStep?.("inference");

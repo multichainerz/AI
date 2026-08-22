@@ -23,6 +23,8 @@ import {
   updateToolRuntime,
   updateConnectionMonitoring,
   getModelDeployments,
+  getModelObservations,
+  refreshConnectionModels,
   changeModelDeploymentState,
   getGuardrailPolicies,
   changeGuardrailPolicyState,
@@ -354,6 +356,42 @@ describe("OrcaSynapse browser API", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/models");
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "POST", credentials: "same-origin" });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({ makeDefault: true, expectedRevision: 1 });
+  });
+
+  it("loads observations and refreshes the stored connection catalogue", async () => {
+    const connectionId = "5277951c-7d22-4cec-8d46-fad3afba37dd";
+    const listed = {
+      connectionId,
+      refreshedAt: "2026-08-22T00:00:00.000Z",
+      items: [{
+        id: connectionId,
+        connectionId,
+        alias: "hermes-agent",
+        displayName: null,
+        observedContextWindowTokens: null,
+        observedMaxOutputTokens: null,
+        inputModalities: [],
+        ownedBy: null,
+        lastSeenAt: "2026-08-22T00:00:00.000Z",
+        missingFromUpstream: false,
+        admittedWorkloads: [],
+      }],
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(listed))
+      .mockResolvedValueOnce(jsonResponse({
+        ...listed,
+        upserted: 1,
+        vanished: 0,
+        backfill: null,
+      }));
+
+    await getModelObservations(connectionId);
+    await refreshConnectionModels(connectionId);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/admin/models/observations?connectionId=${connectionId}`);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/v1/admin/connections/${connectionId}/models/refresh`);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "POST", credentials: "same-origin" });
   });
 
   it("reads policies and sends an evidence-bound guardrail activation", async () => {

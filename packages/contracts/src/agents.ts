@@ -157,11 +157,10 @@ const agentSetSelectionSchema = {
 export const createAgentProfileSchema = agentVersionConfigurationSchema.extend({
   slug: agentSlugSchema,
   /*
-   * Optional on the way in: the profile follows the approved inference setup
-   * -- the active default AGENT model route, else the AI Inference
-   * connection's configured alias -- so the screen never asks for a model
-   * name the platform already knows. An API caller may still pin one
-   * explicitly; the stored version always records the alias it resolved to.
+   * Optional on the way in: the profile follows the ACTIVE default AGENT
+   * model route, so the screen never asks for a model name the platform
+   * already knows. An API caller may still pin one explicitly; the stored
+   * version always records the alias it resolved to.
    */
   modelAlias: agentModelAliasSchema.optional(),
   ...agentSetSelectionSchema,

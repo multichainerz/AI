@@ -8,7 +8,7 @@
  * the rendered markup there; pair that with the stylesheet from
  * `pnpm --filter @orcasynapse/web build` and it opens in a browser.
  */
-import { ADMIN_SCOPES, type AdministratorSession, type ModelDeployment, type ServiceConnectionSummary } from "@orcasynapse/contracts";
+import { ADMIN_SCOPES, type AdministratorSession, type ModelDeployment, type ModelObservation, type ServiceConnectionSummary } from "@orcasynapse/contracts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -68,15 +68,31 @@ const models = [model({}), draftRoute];
 
 /** What the API would return now, which a conflict test moves underneath the screen. */
 let catalogue: ModelDeployment[] = models;
+let observed: ModelObservation[] = [];
 
 const updateModelDeployment = vi.fn();
 const changeModelDeploymentState = vi.fn();
+const createModelDeployment = vi.fn();
 
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
   return {
     ...actual,
     getModelDeployments: vi.fn(async () => ({ items: catalogue })),
+    getModelObservations: vi.fn(async () => ({
+      connectionId: connections[0]!.id,
+      refreshedAt: observed[0]?.lastSeenAt ?? null,
+      items: observed,
+    })),
+    refreshConnectionModels: vi.fn(async () => ({
+      connectionId: connections[0]!.id,
+      refreshedAt: "2026-08-22T00:00:00.000Z",
+      upserted: observed.length,
+      vanished: 0,
+      items: observed,
+      backfill: null,
+    })),
+    createModelDeployment: (...args: unknown[]) => createModelDeployment(...args as []),
     updateModelDeployment: (...args: unknown[]) => updateModelDeployment(...args as []),
     changeModelDeploymentState: (...args: unknown[]) => changeModelDeploymentState(...args as []),
   };
@@ -117,8 +133,10 @@ function typeInto(input: HTMLElement, text: string) {
 afterEach(() => {
   cleanup();
   catalogue = models;
+  observed = [];
   updateModelDeployment.mockReset();
   changeModelDeploymentState.mockReset();
+  createModelDeployment.mockReset();
 });
 
 describe("a route another operator moved first", () => {
@@ -135,9 +153,8 @@ describe("a route another operator moved first", () => {
   }
 
   it("activates on the retry after a conflict, instead of failing identically forever", async () => {
-    // Nothing on this screen refetches — there is no Refresh control and load()
-    // runs only on [session] — so without a refetch here every retry resends
-    // the revision that already lost and the only escape is leaving the screen.
+    // Without a refetch here every retry resends the revision that already lost
+    // and the only escape is leaving the screen.
     changeModelDeploymentState.mockImplementation(
       conflictOnce(model({ ...draftRoute, revision: 2 })),
     );
@@ -233,7 +250,7 @@ describe("models catalogue", () => {
     const summary = screen.getByLabelText("Model catalogue summary");
 
     // Two routes, one active, one default, two workloads.
-    expect(within(summary).getByText("Catalogue routes")).toBeTruthy();
+    expect(within(summary).getByText("Admitted routes")).toBeTruthy();
     expect(within(summary).getAllByText("2")).not.toHaveLength(0);
   });
 
@@ -265,6 +282,39 @@ describe("models catalogue", () => {
     await waitFor(() => expect(within(summary).getByText("200+")).toBeTruthy());
     expect(within(summary).getByText("Newest 200 loaded")).toBeTruthy();
     expect(within(summary).queryByText("Versioned records")).toBeNull();
+    expect(within(summary).getByText("Admitted routes")).toBeTruthy();
+  });
+
+  it("defaults Activate to make-default for AGENT routes, not CHAT", async () => {
+    const draftAgent = model({
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      slug: "draft-agent",
+      displayName: "Draft agent",
+      workload: "AGENT",
+      status: "DRAFT",
+      isDefault: false,
+      firstActivatedAt: null,
+    });
+    catalogue = [draftAgent, draftRoute];
+    render(
+      <main>
+        <ModelsView
+          session={session}
+          connections={connections}
+          onConfigureConnections={vi.fn()}
+          onOpenOperations={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    await waitFor(() => screen.getByText("Draft agent"));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Activate" })[0]!);
+    expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Activate" })[1]!);
+    expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("false");
   });
 
   it("distinguishes a route that is serving from one that is not", async () => {
@@ -290,5 +340,63 @@ describe("models catalogue", () => {
   it("renders no inline style, which the CSP would refuse in the built container", async () => {
     await view();
     expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
+  });
+
+  it("asks the operator to refresh from the connected inference server", async () => {
+    catalogue = [];
+    render(
+      <main>
+        <ModelsView
+          session={session}
+          connections={connections}
+          onConfigureConnections={vi.fn()}
+          onOpenOperations={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    await waitFor(() => screen.getByText("Refresh from the connected inference server"));
+    expect(screen.queryByText(/Legacy connection aliases remain active/)).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Refresh from endpoint" }).length).toBeGreaterThan(0);
+  });
+
+  it("does not prefill Laguna dummy limits when observed capabilities are unknown", async () => {
+    observed = [{
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      connectionId: "conn-1",
+      alias: "local-qwen",
+      displayName: "Local Qwen",
+      observedContextWindowTokens: null,
+      observedMaxOutputTokens: null,
+      inputModalities: [],
+      ownedBy: "vllm",
+      lastSeenAt: "2026-08-22T00:00:00.000Z",
+      missingFromUpstream: false,
+      admittedWorkloads: [],
+    }];
+    catalogue = [];
+    render(
+      <main>
+        <ModelsView
+          session={session}
+          connections={connections}
+          onConfigureConnections={vi.fn()}
+          onOpenOperations={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    await waitFor(() => screen.getByText("local-qwen"));
+    fireEvent.click(screen.getByRole("button", { name: "Admit" }));
+    expect(screen.getByLabelText(/^Context window/)).toHaveProperty("value", "");
+    expect(screen.getByLabelText(/^Maximum output/)).toHaveProperty("value", "");
+    expect(screen.getByLabelText(/^Context window/)).not.toHaveProperty("value", "131072");
+    expect(screen.getByLabelText(/^Maximum output/)).not.toHaveProperty("value", "8192");
+  });
+
+  it("marks an active route Degraded when it disappeared from upstream", async () => {
+    catalogue = [model({ missingFromUpstream: true })];
+    await view();
+    expect(screen.getByText("Degraded")).toBeTruthy();
   });
 });

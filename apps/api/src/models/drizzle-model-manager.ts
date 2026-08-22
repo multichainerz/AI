@@ -3,20 +3,26 @@ import type {
   CreateModelDeployment,
   ModelDeployment,
   ModelDeploymentList,
+  ModelInputModality,
+  ModelObservation,
+  ModelObservationList,
   ModelWorkload,
   ServiceKind,
   UpdateModelDeployment,
 } from "@orcasynapse/contracts";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { MODEL_INPUT_MODALITIES } from "@orcasynapse/contracts";
+import { and, asc, desc, eq, notInArray, sql } from "drizzle-orm";
 import {
   auditEvent,
   modelDeployment,
+  modelObservation,
   serviceConnection,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
-import { ModelConflictError, ModelNotFoundError, type ModelManager } from "./model-manager.js";
+import { ModelConflictError, ModelNotFoundError, type ModelManager, type ObservationSyncResult } from "./model-manager.js";
+import { contractBoundedLimits, type ObservedModelSnapshot } from "./observed-catalogue.js";
 
 /** The database handle or a transaction opened from it. */
 type Executor = OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
@@ -30,7 +36,18 @@ interface RoutedConnection {
   status: "NOT_TESTED" | "HEALTHY" | "DEGRADED" | "UNREACHABLE" | "DISABLED";
 }
 
-type StoredModel = typeof modelDeployment.$inferSelect & { connection: RoutedConnection };
+type ObservationFields = {
+  observedContextWindowTokens: number | null;
+  observedMaxOutputTokens: number | null;
+  inputModalities: string[] | null;
+  missingFromUpstream: boolean | null;
+  lastSeenAt: Date | null;
+};
+
+type StoredModel = typeof modelDeployment.$inferSelect & {
+  connection: RoutedConnection;
+  observation: ObservationFields | null;
+};
 
 const connectionColumns = {
   id: serviceConnection.id,
@@ -45,6 +62,26 @@ const permittedKinds: Readonly<Record<ModelWorkload, readonly ServiceKind[]>> = 
   CHAT: ["INFERENCE"],
   AGENT: ["INFERENCE"],
 };
+
+function modalities(value: string[] | null | undefined): ModelInputModality[] {
+  return (value ?? []).filter((item): item is ModelInputModality =>
+    (MODEL_INPUT_MODALITIES as readonly string[]).includes(item),
+  );
+}
+
+function observationDto(model: StoredModel): Pick<
+  ModelDeployment,
+  "observedContextWindowTokens" | "observedMaxOutputTokens" | "inputModalities" | "missingFromUpstream" | "lastSeenAt"
+> {
+  const observation = model.observation;
+  return {
+    observedContextWindowTokens: observation?.observedContextWindowTokens ?? null,
+    observedMaxOutputTokens: observation?.observedMaxOutputTokens ?? null,
+    inputModalities: modalities(observation?.inputModalities),
+    missingFromUpstream: observation?.missingFromUpstream ?? false,
+    lastSeenAt: observation?.lastSeenAt?.toISOString() ?? null,
+  };
+}
 
 function dto(model: StoredModel): ModelDeployment {
   return {
@@ -67,7 +104,13 @@ function dto(model: StoredModel): ModelDeployment {
     updatedBy: model.updatedBy,
     createdAt: model.createdAt.toISOString(),
     updatedAt: model.updatedAt.toISOString(),
+    ...observationDto(model),
   };
+}
+
+function slugFromAlias(alias: string): string {
+  const slug = alias.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 64);
+  return slug.length >= 2 ? slug : `m-${slug || "model"}`.slice(0, 64);
 }
 
 function assertConnectionKind(workload: ModelWorkload, connection: RoutedConnection): void {
@@ -86,12 +129,19 @@ function assertLimits(contextWindowTokens: number, maxOutputTokens: number): voi
  *  read joins rather than leaving callers to fetch it separately. */
 async function routeWithConnection(executor: Executor, id: string): Promise<StoredModel | undefined> {
   const [row] = await executor
-    .select({ model: modelDeployment, connection: connectionColumns })
+    .select({ model: modelDeployment, connection: connectionColumns, observation: modelObservation })
     .from(modelDeployment)
     .innerJoin(serviceConnection, eq(serviceConnection.id, modelDeployment.connectionId))
+    .leftJoin(
+      modelObservation,
+      and(
+        eq(modelObservation.connectionId, modelDeployment.connectionId),
+        eq(modelObservation.alias, modelDeployment.modelAlias),
+      ),
+    )
     .where(eq(modelDeployment.id, id))
     .limit(1);
-  return row ? { ...row.model, connection: row.connection } : undefined;
+  return row ? { ...row.model, connection: row.connection, observation: row.observation } : undefined;
 }
 
 export class DrizzleModelManager implements ModelManager {
@@ -99,12 +149,145 @@ export class DrizzleModelManager implements ModelManager {
 
   async list(): Promise<ModelDeploymentList> {
     const rows = await this.database
-      .select({ model: modelDeployment, connection: connectionColumns })
+      .select({ model: modelDeployment, connection: connectionColumns, observation: modelObservation })
       .from(modelDeployment)
       .innerJoin(serviceConnection, eq(serviceConnection.id, modelDeployment.connectionId))
+      .leftJoin(
+        modelObservation,
+        and(
+          eq(modelObservation.connectionId, modelDeployment.connectionId),
+          eq(modelObservation.alias, modelDeployment.modelAlias),
+        ),
+      )
       .orderBy(asc(modelDeployment.workload), desc(modelDeployment.isDefault), desc(modelDeployment.updatedAt))
       .limit(200);
-    return { items: rows.map((row) => dto({ ...row.model, connection: row.connection })) };
+    return { items: rows.map((row) => dto({ ...row.model, connection: row.connection, observation: row.observation })) };
+  }
+
+  async listObservations(connectionId: string): Promise<ModelObservationList> {
+    const rows = await this.database
+      .select()
+      .from(modelObservation)
+      .where(eq(modelObservation.connectionId, connectionId))
+      .orderBy(asc(modelObservation.missingFromUpstream), asc(modelObservation.alias))
+      .limit(2_000);
+    const routes = rows.length === 0
+      ? []
+      : await this.database
+        .select({ alias: modelDeployment.modelAlias, workload: modelDeployment.workload })
+        .from(modelDeployment)
+        .where(eq(modelDeployment.connectionId, connectionId));
+    const admitted = new Map<string, ModelWorkload[]>();
+    for (const route of routes) {
+      const current = admitted.get(route.alias) ?? [];
+      if (!current.includes(route.workload)) current.push(route.workload);
+      admitted.set(route.alias, current);
+    }
+    const items: ModelObservation[] = rows.map((row) => ({
+      id: row.id,
+      connectionId: row.connectionId,
+      alias: row.alias,
+      displayName: row.displayName,
+      observedContextWindowTokens: row.observedContextWindowTokens,
+      observedMaxOutputTokens: row.observedMaxOutputTokens,
+      inputModalities: modalities(row.inputModalities),
+      ownedBy: row.ownedBy,
+      lastSeenAt: row.lastSeenAt.toISOString(),
+      missingFromUpstream: row.missingFromUpstream,
+      admittedWorkloads: admitted.get(row.alias) ?? [],
+    }));
+    const refreshedAt = items.reduce<string | null>((latest, item) => {
+      if (!latest || item.lastSeenAt > latest) return item.lastSeenAt;
+      return latest;
+    }, null);
+    return { connectionId, refreshedAt, items };
+  }
+
+  async replaceObservations(
+    connectionId: string,
+    snapshots: ObservedModelSnapshot[],
+    seenAt: Date,
+  ): Promise<ObservationSyncResult> {
+    return this.database.transaction(async (transaction) => {
+      await transaction.execute(advisoryLock(`orcasynapse-model-obs:${connectionId}`));
+      const aliases = snapshots.map((snapshot) => snapshot.alias);
+      if (snapshots.length > 0) {
+        const chunkSize = 250;
+        for (let offset = 0; offset < snapshots.length; offset += chunkSize) {
+          const chunk = snapshots.slice(offset, offset + chunkSize);
+          await transaction
+            .insert(modelObservation)
+            .values(chunk.map((snapshot) => ({
+              connectionId,
+              alias: snapshot.alias,
+              displayName: snapshot.displayName,
+              observedContextWindowTokens: snapshot.observedContextWindowTokens,
+              observedMaxOutputTokens: snapshot.observedMaxOutputTokens,
+              inputModalities: snapshot.inputModalities,
+              ownedBy: snapshot.ownedBy,
+              lastSeenAt: seenAt,
+              missingFromUpstream: false,
+            })))
+            .onConflictDoUpdate({
+              target: [modelObservation.connectionId, modelObservation.alias],
+              set: {
+                displayName: sql`excluded."displayName"`,
+                observedContextWindowTokens: sql`excluded."observedContextWindowTokens"`,
+                observedMaxOutputTokens: sql`excluded."observedMaxOutputTokens"`,
+                inputModalities: sql`excluded."inputModalities"`,
+                ownedBy: sql`excluded."ownedBy"`,
+                lastSeenAt: sql`excluded."lastSeenAt"`,
+                missingFromUpstream: sql`false`,
+              },
+            });
+        }
+      }
+      const vanished = await transaction
+        .update(modelObservation)
+        .set({ missingFromUpstream: true, lastSeenAt: seenAt })
+        .where(and(
+          eq(modelObservation.connectionId, connectionId),
+          eq(modelObservation.missingFromUpstream, false),
+          ...(aliases.length > 0 ? [notInArray(modelObservation.alias, aliases)] : []),
+        ))
+        .returning({ alias: modelObservation.alias });
+      return { upserted: snapshots.length, vanished: vanished.length };
+    });
+  }
+
+  async maybeBackfillLegacyAlias(
+    principal: AdminPrincipal,
+    connectionId: string,
+    modelAlias: string | undefined,
+  ): Promise<ModelDeployment | null> {
+    if (!modelAlias) return null;
+    const existing = await this.database.select({ id: modelDeployment.id }).from(modelDeployment).limit(1);
+    if (existing.length > 0) return null;
+
+    const [observed] = await this.database
+      .select()
+      .from(modelObservation)
+      .where(and(eq(modelObservation.connectionId, connectionId), eq(modelObservation.alias, modelAlias)))
+      .limit(1);
+    const limits = contractBoundedLimits({
+      observedContextWindowTokens: observed?.observedContextWindowTokens ?? null,
+      observedMaxOutputTokens: observed?.observedMaxOutputTokens ?? null,
+    });
+    if (!limits) return null;
+
+    const displayName = (observed?.displayName ?? modelAlias).slice(0, 120);
+    return this.create(principal, {
+      slug: slugFromAlias(modelAlias),
+      displayName: displayName.length >= 2 ? displayName : modelAlias.slice(0, 120).padEnd(2, "x"),
+      modelAlias,
+      workload: "AGENT",
+      connectionId,
+      version: "observed",
+      license: null,
+      contextWindowTokens: limits.contextWindowTokens,
+      maxOutputTokens: limits.maxOutputTokens,
+      maxConcurrentRequests: 2,
+    });
   }
 
   async create(principal: AdminPrincipal, input: CreateModelDeployment): Promise<ModelDeployment> {
@@ -133,8 +316,9 @@ export class DrizzleModelManager implements ModelManager {
           outcome: "SUCCESS",
           metadata: { slug: model.slug, workload: model.workload, version: model.version },
         });
-        return { ...model, connection };
+        return routeWithConnection(transaction, model.id);
       });
+      if (!created) throw new ModelConflictError("The model route could not be created.");
       return dto(created);
     } catch (error) {
       if (isUniqueViolation(error)) {

@@ -14,10 +14,9 @@ VM2 runs exactly one agent runtime plane: the Hermes gateway/API server, install
 bullets below; the rest are facts the installer needs that nothing in the
 product checks for you.
 
-There is deliberately no model-route prerequisite: this list used to demand "an
-evaluated Agent model route is active", which was wrong twice over — no
-evaluation gate exists anywhere in the product any more, and enrolment does not
-require an active Agent route at all.
+`inferenceReady` also requires exactly one ACTIVE default Agent model on
+Gateway → Models. The served alias lives on that route, not on the inference
+connection.
 
 There is also no PostgreSQL prerequisite, and this list claimed one for several
 releases by counting three enforced conditions where the function returns two
@@ -27,7 +26,7 @@ invitation request itself fail, which reads as an outage rather than as
 something an operator is being asked to go and fix.
 
 - OrcaSynapse is installed and the temporary local-administrator password has been replaced (`dashboardReady`);
-- exactly one AI Inference connection is enabled, healthy, and has a selected served model (`inferenceReady`) — *exactly* one, because `seedableInferenceModelAlias()` refuses to guess between two healthy connections;
+- exactly one AI Inference connection is enabled and healthy, and exactly one ACTIVE default AGENT route exists on Gateway → Models (`inferenceReady`) — *exactly* one of each, because `seedableInferenceModelAlias()` refuses to guess between two healthy connections or two defaults;
 - VM2 is a clean Ubuntu systemd VM on x86_64 or aarch64 with outbound access to OrcaSynapse and the artifact sources during installation;
 - OrcaSynapse can reach the VM2 Hermes address on TCP 8642;
 - the invitation uses a hostname/address that matches customer DNS and TLS policy.

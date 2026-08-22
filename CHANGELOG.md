@@ -5,6 +5,55 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.0 — 2026-08-22
+
+Makes Setup step 1 endpoint-only, puts the served model on Gateway → Models,
+and closes the connection-alias fallback.
+
+### Upgrade notes
+
+- **API, web, worker and database must ship together.** Setup no longer
+  writes a served model onto the inference connection. Enrolment, installer
+  readiness, the inference gateway, and profile minting require exactly one
+  ACTIVE default AGENT route on Gateway → Models. Migration 0025 adds
+  `ModelObservation`. Refresh writes that table only; it does not auto-create
+  or activate `ModelDeployment` rows.
+- Existing deploys that only had a connection alias must **create, activate,
+  and default** that alias on Gateway → Models (Admit after refresh, or New
+  model route) before they can enrol a **new** node. Already-enrolled nodes
+  that only had a connection alias must now have that ACTIVE default AGENT
+  route or the gateway refuses.
+- Old JSON may still contain `modelAlias` on an inference connection; it
+  still loads and is ignored at serve time.
+
+### Changes
+
+- drop the Setup model picker and stop persisting Discover or OpenRouter
+  catalogue picks onto `configuration.modelAlias`
+- treat Setup step 1 as done once any inference connection is enabled and
+  HEALTHY; two healthy endpoints remain a runtime blocker
+- seed VM2 and installer readiness from the ACTIVE default AGENT route,
+  not the connection alias
+- block Generate and the runtime step until that default Agent model
+  exists, with copy that names Gateway → Models
+- default Activate’s make-default switch for AGENT routes, not CHAT
+- store last-refresh snapshots in `ModelObservation` with unique
+  `(connectionId, alias)` and mark vanished ids `missingFromUpstream`
+- refresh from the stored inference endpoint and key, keeping OpenRouter
+  context / modalities / max completion and treating generic `/v1/models` as
+  id-only
+- rebuild Models around the observed table, Admit (empty limits when
+  unknown), existing activate/suspend, and a secondary New route
+- show Degraded on ACTIVE routes that disappeared from upstream
+- backfill a DRAFT AGENT route from a unique legacy connection alias only
+  when observed limits are known
+- require exactly one ACTIVE default AGENT route in `resolveInference`,
+  including before any AGENT row has `firstActivatedAt`
+- drop unique-ACTIVE and connection-alias fallbacks from
+  `resolveModelAlias` so profile minting matches the gateway
+- keep `modelAlias` on the INFERENCE Zod pick so existing configuration
+  still parses
+
 ## v9.6.9 — 2026-08-22
 
 Stamps run division, expands the audit trail, and restyles dashboard health.

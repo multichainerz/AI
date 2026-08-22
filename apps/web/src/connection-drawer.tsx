@@ -107,7 +107,7 @@ function kindCopy(kind: ServiceKind, existing: boolean): { title: string; descri
     return {
       title: existing ? "Update AI Inference" : "Connect a model server",
       description: existing
-        ? "Change the address, model, or credentials. Discovery never turns off a connection that is already serving chat."
+        ? "Change the address or credentials. Discovery never turns off a connection that is already serving chat."
         : "Paste its address. OrcaSynapse discovers the backend and available models automatically.",
     };
   }
@@ -202,7 +202,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const [inferenceDiscovery, setInferenceDiscovery] = useState<InferenceDiscoveryResult | null>(null);
   const [inferenceEndpointMode, setInferenceEndpointMode] = useState<InferenceEndpointMode>("local");
   const [openRouterCatalogue, setOpenRouterCatalogue] = useState<InferenceCatalogueResult | null>(null);
-  const [openRouterFilter, setOpenRouterFilter] = useState("");
 
   const definition = useMemo(
     () => connectionDefinitions.find(({ kind }) => kind === selectedKind) ?? connectionDefinitions[0]!,
@@ -267,7 +266,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     setInferenceDiscovery(null);
     setInferenceEndpointMode(isOpenRouterEndpoint(existing?.baseUrl) ? "openrouter" : "local");
     setOpenRouterCatalogue(null);
-    setOpenRouterFilter("");
     setRollbackCandidate(null);
     // `existingKey`, not `existing` -- see the note where it is derived. The
     // effect reads `existing`, and may: when the key is unchanged every field it
@@ -301,7 +299,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     setInferenceEndpointMode(mode);
     setInferenceDiscovery(null);
     setOpenRouterCatalogue(null);
-    setOpenRouterFilter("");
     if (mode === "openrouter") {
       setBaseUrl(OPENROUTER_INFERENCE.origin);
       setConfiguration((current) => {
@@ -326,13 +323,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     if (!result) return;
     setOpenRouterCatalogue(result);
     setEnabled((current) => current || result.models.length > 0);
-    setConfiguration((current) => {
-      const pinned = openRouterConfiguration(current);
-      const selected = current.modelAlias && result.models.some(({ id }) => id === current.modelAlias)
-        ? current.modelAlias
-        : result.models[0]?.id;
-      return selected ? { ...pinned, modelAlias: selected } : pinned;
-    });
+    setConfiguration((current) => openRouterConfiguration(current));
   };
 
   const discoverInference = async () => {
@@ -373,20 +364,10 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
         inferenceBackend: result.recommended.inferenceBackend,
         modelsPath: result.recommended.modelsPath,
         chatPath: result.recommended.chatPath,
-        ...(result.recommended.modelAlias ? { modelAlias: result.recommended.modelAlias } : {}),
       };
       if (result.recommended.healthPath) next.healthPath = result.recommended.healthPath;
       else delete next.healthPath;
       return next;
-    });
-  };
-
-  const setConfigValue = (name: keyof ServiceConnectionConfiguration, value: string | number | boolean | string[] | undefined) => {
-    setConfiguration((current) => {
-      const next: Record<string, string | number | boolean | string[] | undefined> = { ...current };
-      if (value === undefined) delete next[name];
-      else next[name] = value;
-      return next as ServiceConnectionConfiguration;
     });
   };
 
@@ -493,7 +474,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   icon={<Globe className="size-4" />}
                   kicker="Public endpoint"
                   title="OpenRouter"
-                  caption="Hosted models. Verify a key, then pick from the catalogue."
+                  caption="Hosted models. Verify a key to confirm the catalogue answers."
                   onSelect={() => selectInferenceMode("openrouter")}
                 />
               </div>
@@ -531,55 +512,20 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   </Button>
                 </div>
                 {openRouterCatalogue ? (
-                  <div className="grid gap-3">
-                    <Alert tone="good">
-                      <span className="block font-semibold">
-                        {openRouterCatalogue.models.length} models available
-                        {openRouterCatalogue.key.label ? ` · ${openRouterCatalogue.key.label}` : ""}
+                  <Alert tone="good">
+                    <span className="block font-semibold">
+                      {openRouterCatalogue.models.length} models available
+                      {openRouterCatalogue.key.label ? ` · ${openRouterCatalogue.key.label}` : ""}
+                    </span>
+                    {openRouterCatalogue.key.limitRemaining !== undefined && openRouterCatalogue.key.limitRemaining !== null ? (
+                      <span className="mt-1 block text-caption opacity-80">
+                        {openRouterCatalogue.key.limitRemaining} credits remaining on this key
                       </span>
-                      {openRouterCatalogue.key.limitRemaining !== undefined && openRouterCatalogue.key.limitRemaining !== null ? (
-                        <span className="mt-1 block text-caption opacity-80">
-                          {openRouterCatalogue.key.limitRemaining} credits remaining on this key
-                        </span>
-                      ) : null}
-                    </Alert>
-                    <Field label="Filter models">
-                      <Input
-                        value={openRouterFilter}
-                        onChange={(event) => setOpenRouterFilter(event.target.value)}
-                        placeholder="vendor/model"
-                      />
-                    </Field>
-                    <Field label="Model" hint="Slugs from OpenRouter. Floating ~latest aliases are omitted because they cannot be stored.">
-                      <Select
-                        value={configuration.modelAlias ?? ""}
-                        required
-                        onChange={(event) => setConfigValue("modelAlias", event.target.value)}
-                      >
-                        {(openRouterFilter.trim().length === 0
-                          ? openRouterCatalogue.models
-                          : openRouterCatalogue.models.filter((model) => {
-                            const query = openRouterFilter.trim().toLowerCase();
-                            return model.id.toLowerCase().includes(query)
-                              || (model.name?.toLowerCase().includes(query) ?? false);
-                          })
-                        ).map((model) => (
-                          <option key={model.id} value={model.id}>
-                            {model.name ? `${model.name} · ${model.id}` : model.id}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                  </div>
-                ) : configuration.modelAlias ? (
-                  <Field label="Model" hint="Loaded from the saved connection. Verify the key to refresh the catalogue.">
-                    <Select
-                      value={configuration.modelAlias}
-                      onChange={(event) => setConfigValue("modelAlias", event.target.value)}
-                    >
-                      <option value={configuration.modelAlias}>{configuration.modelAlias}</option>
-                    </Select>
-                  </Field>
+                    ) : null}
+                    <span className="mt-1 block text-caption opacity-80">
+                      Activate a default Agent model on Gateway → Models.
+                    </span>
+                  </Alert>
                 ) : null}
               </>
             ) : (
@@ -647,16 +593,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                         {inferenceDiscovery.normalizedBaseUrl}
                       </span>
                     </Alert>
-                    {inferenceDiscovery.models.length > 0 ? (
-                      <Field label="Model OrcaSynapse should use" hint="Loaded from the server; nothing needs to be typed.">
-                        <Select
-                          value={configuration.modelAlias ?? inferenceDiscovery.models[0]?.id ?? ""}
-                          onChange={(event) => setConfigValue("modelAlias", event.target.value)}
-                        >
-                          {inferenceDiscovery.models.map(({ id }) => <option key={id} value={id}>{id}</option>)}
-                        </Select>
-                      </Field>
-                    ) : null}
                     <details className="text-caption text-muted">
                       <summary className="cursor-pointer font-semibold text-foreground">View discovery evidence</summary>
                       <div className="mt-2 grid gap-1.5">

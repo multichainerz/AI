@@ -51,7 +51,7 @@ describe("committed Drizzle migrations", () => {
     for (const table of [
       "SchemaMetadata", "AgentRun", "AgentProfile", "ChatConversation", "ChatMessage",
       "ServiceConnection", "SecretRecord", "AuditEvent", "HermesRuntimeNode",
-      "GuardrailPolicy", "ModelDeployment", "EnterpriseUser", "WorkerNode",
+      "GuardrailPolicy", "ModelDeployment", "ModelObservation", "EnterpriseUser", "WorkerNode",
       "HermesCorpusSnapshot", "HermesCorpusEntry", "HermesCorpusRevision", "HermesCorpusMutation",
       "PlatformReleaseTarget",
     ]) {

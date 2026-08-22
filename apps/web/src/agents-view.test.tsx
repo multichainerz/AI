@@ -420,6 +420,16 @@ describe("agents", () => {
     expect(screen.getByRole("button", { name: "Verify & activate" })).toBeTruthy();
   });
 
+  it("points at the default Agent route rather than a connection alias", async () => {
+    setupApi();
+    const user = userEvent.setup();
+    await view();
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("ACTIVE default Agent route on Gateway → Models");
+    expect(dialog.textContent).not.toContain("connection's configured model");
+  });
+
   it("points at the tab that now owns Hermes memory", async () => {
     /*
      * The editor's memory note used to say "Agents → Hermes corpus", a tab

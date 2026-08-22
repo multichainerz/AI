@@ -194,4 +194,147 @@ describe("DrizzleModelManager", () => {
       manager().update(principal, created.id, { expectedRevision: created.revision + 4, displayName: "x" }),
     ).rejects.toBeInstanceOf(ModelConflictError);
   });
+
+  it("stores OpenRouter-shaped observation context and vision/file modalities", async () => {
+    const connectionId = await connection();
+    const seenAt = new Date("2026-08-22T00:00:00.000Z");
+    await manager().replaceObservations(connectionId, [{
+      alias: "anthropic/claude-sonnet-4",
+      displayName: "Claude Sonnet 4",
+      observedContextWindowTokens: 200_000,
+      observedMaxOutputTokens: 8_192,
+      inputModalities: ["text", "image", "file"],
+      ownedBy: null,
+    }], seenAt);
+
+    const listed = await manager().listObservations(connectionId);
+    expect(listed.items).toEqual([expect.objectContaining({
+      alias: "anthropic/claude-sonnet-4",
+      observedContextWindowTokens: 200_000,
+      observedMaxOutputTokens: 8_192,
+      inputModalities: ["text", "image", "file"],
+      missingFromUpstream: false,
+      admittedWorkloads: [],
+    })]);
+  });
+
+  it("stores unknown capabilities for a generic id-only observation", async () => {
+    const connectionId = await connection();
+    await manager().replaceObservations(connectionId, [{
+      alias: "hermes-agent",
+      displayName: null,
+      observedContextWindowTokens: null,
+      observedMaxOutputTokens: null,
+      inputModalities: [],
+      ownedBy: "vllm",
+    }], new Date("2026-08-22T00:00:00.000Z"));
+
+    const [item] = (await manager().listObservations(connectionId)).items;
+    expect(item).toMatchObject({
+      alias: "hermes-agent",
+      observedContextWindowTokens: null,
+      observedMaxOutputTokens: null,
+      inputModalities: [],
+      ownedBy: "vllm",
+    });
+  });
+
+  it("marks vanished ids missing instead of deleting them, and does not activate drafts", async () => {
+    const connectionId = await connection();
+    const created = await manager().create(principal, draft(connectionId, { modelAlias: "hermes-agent" }));
+    expect(created.status).toBe("DRAFT");
+
+    await manager().replaceObservations(connectionId, [{
+      alias: "hermes-agent",
+      displayName: null,
+      observedContextWindowTokens: null,
+      observedMaxOutputTokens: null,
+      inputModalities: [],
+      ownedBy: null,
+    }], new Date("2026-08-22T00:00:00.000Z"));
+    const vanished = await manager().replaceObservations(connectionId, [{
+      alias: "other-model",
+      displayName: null,
+      observedContextWindowTokens: null,
+      observedMaxOutputTokens: null,
+      inputModalities: [],
+      ownedBy: null,
+    }], new Date("2026-08-22T01:00:00.000Z"));
+
+    expect(vanished).toEqual({ upserted: 1, vanished: 1 });
+    const listed = await manager().listObservations(connectionId);
+    expect(listed.items.find((item) => item.alias === "hermes-agent")).toMatchObject({
+      missingFromUpstream: true,
+    });
+    const [route] = (await manager().list()).items;
+    expect(route).toMatchObject({
+      id: created.id,
+      status: "DRAFT",
+      missingFromUpstream: true,
+    });
+  });
+
+  it("keeps GET refreshedAt as the empty-refresh time after prior ids vanish", async () => {
+    const connectionId = await connection();
+    await manager().replaceObservations(connectionId, [{
+      alias: "hermes-agent",
+      displayName: null,
+      observedContextWindowTokens: null,
+      observedMaxOutputTokens: null,
+      inputModalities: [],
+      ownedBy: null,
+    }], new Date("2026-08-22T00:00:00.000Z"));
+
+    await manager().replaceObservations(connectionId, [], new Date("2026-08-22T02:00:00.000Z"));
+
+    const listed = await manager().listObservations(connectionId);
+    expect(listed.refreshedAt).toBe("2026-08-22T02:00:00.000Z");
+    expect(listed.items).toEqual([expect.objectContaining({
+      alias: "hermes-agent",
+      missingFromUpstream: true,
+      lastSeenAt: "2026-08-22T02:00:00.000Z",
+    })]);
+  });
+
+  it("does not backfill a DRAFT from a legacy alias when observed limits are unknown", async () => {
+    const connectionId = await connection({
+      configuration: { modelAlias: "hermes-agent" },
+    });
+    await manager().replaceObservations(connectionId, [{
+      alias: "hermes-agent",
+      displayName: null,
+      observedContextWindowTokens: null,
+      observedMaxOutputTokens: null,
+      inputModalities: [],
+      ownedBy: null,
+    }], new Date("2026-08-22T00:00:00.000Z"));
+
+    await expect(manager().maybeBackfillLegacyAlias(principal, connectionId, "hermes-agent")).resolves.toBeNull();
+    expect((await manager().list()).items).toEqual([]);
+  });
+
+  it("backfills a DRAFT AGENT from a unique legacy alias only when observed limits are known", async () => {
+    const connectionId = await connection({
+      configuration: { modelAlias: "hermes-agent" },
+    });
+    await manager().replaceObservations(connectionId, [{
+      alias: "hermes-agent",
+      displayName: "Hermes",
+      observedContextWindowTokens: 32_768,
+      observedMaxOutputTokens: 4_096,
+      inputModalities: ["text"],
+      ownedBy: null,
+    }], new Date("2026-08-22T00:00:00.000Z"));
+
+    const backfill = await manager().maybeBackfillLegacyAlias(principal, connectionId, "hermes-agent");
+    expect(backfill).toMatchObject({
+      modelAlias: "hermes-agent",
+      workload: "AGENT",
+      status: "DRAFT",
+      isDefault: false,
+      contextWindowTokens: 32_768,
+      maxOutputTokens: 4_096,
+    });
+    await expect(manager().maybeBackfillLegacyAlias(principal, connectionId, "hermes-agent")).resolves.toBeNull();
+  });
 });

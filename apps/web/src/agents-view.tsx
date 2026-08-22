@@ -733,12 +733,12 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
               * with the approved route's model regardless of what a profile
               * says, so asking for a model name here was asking the operator
               * to hand-copy platform state -- and the copy drifted. The server
-              * resolves the alias from the inference setup when each version
-              * is minted; the card's chips show what a version resolved to.
+              * resolves the alias from the ACTIVE default Agent route when
+              * each version is minted; the card's chips show what a version
+              * resolved to.
               */}
             <p className="mb-0 text-caption text-muted">
-              The model follows the approved AI Inference setup — the active agent model route, or the
-              connection's configured model. Change it under Models; profiles pick it up on their next save.
+              The model follows the ACTIVE default Agent route on Gateway → Models. Profiles pick it up on their next save.
             </p>
           </section>
 

@@ -2,6 +2,8 @@ import type {
   AdministratorSession,
   CreateModelDeployment,
   ModelDeployment,
+  ModelInputModality,
+  ModelObservation,
   ModelWorkload,
   ServiceConnectionSummary,
 } from "@orcasynapse/contracts";
@@ -13,6 +15,8 @@ import {
   changeModelDeploymentState,
   createModelDeployment,
   getModelDeployments,
+  getModelObservations,
+  refreshConnectionModels,
   updateModelDeployment,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
@@ -44,44 +48,105 @@ interface ModelsViewProps {
   onSessionExpired: () => void;
 }
 
-interface ModelDraft extends CreateModelDeployment {}
+type LimitValue = number | "";
 
-const initialDraft: ModelDraft = {
-  slug: "laguna-hermes",
-  displayName: "Laguna Hermes",
-  modelAlias: "hermes-agent",
-  workload: "AGENT",
-  connectionId: "",
-  version: "2.1-nvfp4",
-  license: null,
-  contextWindowTokens: 131_072,
-  maxOutputTokens: 8_192,
-  maxConcurrentRequests: 2,
-};
+interface ModelDraft {
+  slug: string;
+  displayName: string;
+  modelAlias: string;
+  workload: ModelWorkload;
+  connectionId: string;
+  version: string;
+  license: string | null;
+  contextWindowTokens: LimitValue;
+  maxOutputTokens: LimitValue;
+  maxConcurrentRequests: number;
+}
 
 const connectionKinds: Readonly<Record<ModelWorkload, readonly string[]>> = {
   CHAT: ["INFERENCE"],
   AGENT: ["INFERENCE"],
 };
 
-/**
- * How many routes `GET /admin/models` will ever return.
- *
- * `DrizzleModelManager.list` is a bare `limit: 200` and `ModelDeploymentList`
- * carries no total, so a full array means "at least 200 exist" and the figure
- * below is the size of a window. Labelled "Catalogue routes" over "Versioned
- * records", that window reads as the catalogue itself.
- */
 const CATALOGUE_WINDOW = 200;
+
+const modalityLabels: Record<ModelInputModality, string> = {
+  text: "Text",
+  image: "Vision",
+  audio: "Audio",
+  file: "File",
+};
+
+function emptyDraft(connectionId: string): ModelDraft {
+  return {
+    slug: "",
+    displayName: "",
+    modelAlias: "",
+    workload: "AGENT",
+    connectionId,
+    version: "",
+    license: null,
+    contextWindowTokens: "",
+    maxOutputTokens: "",
+    maxConcurrentRequests: 2,
+  };
+}
 
 function compactNumber(value: number): string {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
 function modelTone(model: ModelDeployment): string {
+  if (model.status === "ACTIVE" && model.missingFromUpstream) return "degraded";
   if (model.status === "ACTIVE") return "healthy";
   if (model.status === "SUSPENDED") return "degraded";
   return "not_tested";
+}
+
+function probablyNotChat(alias: string): boolean {
+  const id = alias.toLowerCase();
+  return ["text-embedding-", "whisper-", "dall-e-", "tts-"].some((token) => id.includes(token));
+}
+
+function admittedLabel(workloads: ModelWorkload[]): string {
+  const chat = workloads.includes("CHAT");
+  const agent = workloads.includes("AGENT");
+  if (chat && agent) return "both";
+  if (chat) return "CHAT";
+  if (agent) return "AGENT";
+  return "no";
+}
+
+function inContextBounds(value: number | null): value is number {
+  return value !== null && value >= 1_024 && value <= 4_194_304;
+}
+
+function inOutputBounds(value: number | null): value is number {
+  return value !== null && value >= 64 && value <= 131_072;
+}
+
+function prefillLimits(observation: ModelObservation | null): { contextWindowTokens: LimitValue; maxOutputTokens: LimitValue } {
+  if (!observation) return { contextWindowTokens: "", maxOutputTokens: "" };
+  const context = inContextBounds(observation.observedContextWindowTokens)
+    ? observation.observedContextWindowTokens
+    : "";
+  const output = inOutputBounds(observation.observedMaxOutputTokens)
+    ? observation.observedMaxOutputTokens
+    : "";
+  if (context !== "" && output !== "" && output > context) {
+    return { contextWindowTokens: context, maxOutputTokens: "" };
+  }
+  return { contextWindowTokens: context, maxOutputTokens: output };
+}
+
+function asLimit(value: LimitValue): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+function parseLimitInput(value: string): LimitValue {
+  if (value.trim() === "") return "";
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : "";
 }
 
 export function ModelsView({
@@ -92,7 +157,10 @@ export function ModelsView({
   onSessionExpired,
 }: ModelsViewProps) {
   const [models, setModels] = useState<ModelDeployment[]>([]);
-  const [draft, setDraft] = useState<ModelDraft>(initialDraft);
+  const [observations, setObservations] = useState<ModelObservation[]>([]);
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [draft, setDraft] = useState<ModelDraft>(emptyDraft(""));
   const [editing, setEditing] = useState<ModelDeployment | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [decision, setDecision] = useState<{ id: string; action: "activate" | "suspend"; reason: string; makeDefault: boolean } | null>(null);
@@ -102,38 +170,48 @@ export function ModelsView({
   const { unlocked, can } = adminAccess(session);
   const canManage = can("models:manage");
 
+  const inferenceConnections = useMemo(
+    () => connections.filter(({ kind }) => kind === "INFERENCE"),
+    [connections],
+  );
+  const healthyInference = useMemo(
+    () => inferenceConnections.filter(({ enabled, status }) => enabled && status === "HEALTHY"),
+    [inferenceConnections],
+  );
+  const refreshConnection = healthyInference.length === 1 ? healthyInference[0]! : null;
+
   const eligibleConnections = useMemo(
     () => connections.filter(({ kind }) => connectionKinds[draft.workload].includes(kind)),
     [connections, draft.workload],
   );
 
-  const load = async (): Promise<ModelDeployment[]> => {
-    if (!unlocked) return models;
+  const load = async (): Promise<{ models: ModelDeployment[]; observations: ModelObservation[] }> => {
+    if (!unlocked) return { models, observations };
     try {
-      const { items } = await getModelDeployments();
+      const [{ items }, observed] = await Promise.all([
+        getModelDeployments(),
+        refreshConnection
+          ? getModelObservations(refreshConnection.id)
+          : Promise.resolve({ items: [] as ModelObservation[], refreshedAt: null, connectionId: "" }),
+      ]);
       setModels(items);
+      setObservations(observed.items);
+      setRefreshedAt(observed.refreshedAt);
       setError(null);
-      return items;
+      return { models: items, observations: observed.items };
     } catch (loadError) {
       if (loadError instanceof OrcaSynapseApiError && loadError.status === 401) onSessionExpired();
       else setError(loadError instanceof Error ? loadError.message : "Unable to load model routes.");
-      return models;
+      return { models, observations };
     }
   };
 
-  useEffect(() => { void load(); }, [session]);
+  useEffect(() => { void load(); }, [session, refreshConnection?.id]);
 
-  /**
-   * A 409 means another operator saved first, so the revision this screen is
-   * holding can never succeed again. Refetch, and re-point the open editor at
-   * what was actually saved: this screen has no Refresh control and load() runs
-   * only on [session], so without this every retry resends the revision that
-   * already lost and the only way out is to navigate away and back.
-   */
   const resyncAfterConflict = async (cause: unknown) => {
     if (!(cause instanceof OrcaSynapseApiError) || cause.status !== 409) return;
-    const items = await load();
-    setEditing((current) => (current ? items.find(({ id }) => id === current.id) ?? current : null));
+    const loaded = await load();
+    setEditing((current) => (current ? loaded.models.find(({ id }) => id === current.id) ?? current : null));
   };
 
   useEffect(() => {
@@ -143,7 +221,28 @@ export function ModelsView({
 
   const startCreate = () => {
     setEditing(null);
-    setDraft({ ...initialDraft, connectionId: connections.find(({ kind }) => kind === "INFERENCE")?.id ?? "" });
+    setDraft(emptyDraft(refreshConnection?.id ?? connections.find(({ kind }) => kind === "INFERENCE")?.id ?? ""));
+    setShowEditor(true);
+    setError(null);
+    setMessage(null);
+  };
+
+  const startAdmit = (observation: ModelObservation) => {
+    const limits = prefillLimits(observation);
+    const name = (observation.displayName ?? observation.alias).slice(0, 120);
+    setEditing(null);
+    setDraft({
+      slug: slugify(observation.alias) || "model",
+      displayName: name.length >= 2 ? name : observation.alias.slice(0, 120),
+      modelAlias: observation.alias,
+      workload: "AGENT",
+      connectionId: observation.connectionId,
+      version: "observed",
+      license: null,
+      contextWindowTokens: limits.contextWindowTokens,
+      maxOutputTokens: limits.maxOutputTokens,
+      maxConcurrentRequests: 2,
+    });
     setShowEditor(true);
     setError(null);
     setMessage(null);
@@ -174,25 +273,43 @@ export function ModelsView({
       setError("Configure a compatible serving connection before saving this route.");
       return;
     }
+    const contextWindowTokens = asLimit(draft.contextWindowTokens);
+    const maxOutputTokens = asLimit(draft.maxOutputTokens);
+    if (contextWindowTokens === null || maxOutputTokens === null) {
+      setError("Type enforced context and maximum output before saving this route.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
+      const payload: CreateModelDeployment = {
+        slug: slugify(draft.slug),
+        displayName: draft.displayName,
+        modelAlias: draft.modelAlias,
+        workload: draft.workload,
+        connectionId: draft.connectionId,
+        version: draft.version,
+        license: draft.license,
+        contextWindowTokens,
+        maxOutputTokens,
+        maxConcurrentRequests: draft.maxConcurrentRequests,
+      };
       if (editing) {
         await updateModelDeployment(editing.id, {
-          displayName: draft.displayName,
-          modelAlias: draft.modelAlias,
-          connectionId: draft.connectionId,
-          version: draft.version,
-          license: draft.license,
-          contextWindowTokens: draft.contextWindowTokens,
-          maxOutputTokens: draft.maxOutputTokens,
-          maxConcurrentRequests: draft.maxConcurrentRequests,
+          displayName: payload.displayName,
+          modelAlias: payload.modelAlias,
+          connectionId: payload.connectionId,
+          version: payload.version,
+          license: payload.license,
+          contextWindowTokens: payload.contextWindowTokens,
+          maxOutputTokens: payload.maxOutputTokens,
+          maxConcurrentRequests: payload.maxConcurrentRequests,
           expectedRevision: editing.revision,
         });
         setMessage("Model route updated. Material changes return the route to draft and require reactivation.");
       } else {
-        await createModelDeployment({ ...draft, slug: slugify(draft.slug) });
+        await createModelDeployment(payload);
         setMessage("Draft model route created.");
       }
       setShowEditor(false);
@@ -237,6 +354,29 @@ export function ModelsView({
     }
   };
 
+  const refresh = async () => {
+    if (!refreshConnection) {
+      setError("Exactly one healthy inference connection is required to refresh.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await refreshConnectionModels(refreshConnection.id);
+      setObservations(result.items);
+      setRefreshedAt(result.refreshedAt);
+      if (result.backfill) setModels((current) => [result.backfill!, ...current.filter(({ id }) => id !== result.backfill!.id)]);
+      else await load();
+      setMessage(`Refreshed ${result.upserted} observed model${result.upserted === 1 ? "" : "s"}.`);
+    } catch (refreshError) {
+      if (refreshError instanceof OrcaSynapseApiError && refreshError.status === 401) onSessionExpired();
+      else setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh the model catalogue.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!unlocked) {
     return <LockedScreen
       kicker="Inference control"
@@ -250,7 +390,12 @@ export function ModelsView({
 
   const activeCount = models.filter(({ status }) => status === "ACTIVE").length;
   const defaultCount = models.filter(({ isDefault }) => isDefault).length;
-  const workloadCount = new Set(models.map(({ workload }) => workload)).size;
+  const query = filter.trim().toLowerCase();
+  const visibleObservations = observations.filter((item) => {
+    if (!query) return true;
+    return item.alias.toLowerCase().includes(query)
+      || (item.displayName ?? "").toLowerCase().includes(query);
+  });
 
   return <div className="workspace-stack models-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
     <WorkspaceIntro
@@ -258,47 +403,54 @@ export function ModelsView({
       title="Models"
       actions={<>
         <Button onClick={onOpenOperations}>Open Operations</Button>
-        {canManage && <Button variant="primary" onClick={startCreate}>New model route</Button>}
+        {canManage && <Button onClick={startCreate}>New model route</Button>}
+        {canManage && (
+          <Button variant="primary" onClick={() => void refresh()} disabled={busy || !refreshConnection}>
+            {busy ? "Refreshing..." : "Refresh from endpoint"}
+          </Button>
+        )}
       </>}
-    />
+    >
+      <p className="mb-0 text-body text-muted">What this deployment is allowed to send Hermes.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {refreshConnection ? (
+          <StatusText dot tone={toneFor("healthy")}>{refreshConnection.displayName}</StatusText>
+        ) : healthyInference.length > 1 ? (
+          <StatusText tone="warn">Multiple healthy inference connections</StatusText>
+        ) : (
+          <StatusText tone="warn">No healthy inference connection</StatusText>
+        )}
+        <StatusText>{refreshedAt ? `Last refresh ${new Date(refreshedAt).toLocaleString()}` : "Never refreshed"}</StatusText>
+      </div>
+    </WorkspaceIntro>
 
     <WorkspaceDock>
       <MetricRow className="border-b-0 pb-0 lg:grid-cols-4" aria-label="Model catalogue summary">
+        <Metric label="Observed" value={observations.length} caption="Last refresh snapshot" />
         <Metric
-          label="Catalogue routes"
+          label="Admitted routes"
           value={models.length >= CATALOGUE_WINDOW ? `${CATALOGUE_WINDOW}+` : models.length}
           caption={models.length >= CATALOGUE_WINDOW ? `Newest ${CATALOGUE_WINDOW} loaded` : "Versioned records"}
         />
         <Metric label="Active routes" value={activeCount} tone={activeCount > 0 ? "good" : "neutral"} caption="Serving now" />
         <Metric label="Defaults" value={defaultCount} caption="Per workload" />
-        <Metric label="Workloads" value={workloadCount} caption="Chat and agent" />
       </MetricRow>
     </WorkspaceDock>
 
     {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
     {message && <Alert className="shrink-0" tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
 
-    {/*
-      * The same flex column the guardrail editor uses, and for the same reason.
-      *
-      * This panel was `shrink-0` with no overflow inside a `.workspace-page`
-      * that is `height: 100dvh; overflow: hidden`, so a form taller than the
-      * space available had its bottom -- Save included -- clipped with nothing
-      * to scroll. Ten fields in a three-column grid survives a tall window and
-      * does not survive a short one; it is the same defect the guardrail form
-      * hit outright once its rules editor made it taller.
-      */}
     {showEditor && <Panel className="flex min-h-0 flex-col">
       <form className="flex min-h-0 flex-col" onSubmit={(event) => void save(event)}>
         <header className="mb-4 flex shrink-0 items-start justify-between gap-6">
           <div className="min-w-0">
             <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
-              {editing ? `Edit ${editing.displayName}` : "New model route"}
+              {editing ? `Edit ${editing.displayName}` : draft.modelAlias ? "Admit model route" : "New model route"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
               {editing
                 ? "Active routes must be suspended before editing."
-                : "New routes remain draft until they are activated."}
+                : "New routes remain draft until they are activated. Limits stay empty unless the endpoint published them."}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
@@ -311,35 +463,83 @@ export function ModelsView({
           <Field label="Serving connection"><Select value={draft.connectionId} required onChange={(event) => setDraft({ ...draft, connectionId: event.target.value })}><option value="">Select a connection</option>{eligibleConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName} - {connection.kind}</option>)}</Select></Field>
           <Field label="Model alias"><Input value={draft.modelAlias} required onChange={(event) => setDraft({ ...draft, modelAlias: event.target.value })} /></Field>
           <Field label="Immutable version"><Input value={draft.version} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></Field>
-          <Field label="Context window"><Input type="number" min={1024} max={4194304} value={draft.contextWindowTokens} required onChange={(event) => setDraft({ ...draft, contextWindowTokens: Number(event.target.value) })} /></Field>
-          <Field label="Maximum output"><Input type="number" min={64} max={131072} value={draft.maxOutputTokens} required onChange={(event) => setDraft({ ...draft, maxOutputTokens: Number(event.target.value) })} /></Field>
+          <Field label="Context window"><Input type="number" min={1024} max={4194304} value={draft.contextWindowTokens} required onChange={(event) => setDraft({ ...draft, contextWindowTokens: parseLimitInput(event.target.value) })} /></Field>
+          <Field label="Maximum output"><Input type="number" min={64} max={131072} value={draft.maxOutputTokens} required onChange={(event) => setDraft({ ...draft, maxOutputTokens: parseLimitInput(event.target.value) })} /></Field>
           <Field label="Concurrency limit"><Input type="number" min={1} max={1024} value={draft.maxConcurrentRequests} required onChange={(event) => setDraft({ ...draft, maxConcurrentRequests: Number(event.target.value) })} /></Field>
           <Field label="License / approval"><Input value={draft.license ?? ""} placeholder="Optional approved license reference" onChange={(event) => setDraft({ ...draft, license: event.target.value.trim() || null })} /></Field>
         </div>
         </div>
-        {/* Outside the scroll container, so the action stays on screen. */}
         <Button variant="primary" type="submit" className="mt-4 shrink-0" disabled={busy || editing?.status === "ACTIVE" || eligibleConnections.length === 0}>
           {busy ? "Saving..." : editing ? "Save new revision" : "Create draft route"}
         </Button>
       </form>
     </Panel>}
 
-    <section className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-y-auto lg:grid-cols-2" aria-label="Configured model routes">
-      {models.length === 0 && (
+    <Panel className="flex min-h-0 flex-col">
+      <header className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Observed catalogue</h2>
+        <Field label="Filter" className="min-w-[16rem]">
+          <Input value={filter} placeholder="Alias or name" onChange={(event) => setFilter(event.target.value)} />
+        </Field>
+      </header>
+      {observations.length === 0 ? (
         <EmptyState
-          className="lg:col-span-2"
-          title="No model routes yet"
-          action={canManage ? <Button onClick={startCreate}>Create the first route</Button> : undefined}
+          title="Refresh from the connected inference server"
+          action={canManage && refreshConnection ? <Button variant="primary" onClick={() => void refresh()}>Refresh from endpoint</Button> : undefined}
         >
-          Legacy connection aliases remain active until the first catalogue route is created.
+          Observed ids, modalities and limits come from the last refresh. Admit a row to create a draft route.
+        </EmptyState>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-auto" role="table" aria-label="Observed models">
+          <div className="grid min-w-[64rem] grid-cols-[minmax(12rem,1.4fr)_minmax(10rem,1fr)_minmax(10rem,0.9fr)_6rem_6rem_5rem_auto] gap-2 border-b border-border pb-2 text-micro font-semibold uppercase tabular-nums text-faint" role="row">
+            <span>Alias</span>
+            <span>Name</span>
+            <span>Modalities</span>
+            <span>Context</span>
+            <span>Max out</span>
+            <span>Admitted</span>
+            <span>Action</span>
+          </div>
+          {visibleObservations.map((item) => (
+            <div
+              key={item.id}
+              className="grid min-w-[64rem] grid-cols-[minmax(12rem,1.4fr)_minmax(10rem,1fr)_minmax(10rem,0.9fr)_6rem_6rem_5rem_auto] items-center gap-2 border-b border-border py-2"
+              role="row"
+            >
+              <div className="min-w-0">
+                <p className="m-0 truncate font-mono text-caption text-text">{item.alias}</p>
+                {probablyNotChat(item.alias) && <MicroLabel>probably not chat</MicroLabel>}
+                {item.missingFromUpstream && <StatusText tone="warn">Missing upstream</StatusText>}
+              </div>
+              <p className="m-0 truncate text-caption text-muted">{item.displayName ?? "—"}</p>
+              <div className="flex flex-wrap gap-1">
+                {item.inputModalities.length === 0
+                  ? <MicroLabel>Unknown</MicroLabel>
+                  : item.inputModalities.map((modality) => <MicroLabel key={modality}>{modalityLabels[modality]}</MicroLabel>)}
+              </div>
+              <span className="font-mono text-caption tabular-nums text-muted">{item.observedContextWindowTokens ? compactNumber(item.observedContextWindowTokens) : "—"}</span>
+              <span className="font-mono text-caption tabular-nums text-muted">{item.observedMaxOutputTokens ? compactNumber(item.observedMaxOutputTokens) : "—"}</span>
+              <span className="text-caption text-muted">{admittedLabel(item.admittedWorkloads)}</span>
+              {canManage && item.admittedWorkloads.length < 2 && (
+                <Button size="sm" onClick={() => startAdmit(item)}>Admit</Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+
+    <section className="grid min-h-0 content-start items-start gap-3 overflow-y-auto lg:grid-cols-2" aria-label="Configured model routes">
+      {models.length === 0 && observations.length > 0 && (
+        <EmptyState className="lg:col-span-2" title="No admitted routes yet">
+          Admit an observed id, or use New model route for an alias the server did not list.
         </EmptyState>
       )}
       {models.map((model) => <Panel className="grid min-w-0 gap-4" key={model.id}>
         <header className="flex items-center gap-3">
           <MicroLabel className="rounded border border-border bg-raised px-1.5 py-0.5">{model.workload}</MicroLabel>
           <StatusText dot tone={toneFor(modelTone(model))}>{model.status.toLowerCase()}</StatusText>
-          {/* "Which route answers by default" is not derivable from anything
-              else on the card, so it is stated rather than implied. */}
+          {model.status === "ACTIVE" && model.missingFromUpstream && <StatusText tone="warn">Degraded</StatusText>}
           {model.isDefault && <StatusText tone="accent" className="ml-auto">Default</StatusText>}
         </header>
         <div className="flex items-center gap-3">
@@ -354,8 +554,6 @@ export function ModelsView({
             <p className="mb-0 mt-0.5 truncate font-mono text-caption text-muted">{model.modelAlias}</p>
           </div>
         </div>
-        {/* Hairlines from the gap, so no cell needs a border and none double
-            against the panel edge. */}
         <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border sm:grid-cols-3">
           {[
             { label: "Version", value: model.version },
@@ -371,6 +569,13 @@ export function ModelsView({
             </div>
           ))}
         </dl>
+        {(model.observedContextWindowTokens !== null || model.observedMaxOutputTokens !== null) && (
+          (model.observedContextWindowTokens !== model.contextWindowTokens || model.observedMaxOutputTokens !== model.maxOutputTokens) ? (
+            <p className="mb-0 text-caption text-muted">
+              upstream said {model.observedContextWindowTokens ? compactNumber(model.observedContextWindowTokens) : "unknown"} context / {model.observedMaxOutputTokens ? compactNumber(model.observedMaxOutputTokens) : "unknown"} max out
+            </p>
+          ) : null
+        )}
         <footer className="flex items-center justify-between gap-2.5">
           <StatusText>Revision {model.revision}</StatusText>
           {canManage && <div className="flex gap-1.5">
@@ -378,7 +583,7 @@ export function ModelsView({
             <Button
               size="sm"
               variant={model.status === "ACTIVE" ? "danger" : "secondary"}
-              onClick={() => setDecision({ id: model.id, action: model.status === "ACTIVE" ? "suspend" : "activate", reason: "", makeDefault: model.workload === "CHAT" })}
+              onClick={() => setDecision({ id: model.id, action: model.status === "ACTIVE" ? "suspend" : "activate", reason: "", makeDefault: model.workload === "AGENT" })}
             >
               {model.status === "ACTIVE" ? "Suspend" : "Activate"}
             </Button>
@@ -397,10 +602,6 @@ export function ModelsView({
             </strong>
             <span className="mt-1 block text-body text-muted">
               {decision.action === "activate"
-                // The one precondition `DrizzleModelManager.activate` actually
-                // enforces. "Requires promoted target model:..." described the
-                // evaluation gate that was removed with the subsystem behind
-                // it, so it named evidence an operator could not produce.
                 ? `Routes ${model.workload.toLowerCase()} to target model:${model.slug} version ${model.version}. The serving connection must be enabled and healthy.`
                 : "Existing conversations or profiles may stop accepting new work."}
             </span>

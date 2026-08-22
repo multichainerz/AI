@@ -6,7 +6,12 @@ import type {
   ServiceKind,
 } from "@orcasynapse/contracts";
 import { describe, expect, it } from "vitest";
-import { deriveHermesReadiness, deriveWorkspaceReadiness } from "./platform-readiness.js";
+import {
+  deriveAgentModelReadiness,
+  deriveHermesReadiness,
+  deriveInferenceReadiness,
+  deriveWorkspaceReadiness,
+} from "./platform-readiness.js";
 
 function connection(kind: ServiceKind, overrides: Partial<ServiceConnectionSummary> = {}): ServiceConnectionSummary {
   return {
@@ -18,10 +23,7 @@ function connection(kind: ServiceKind, overrides: Partial<ServiceConnectionSumma
     environment: "DEVELOPMENT",
     enabled: true,
     status: "HEALTHY",
-    // A served model on the inference connection, because that is what the
-    // enrolment seed reads: a fixture that stops at HEALTHY describes a
-    // deployment the API would still refuse.
-    configuration: kind === "INFERENCE" ? { modelAlias: "laguna-s" } : {},
+    configuration: {},
     secretFieldNames: [],
     activeRevision: 1,
     lastHealthcheckAt: "2026-08-03T00:00:00.000Z",
@@ -32,6 +34,12 @@ function connection(kind: ServiceKind, overrides: Partial<ServiceConnectionSumma
 }
 
 const runtime = { enabled: true } as AgentRuntimeControl;
+const defaultAgent = {
+  workload: "AGENT" as const,
+  status: "ACTIVE" as const,
+  isDefault: true,
+  connection: { id: "inference-connection" },
+};
 /**
  * A node that beat a moment ago.
  *
@@ -77,6 +85,43 @@ describe("deriveHermesReadiness", () => {
   });
 });
 
+describe("deriveInferenceReadiness", () => {
+  it("is ready with exactly one HEALTHY endpoint even when modelAlias is empty", () => {
+    const readiness = deriveInferenceReadiness([connection("INFERENCE")]);
+    expect(readiness.healthy).toHaveLength(1);
+    expect(readiness.ready).toBe(true);
+  });
+
+  it("is not ready when the only inference row is untested or unhealthy", () => {
+    expect(deriveInferenceReadiness([connection("INFERENCE", { status: "NOT_TESTED" })]).ready).toBe(false);
+    expect(deriveInferenceReadiness([connection("INFERENCE", { status: "UNREACHABLE" })]).ready).toBe(false);
+    expect(deriveInferenceReadiness([connection("INFERENCE", { enabled: false })]).ready).toBe(false);
+  });
+
+  it("is not ready when two endpoints are healthy", () => {
+    expect(deriveInferenceReadiness([
+      connection("INFERENCE"),
+      connection("INFERENCE", { id: "spare-inference" }),
+    ]).ready).toBe(false);
+  });
+});
+
+describe("deriveAgentModelReadiness", () => {
+  const healthyId = "inference-connection";
+
+  it("requires exactly one ACTIVE default AGENT route on the unique healthy endpoint", () => {
+    expect(deriveAgentModelReadiness([], healthyId)).toBe(false);
+    expect(deriveAgentModelReadiness([defaultAgent], healthyId)).toBe(true);
+    expect(deriveAgentModelReadiness([defaultAgent], null)).toBe(false);
+    expect(deriveAgentModelReadiness([{ ...defaultAgent, isDefault: false }], healthyId)).toBe(false);
+    expect(deriveAgentModelReadiness([{ ...defaultAgent, workload: "CHAT" }], healthyId)).toBe(false);
+    expect(deriveAgentModelReadiness([defaultAgent, defaultAgent], healthyId)).toBe(false);
+    expect(deriveAgentModelReadiness([
+      { ...defaultAgent, connection: { id: "other-inference" } },
+    ], healthyId)).toBe(false);
+  });
+});
+
 describe("deriveWorkspaceReadiness", () => {
   it("requires enabled healthy services rather than stale health evidence", () => {
     const readiness = deriveWorkspaceReadiness({
@@ -84,6 +129,7 @@ describe("deriveWorkspaceReadiness", () => {
       runtimeNodes: [onlineNode],
       profiles: [activeProfile],
       runtime,
+      modelDeployments: [defaultAgent],
     });
 
     expect(readiness.chatReady).toBe(false);
@@ -96,6 +142,7 @@ describe("deriveWorkspaceReadiness", () => {
       runtimeNodes: [onlineNode],
       profiles: [activeProfile],
       runtime,
+      modelDeployments: [defaultAgent],
     });
 
     expect(readiness.chatReady).toBe(true);
@@ -109,32 +156,58 @@ describe("deriveWorkspaceReadiness", () => {
       runtimeNodes: [onlineNode],
       profiles: [],
       runtime: { enabled: false } as AgentRuntimeControl,
+      modelDeployments: [defaultAgent],
     });
 
     expect(readiness.agenticInfrastructureReady).toBe(true);
     expect(readiness.nextChatStep).toMatchObject({ target: "Agents", title: "Create an Agent Profile" });
   });
 
-  it("requires the served model the enrolment seed reads, not a healthy endpoint alone", () => {
-    /*
-     * `seedableInferenceModelAlias` (drizzle-runtime-node-manager.ts:94-104)
-     * returns null without a non-empty `configuration.modelAlias`. A Dashboard
-     * that stops at HEALTHY reported "3/3 ready, Open Session" on a deployment
-     * whose Setup screen was simultaneously reporting "0 of 3, blocked".
-     */
+  it("treats a healthy endpoint without a connection alias as inference-ready", () => {
     const readiness = deriveWorkspaceReadiness({
-      connections: [
-        connection("INFERENCE", { configuration: {} as ServiceConnectionSummary["configuration"] }),
-        connection("HERMES"),
-      ],
+      connections: [connection("INFERENCE"), connection("HERMES")],
       runtimeNodes: [onlineNode],
       profiles: [activeProfile],
       runtime,
+      modelDeployments: [defaultAgent],
     });
 
-    expect(readiness.inferenceReady).toBe(false);
+    expect(readiness.inferenceReady).toBe(true);
+    expect(readiness.agentModelReady).toBe(true);
+    expect(readiness.chatReady).toBe(true);
+  });
+
+  it("keeps chat closed until an ACTIVE default AGENT route exists", () => {
+    const readiness = deriveWorkspaceReadiness({
+      connections: [connection("INFERENCE"), connection("HERMES")],
+      runtimeNodes: [onlineNode],
+      profiles: [activeProfile],
+      runtime,
+      modelDeployments: [],
+    });
+
+    expect(readiness.inferenceReady).toBe(true);
+    expect(readiness.agentModelReady).toBe(false);
     expect(readiness.chatReady).toBe(false);
-    expect(readiness.nextChatStep).toMatchObject({ target: "Deployment", title: "Connect AI Inference" });
+    expect(readiness.nextChatStep).toMatchObject({
+      target: "Deployment",
+      title: "Finish the Agentic System",
+      detail: "Activate a default Agent model on Gateway → Models.",
+    });
+  });
+
+  it("keeps chat closed when the default AGENT route is on a different connection", () => {
+    const readiness = deriveWorkspaceReadiness({
+      connections: [connection("INFERENCE"), connection("HERMES")],
+      runtimeNodes: [onlineNode],
+      profiles: [activeProfile],
+      runtime,
+      modelDeployments: [{ ...defaultAgent, connection: { id: "stale-inference" } }],
+    });
+
+    expect(readiness.inferenceReady).toBe(true);
+    expect(readiness.agentModelReady).toBe(false);
+    expect(readiness.chatReady).toBe(false);
   });
 
   it("counts the healthy inference connections the way the enrolment seed does", () => {
@@ -150,6 +223,7 @@ describe("deriveWorkspaceReadiness", () => {
       runtimeNodes: [onlineNode],
       profiles: [activeProfile],
       runtime,
+      modelDeployments: [defaultAgent],
     });
 
     expect(readiness.inferenceReady).toBe(false);
@@ -170,6 +244,7 @@ describe("deriveWorkspaceReadiness", () => {
       runtimeNodes: [quiet],
       profiles: [activeProfile],
       runtime,
+      modelDeployments: [defaultAgent],
     });
 
     expect(readiness.runtimeNodeReady).toBe(false);
@@ -186,6 +261,7 @@ describe("deriveWorkspaceReadiness", () => {
       runtimeNodes: [{ status: "ONLINE", revokedAt: null, lastSeenAt: null } as HermesRuntimeNode],
       profiles: [activeProfile],
       runtime,
+      modelDeployments: [defaultAgent],
     });
 
     expect(readiness.runtimeNodeReady).toBe(false);

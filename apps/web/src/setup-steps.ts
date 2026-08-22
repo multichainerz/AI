@@ -37,11 +37,9 @@ export interface SetupStepsInput {
  * guard lives in the API, the comment names it — a gate that moves upstream
  * should break a test here, not surprise an operator at the point of use.
  *
- * The two facts the API itself gates on — the seedable inference connection and
- * the beating node — are derived by `platform-readiness.ts` and read here, so
- * this screen and the Dashboard cannot answer the same question differently.
- * The `readiness` argument still carries what only it knows (Hermes health, the
- * profile, the execution boundary).
+ * Endpoint health lives on step 1; the default AGENT route lives on step 2
+ * because Gateway → Models is how the operator creates it. Dashboard
+ * `inferenceReady` is the endpoint half only.
  */
 export function deriveSetupSteps(input: SetupStepsInput): SetupStep[] {
   const { readiness, connections, runtimeNodes, targetEnvironment } = input;
@@ -55,18 +53,6 @@ export function deriveSetupSteps(input: SetupStepsInput): SetupStep[] {
     inferenceBlockers.push("No inference connection is registered.");
   } else if (healthy.length === 0) {
     inferenceBlockers.push("The inference connection has not passed a health test.");
-  } else if (inference.serving.length === 0) {
-    /*
-     * HEALTHY is necessary but not sufficient: `seedableInferenceModelAlias`
-     * also requires a served model to seed VM2's route.
-     *
-     * Asked of every healthy connection, not of the first one. This read
-     * `healthy.length === 1 && alias === null` after a branch that had already
-     * caught `length === 0`, so the count clause could only *exclude* the
-     * multi-connection case: two model-less endpoints raised no blocker at all,
-     * and disabling one of them walked the step backwards from Done to blocked.
-     */
-    inferenceBlockers.push("No served model is selected on the inference connection.");
   }
   const inferenceDone = inferenceBlockers.length === 0;
 
@@ -80,6 +66,9 @@ export function deriveSetupSteps(input: SetupStepsInput): SetupStep[] {
     runtimeBlockers.push(
       `Exactly one healthy inference connection is required; ${healthy.length} are healthy.`,
     );
+  }
+  if (healthy.length === 1 && !readiness.agentModelReady) {
+    runtimeBlockers.push("Activate a default Agent model on Gateway → Models.");
   }
   if (targetEnvironment === "PRODUCTION") {
     if (!/^[0-9a-f]{40}$/.test(input.hermesCommit ?? "")) {

@@ -19,6 +19,7 @@ import { InferenceDiscoveryService } from "./diagnostics/inference-discovery-ser
 import { InferenceCatalogueService } from "./diagnostics/inference-catalogue-service.js";
 import type { ConnectionDiagnosticStore } from "./diagnostics/types.js";
 import type { ConnectionMonitorService } from "./connection-monitor.js";
+import type { InferenceRefreshService } from "../models/inference-refresh-service.js";
 
 const CONNECTION_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 const SESSION_TOKEN = "a".repeat(43);
@@ -150,6 +151,7 @@ async function authenticatedApp(
   monitor?: ConnectionMonitorService,
   discoverer?: InferenceDiscoveryService,
   cataloguer?: InferenceCatalogueService,
+  refresher?: InferenceRefreshService,
 ) {
   const app = await createApp({
     logger: false,
@@ -161,6 +163,7 @@ async function authenticatedApp(
       ...(monitor ? { connectionMonitor: monitor } : {}),
       ...(discoverer ? { inferenceDiscoveryService: discoverer } : {}),
       ...(cataloguer ? { inferenceCatalogueService: cataloguer } : {}),
+      ...(refresher ? { inferenceRefreshService: refresher } : {}),
     },
   });
   apps.push(app);
@@ -475,5 +478,49 @@ describe("administrator connection routes", () => {
       preservedSecretFields: ["apiKey"],
     });
     expect(rollback.body).not.toContain("current-secret");
+  });
+
+  it("refreshes the observed catalogue from a stored connection", async () => {
+    const refresher = {
+      refresh: vi.fn(async () => ({
+        connectionId: CONNECTION_ID,
+        refreshedAt: "2026-08-22T00:00:00.000Z",
+        upserted: 1,
+        vanished: 0,
+        items: [{
+          id: CONNECTION_ID,
+          connectionId: CONNECTION_ID,
+          alias: "hermes-agent",
+          displayName: null,
+          observedContextWindowTokens: null,
+          observedMaxOutputTokens: null,
+          inputModalities: [],
+          ownedBy: null,
+          lastSeenAt: "2026-08-22T00:00:00.000Z",
+          missingFromUpstream: false,
+          admittedWorkloads: [],
+        }],
+        backfill: null,
+      })),
+    } as unknown as InferenceRefreshService;
+    const { app } = await authenticatedApp(
+      new MemoryConnectionManager(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      refresher,
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/admin/connections/${CONNECTION_ID}/models/refresh`,
+      headers: sessionHeaders,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ upserted: 1, vanished: 0, backfill: null });
+    expect(refresher.refresh).toHaveBeenCalled();
   });
 });

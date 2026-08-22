@@ -282,10 +282,11 @@ describe("OpenRouter endpoint mode", () => {
         modelsPath: "/api/v1/models",
         healthPath: "/api/v1/models",
         chatPath: "/api/v1/chat/completions",
-        modelAlias: "anthropic/claude-sonnet-4",
       },
       secrets: { apiKey: "sk-or-v1-test" },
     });
+    expect(onSave.mock.calls[0]![0].configuration).not.toHaveProperty("modelAlias");
+    expect(screen.queryByLabelText(/^Model$/)).toBeNull();
   });
 
   it("updates the existing inference row rather than creating a second connection", async () => {
@@ -402,8 +403,9 @@ describe("local inference auto-configuration", () => {
         inferenceBackend: "VLLM",
         modelsPath: "/models",
         chatPath: "/chat/completions",
-        modelAlias: "hermes-agent",
       },
     });
+    expect(onSave.mock.calls[0]![0].configuration).not.toHaveProperty("modelAlias");
+    expect(screen.queryByText("Model OrcaSynapse should use")).toBeNull();
   });
 });

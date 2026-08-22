@@ -380,33 +380,23 @@ export class DrizzleAgentManager implements AgentManager {
    * keep notes and never what any of them can read.
    */
   /**
-   * The model a new version runs, read from the inference setup instead of
-   * typed again. The gateway already overwrites `model` with the approved
-   * route's alias on every forwarded request, so a hand-typed profile alias
-   * was a manual copy of platform state -- one that drifted, and whose drift
-   * refused activations. Priority mirrors what the gateway serves: the ACTIVE
-   * default AGENT route, else the single ACTIVE AGENT route, else the enabled
-   * AI Inference connection's configured alias when exactly one exists. Null
-   * when nothing is derivable, and the caller decides what that refuses.
+   * The model a new version runs, read from the same ACTIVE default AGENT
+   * route the gateway forwards. Null when that row is missing, and the
+   * caller decides what that refuses.
    */
   private async resolveModelAlias(
     executor: { select: OrcaSynapseDatabase["select"] },
   ): Promise<string | null> {
     const routes = await executor
-      .select({ modelAlias: modelDeployment.modelAlias, isDefault: modelDeployment.isDefault })
+      .select({ modelAlias: modelDeployment.modelAlias })
       .from(modelDeployment)
-      .where(and(eq(modelDeployment.workload, "AGENT"), eq(modelDeployment.status, "ACTIVE")));
-    const route = routes.find((item) => item.isDefault) ?? (routes.length === 1 ? routes[0] : undefined);
-    if (route) return route.modelAlias;
-    const connections = await executor
-      .select({ configuration: serviceConnection.configuration })
-      .from(serviceConnection)
-      .where(and(eq(serviceConnection.kind, "INFERENCE"), eq(serviceConnection.enabled, true)));
-    const aliases = [...new Set(connections
-      .map(({ configuration }) => (configuration as Record<string, unknown>).modelAlias)
-      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-      .map((value) => value.trim()))];
-    return aliases.length === 1 ? aliases[0]! : null;
+      .where(and(
+        eq(modelDeployment.workload, "AGENT"),
+        eq(modelDeployment.status, "ACTIVE"),
+        eq(modelDeployment.isDefault, true),
+      ))
+      .limit(2);
+    return routes.length === 1 ? routes[0]!.modelAlias : null;
   }
 
   /**
@@ -508,11 +498,11 @@ export class DrizzleAgentManager implements AgentManager {
     let created: StoredProfile;
     try {
       created = await this.database.transaction(async (transaction) => {
-        // The inference setup names the model; the caller may pin one, and a
+        // The Models catalogue names the model; the caller may pin one, and a
         // deployment where neither exists is told which screen to visit.
         const modelAlias = input.modelAlias ?? await this.resolveModelAlias(transaction);
         if (!modelAlias) {
-          throw new AgentConflictError("Configure the AI Inference connection or activate an agent model route before creating a profile.");
+          throw new AgentConflictError("Activate a default Agent model on Gateway → Models before creating a profile.");
         }
         const digest = distributionDigest({ ...input, modelAlias });
         const [profile] = await transaction

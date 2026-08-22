@@ -17,6 +17,7 @@ import type {
   AgentProfile,
   AgentRuntimeControl,
   HermesRuntimeNode,
+  ModelDeployment,
 } from "@orcasynapse/contracts";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -51,6 +52,7 @@ import {
   getToolMetrics,
   getAgentRuntime,
   getHermesRuntimeNodes,
+  getModelDeployments,
   getConfigurationRevisions,
   getConnectionMonitoring,
   getConnections,
@@ -451,6 +453,7 @@ function App() {
   const [agentRuntime, setAgentRuntime] = useState<AgentRuntimeControl | null>(null);
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [runtimeNodes, setRuntimeNodes] = useState<HermesRuntimeNode[]>([]);
+  const [modelDeployments, setModelDeployments] = useState<ModelDeployment[]>([]);
   const [managedConnections, setManagedConnections] = useState<ServiceConnectionSummary[]>([]);
   const [connectionMonitoring, setConnectionMonitoring] = useState<ConnectionMonitoringControl | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -643,11 +646,12 @@ function App() {
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
 
   const refreshWorkspaceState = useCallback(async () => {
-    const [connections, runtime, profiles, nodes, metrics, agents, tools] = await Promise.all([
+    const [connections, runtime, profiles, nodes, models, metrics, agents, tools] = await Promise.all([
       getConnections(),
       getAgentRuntime(),
       getAgentProfiles(true),
       getHermesRuntimeNodes(),
+      getModelDeployments().catch(() => ({ items: [] as ModelDeployment[] })),
       getChatMetrics().catch(() => null),
       getAgentMetrics().catch(() => null),
       getToolMetrics().catch(() => null),
@@ -656,6 +660,7 @@ function App() {
     setAgentRuntime(runtime);
     setAgentProfiles(profiles.items);
     setRuntimeNodes(nodes.items);
+    setModelDeployments(models.items);
     if (metrics) setChatMetrics(metrics);
     if (agents) setAgentMetrics(agents);
     if (tools) setToolMetrics(tools);
@@ -703,6 +708,7 @@ function App() {
       setAgentRuntime(null);
       setAgentProfiles([]);
       setRuntimeNodes([]);
+      setModelDeployments([]);
       /*
        * The figures go with the state they describe. They used to survive a
        * lock, so an expired session left the Dashboard drawing the previous
@@ -717,11 +723,12 @@ function App() {
     let active = true;
     const refresh = async () => {
       try {
-        const [connections, runtime, profiles, nodes, metrics, agents, tools] = await Promise.all([
+        const [connections, runtime, profiles, nodes, models, metrics, agents, tools] = await Promise.all([
           getConnections(),
           getAgentRuntime(),
           getAgentProfiles(true),
           getHermesRuntimeNodes(),
+          getModelDeployments().catch(() => ({ items: [] as ModelDeployment[] })),
           getChatMetrics().catch(() => null),
           // Fetched here rather than only at mount. `setAgentMetrics` and
           // `setToolMetrics` had one call site each, inside the session restore
@@ -735,6 +742,7 @@ function App() {
         setAgentRuntime(runtime);
         setAgentProfiles(profiles.items);
         setRuntimeNodes(nodes.items);
+        setModelDeployments(models.items);
         if (metrics) setChatMetrics(metrics);
         if (agents) setAgentMetrics(agents);
         if (tools) setToolMetrics(tools);
@@ -753,6 +761,7 @@ function App() {
     runtimeNodes,
     profiles: agentProfiles,
     runtime: agentRuntime,
+    modelDeployments,
   });
   const healthyConnections = managedConnections.filter(({ enabled, status }) => enabled && status === "HEALTHY").length;
   const inferenceConnection = connectionFor(managedConnections, "INFERENCE");
@@ -807,8 +816,12 @@ function App() {
     },
     {
       label: "Isolated agent runtime",
-      detail: readiness.runtimeNodeReady && readiness.hermesReady ? "VM2 is online and Hermes is reachable" : "Enroll VM2 and verify Hermes health",
-      ready: readiness.runtimeNodeReady && readiness.hermesReady,
+      detail: readiness.runtimeNodeReady && readiness.hermesReady && readiness.agentModelReady
+        ? "VM2 is online and Hermes is reachable"
+        : readiness.inferenceReady && !readiness.agentModelReady
+          ? "Activate a default Agent model on Gateway → Models."
+          : "Enroll VM2 and verify Hermes health",
+      ready: readiness.runtimeNodeReady && readiness.hermesReady && readiness.agentModelReady,
       action: "Deployment" as ActiveView,
       setupStep: "runtime" as const,
     },
@@ -1198,6 +1211,7 @@ function App() {
     setAgentMetrics(null);
     setToolMetrics(null);
     setManagedConnections([]);
+    setModelDeployments([]);
     setConnectionMonitoring(null);
     setRevisionHistory(null);
     setRevisionConnectionId(null);

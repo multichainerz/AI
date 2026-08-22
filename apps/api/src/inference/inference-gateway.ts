@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { GuardrailRule, InferenceBackend, InferenceGatewayChatRequest } from "@orcasynapse/contracts";
-import { and, eq, gte, isNotNull, lt, notInArray, sql } from "drizzle-orm";
+import { and, eq, gte, lt, notInArray, sql } from "drizzle-orm";
 import {
   auditEvent,
   inferenceGatewayRequest,
@@ -310,33 +310,26 @@ export class DrizzleInferenceGateway {
   }
 
   private async resolveInference(): Promise<{ connection: ResolvedConnection; modelAlias: string; maxOutputTokens: number; requestsPerMinute: number }> {
-    const [enforced] = await this.database
-      .select({ total: sql<number>`count(*)::int` })
+    // Always the ACTIVE default AGENT row — same gate enrolment uses.
+    const routes = await this.database
+      .select({
+        connectionId: modelDeployment.connectionId,
+        modelAlias: modelDeployment.modelAlias,
+        maxOutputTokens: modelDeployment.maxOutputTokens,
+      })
       .from(modelDeployment)
-      .where(and(eq(modelDeployment.workload, "AGENT"), isNotNull(modelDeployment.firstActivatedAt)));
-    const catalogueEnforced = (enforced?.total ?? 0) > 0;
-
-    const routes = catalogueEnforced
-      ? await this.database
-        .select({
-          connectionId: modelDeployment.connectionId,
-          modelAlias: modelDeployment.modelAlias,
-          maxOutputTokens: modelDeployment.maxOutputTokens,
-        })
-        .from(modelDeployment)
-        .where(
-          and(
-            eq(modelDeployment.workload, "AGENT"),
-            eq(modelDeployment.status, "ACTIVE"),
-            eq(modelDeployment.isDefault, true),
-          ),
-        )
-        .limit(2)
-      : [];
-    if (catalogueEnforced && routes.length !== 1) {
+      .where(
+        and(
+          eq(modelDeployment.workload, "AGENT"),
+          eq(modelDeployment.status, "ACTIVE"),
+          eq(modelDeployment.isDefault, true),
+        ),
+      )
+      .limit(2);
+    if (routes.length !== 1) {
       throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one evaluated default Agent model route must be active.");
     }
-    const route = routes[0];
+    const route = routes[0]!;
 
     const candidates = await this.database
       .select({ id: serviceConnection.id })
@@ -346,7 +339,7 @@ export class DrizzleInferenceGateway {
           eq(serviceConnection.kind, "INFERENCE"),
           eq(serviceConnection.enabled, true),
           eq(serviceConnection.status, "HEALTHY"),
-          ...(route ? [eq(serviceConnection.id, route.connectionId)] : []),
+          eq(serviceConnection.id, route.connectionId),
         ),
       )
       .limit(2);
@@ -354,13 +347,12 @@ export class DrizzleInferenceGateway {
       throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one healthy inference server route is required.");
     }
     const connection = await this.connections.resolveForDiagnostic(candidates[0]!.id);
-    const configuredAlias = connection.configuration.modelAlias;
-    const modelAlias = route?.modelAlias ?? (typeof configuredAlias === "string" ? configuredAlias : "");
+    const modelAlias = route.modelAlias.trim();
     if (!modelAlias) throw new InferenceGatewayError("NOT_CONFIGURED", "The approved Agent model alias is missing.");
     return {
       connection,
       modelAlias,
-      maxOutputTokens: Math.trunc(route?.maxOutputTokens ?? numbers(connection.configuration.maxOutputTokens, 4_096, 64, 32_768)),
+      maxOutputTokens: Math.trunc(route.maxOutputTokens),
       requestsPerMinute: Math.trunc(numbers(connection.configuration.requestsPerMinute, 30, 1, 600)),
     };
   }

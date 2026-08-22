@@ -61,12 +61,14 @@ beforeEach(() => {
 async function panel(
   inferenceReady = true,
   targetEnvironment: "DEVELOPMENT" | "PRODUCTION" | null = "DEVELOPMENT",
+  agentModelReady = true,
 ) {
   render(
     <main>
       <RuntimeNodesPanel
         targetEnvironment={targetEnvironment}
         inferenceReady={inferenceReady}
+        agentModelReady={agentModelReady}
         onConfigureInference={vi.fn()}
         onSessionExpired={vi.fn()}
       />
@@ -92,6 +94,14 @@ describe("the fresh-install state", () => {
     await panel(false);
     expect(screen.getByRole("button", { name: "Configure AI Inference" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Generate installer" })).toBeNull();
+  });
+
+  it("keeps Generate disabled until an ACTIVE default AGENT route exists", async () => {
+    await panel(true, "DEVELOPMENT", false);
+    const generate = screen.getByRole("button", { name: "Generate installer" });
+    expect(generate).toHaveProperty("disabled", true);
+    expect(generate).toHaveProperty("title", "Activate a default Agent model on Gateway → Models.");
+    expect(screen.getByText("Activate a default Agent model on Gateway → Models.")).toBeTruthy();
   });
 });
 
@@ -348,6 +358,7 @@ describe("a node that did not take the commit it was given", () => {
         <RuntimeNodesPanel
           targetEnvironment="DEVELOPMENT"
           inferenceReady
+          agentModelReady
           onConfigureInference={vi.fn()}
           onSessionExpired={vi.fn()}
         />
@@ -406,6 +417,7 @@ describe("the node poll", () => {
           <RuntimeNodesPanel
             targetEnvironment="DEVELOPMENT"
             inferenceReady
+            agentModelReady
             onConfigureInference={vi.fn()}
             onSessionExpired={vi.fn()}
           />
@@ -440,6 +452,7 @@ describe("the node poll", () => {
           <RuntimeNodesPanel
             targetEnvironment="DEVELOPMENT"
             inferenceReady
+            agentModelReady
             onConfigureInference={vi.fn()}
             onSessionExpired={vi.fn()}
           />

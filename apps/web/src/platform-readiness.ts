@@ -2,6 +2,7 @@ import type {
   AgentProfile,
   AgentRuntimeControl,
   HermesRuntimeNode,
+  ModelDeployment,
   ServiceConnectionSummary,
   ServiceKind,
 } from "@orcasynapse/contracts";
@@ -17,6 +18,8 @@ export interface WorkspaceSetupStep {
 
 export interface WorkspaceReadiness {
   inferenceReady: boolean;
+  /** Exactly one ACTIVE default AGENT route — enrolment and Generate, not Setup step 1. */
+  agentModelReady: boolean;
   hermesReady: boolean;
   runtimeNodeReady: boolean;
   profileReady: boolean;
@@ -54,14 +57,10 @@ export function connectionFor(
  */
 export const NODE_STALE_AFTER_MS = 180_000;
 
-/** What the API's own inference gate sees, in the one place both screens read. */
+/** What Setup step 1 reports: the endpoint, not the catalogue route. */
 export interface InferenceReadiness {
-  /** Every enabled, HEALTHY INFERENCE connection — the set the seed counts. */
+  /** Every enabled, HEALTHY INFERENCE connection. */
   healthy: ServiceConnectionSummary[];
-  /** Those of them carrying a non-empty served model alias. */
-  serving: ServiceConnectionSummary[];
-  /** The alias an enrolment would seed VM2 with, or null if it would refuse. */
-  seedableModelAlias: string | null;
   ready: boolean;
 }
 
@@ -74,32 +73,29 @@ export interface RuntimeNodeReadiness {
   ready: boolean;
 }
 
-function servedModelAlias(connection: ServiceConnectionSummary | undefined): string | null {
-  const configuration = connection?.configuration as { modelAlias?: unknown } | undefined;
-  return typeof configuration?.modelAlias === "string" && configuration.modelAlias.trim().length > 0
-    ? configuration.modelAlias.trim()
-    : null;
-}
-
 /**
- * Inference readiness, derived once for every screen that reports it.
+ * Setup step 1 / dashboard endpoint gate: exactly one enabled HEALTHY INFERENCE.
  *
- * This is `seedableInferenceModelAlias` (drizzle-runtime-node-manager.ts:94-104)
- * restated: **exactly one** enabled, HEALTHY inference connection, carrying a
- * non-empty `configuration.modelAlias`. HEALTHY alone is not the gate — the
- * Dashboard used to think it was, and reported a ready path on a deployment
- * whose Setup screen was refusing to enrol anything from it.
- *
- * `serving` is separate from `ready` on purpose: the two failures have different
- * owners. "No model is selected" is a fault in the connection and belongs to
- * step 1; "two endpoints are healthy" is a fault in the *enrolment seed* and
- * belongs to step 2, which is where an operator can act on it.
+ * Enrolment still needs an ACTIVE default AGENT route on that same connection;
+ * that is `deriveAgentModelReadiness`, not this flag.
  */
 export function deriveInferenceReadiness(connections: ServiceConnectionSummary[]): InferenceReadiness {
   const healthy = connections.filter((c) => c.kind === "INFERENCE" && c.enabled && c.status === "HEALTHY");
-  const serving = healthy.filter((connection) => servedModelAlias(connection) !== null);
-  const seedableModelAlias = healthy.length === 1 ? servedModelAlias(healthy[0]) : null;
-  return { healthy, serving, seedableModelAlias, ready: seedableModelAlias !== null };
+  return { healthy, ready: healthy.length === 1 };
+}
+
+export type AgentModelReadinessInput = Pick<ModelDeployment, "workload" | "status" | "isDefault"> & {
+  connection: Pick<ModelDeployment["connection"], "id">;
+};
+
+export function deriveAgentModelReadiness(
+  models: readonly AgentModelReadinessInput[],
+  healthyInferenceId: string | null,
+): boolean {
+  if (!healthyInferenceId) return false;
+  const defaults = models.filter((model) =>
+    model.workload === "AGENT" && model.status === "ACTIVE" && model.isDefault);
+  return defaults.length === 1 && defaults[0]!.connection.id === healthyInferenceId;
 }
 
 /**
@@ -157,8 +153,12 @@ export function deriveWorkspaceReadiness(input: {
   runtimeNodes: HermesRuntimeNode[];
   profiles: AgentProfile[];
   runtime: AgentRuntimeControl | null;
+  modelDeployments?: readonly AgentModelReadinessInput[];
 }): WorkspaceReadiness {
-  const inferenceReady = deriveInferenceReadiness(input.connections).ready;
+  const inference = deriveInferenceReadiness(input.connections);
+  const inferenceReady = inference.ready;
+  const healthyInferenceId = inference.ready ? inference.healthy[0]!.id : null;
+  const agentModelReady = deriveAgentModelReadiness(input.modelDeployments ?? [], healthyInferenceId);
   const hermesReady = deriveHermesReadiness(input.connections).ready;
   const runtimeNodeReady = deriveRuntimeNodeReadiness(input.runtimeNodes).ready;
   const profileReady = input.profiles.some(({ status }) => status === "ACTIVE");
@@ -166,7 +166,7 @@ export function deriveWorkspaceReadiness(input: {
   // The agentic infrastructure is the isolated runtime: a healthy Hermes
   // connection and an online node.
   const agenticInfrastructureReady = hermesReady && runtimeNodeReady;
-  const chatReady = inferenceReady && hermesReady && runtimeNodeReady && executionReady;
+  const chatReady = inferenceReady && agentModelReady && hermesReady && runtimeNodeReady && executionReady;
 
   let nextChatStep: WorkspaceSetupStep | null = null;
   if (!inferenceReady) {
@@ -175,11 +175,13 @@ export function deriveWorkspaceReadiness(input: {
       title: "Connect AI Inference",
       detail: "Connect and validate an approved OpenAI-compatible inference endpoint.",
     };
-  } else if (!hermesReady || !runtimeNodeReady) {
+  } else if (!agentModelReady || !hermesReady || !runtimeNodeReady) {
     nextChatStep = {
       target: "Deployment",
       title: "Finish the Agentic System",
-      detail: "Enroll VM2 and wait for its signed Hermes heartbeat to become healthy.",
+      detail: !agentModelReady
+        ? "Activate a default Agent model on Gateway → Models."
+        : "Enroll VM2 and wait for its signed Hermes heartbeat to become healthy.",
     };
   } else if (!executionReady) {
     nextChatStep = {
@@ -191,6 +193,7 @@ export function deriveWorkspaceReadiness(input: {
 
   return {
     inferenceReady,
+    agentModelReady,
     hermesReady,
     runtimeNodeReady,
     profileReady,
