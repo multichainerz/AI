@@ -355,6 +355,11 @@ export async function runMigrations(connectionString: string): Promise<void> {
     await seedDefaultConfigurationSets(pool);
     await seedBuiltInTools(pool);
     await pool.query(
+      `INSERT INTO "RuntimeToolsetAdmission" ("toolsetName", "admitted", "reason")
+       VALUES ('file', true, 'The approved baseline, admitted so Session uploads can be edited on the node.')
+       ON CONFLICT ("toolsetName") DO NOTHING`,
+    );
+    await pool.query(
       `INSERT INTO "SchemaMetadata" ("id", "epoch") VALUES ('current', $1)
        ON CONFLICT ("id") DO UPDATE SET "epoch" = EXCLUDED."epoch"`,
       [SCHEMA_EPOCH],

@@ -273,6 +273,10 @@ grep -Fq 'ExecStart=/usr/local/lib/hermes-agent/venv/bin/python /usr/local/lib/o
   /etc/systemd/system/orcasynapse-hermes-artifacts.service \
   && pass "artifact publisher uses the pinned Hermes Python environment" \
   || bad "artifact publisher is detached from the Hermes Python environment"
+grep -Fq 'ExecStart=/usr/local/lib/hermes-agent/venv/bin/python /usr/local/lib/orcasynapse/hermes-artifact-publisher.py --serve-inbox' \
+  /etc/systemd/system/orcasynapse-hermes-inbox.service \
+  && pass "session inbox uses the pinned Hermes Python environment" \
+  || bad "session inbox is detached from the Hermes Python environment"
 [[ -d /var/lib/orcasynapse-hermes/artifacts ]] \
   && pass "artifact root exists for session directories" \
   || bad "artifact root was not created"

@@ -1774,3 +1774,38 @@ describe("DrizzleAgentProcessor this-turn text inject", () => {
   });
 });
 
+describe("DrizzleAgentProcessor session inbox", () => {
+  it("places the uploaded blob on the node before start", async () => {
+    const fixture = await seed();
+    await bindConversation(fixture);
+    const artifactId = await attachUpload({
+      conversationId: fixture.conversationId,
+      messageId: fixture.userMessageId,
+      name: "brief.pdf",
+      mediaType: "application/pdf",
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+    });
+    let inbox: { sessionId: string; files: Array<{ fileName: string; bytes: Uint8Array }> } | undefined;
+    let seen: HermesRunSubmission | undefined;
+    const processor = new DrizzleAgentProcessor(context.database, runtime({
+      materializeSessionInbox: async (sessionId, files) => {
+        inbox = { sessionId, files: files.map((file) => ({ fileName: file.fileName, bytes: file.bytes })) };
+      },
+      start: async (input) => {
+        seen = input;
+        return "hermes-native-inbox";
+      },
+    }), CAPABILITIES);
+    await processor.process({ runId: fixture.runId }, fixture.jobId, WORKER_ID);
+    expect(inbox?.sessionId).toBe(fixture.conversationId);
+    expect(inbox?.files).toEqual([{
+      fileName: `${artifactId}-brief.pdf`,
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+    }]);
+    expect(seen?.instructions).toContain(
+      `/var/lib/orcasynapse-hermes/artifacts/${fixture.conversationId}/inbox/${artifactId}-brief.pdf`,
+    );
+    expect(seen?.instructions).toContain("Native file tools can read and edit it");
+  });
+});
+

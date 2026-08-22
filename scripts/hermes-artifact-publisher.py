@@ -47,6 +47,11 @@ INLINE_LIMIT_BYTES = 4 * 1024 * 1024
 OBSERVE_LIMIT_BYTES = 1024 * 1024 * 1024
 BATCH_MAX_FILES = 20
 MAX_FILES_PER_SESSION = 200
+# User uploads from VM1 land here so Hermes native file tools can edit them.
+# The publisher must not echo these back as agent deliverables.
+INBOX_DIR = "inbox"
+INBOX_BIND = os.environ.get("ORCASYNAPSE_HERMES_INBOX_BIND", "0.0.0.0:8643")
+INBOX_BODY_LIMIT = INLINE_LIMIT_BYTES
 
 STATE_ROOT = Path(os.environ.get("ORCASYNAPSE_HERMES_STATE_ROOT", "/var/lib/orcasynapse-hermes"))
 ARTIFACT_ROOT = Path(os.environ.get("ORCASYNAPSE_HERMES_ARTIFACT_ROOT", str(STATE_ROOT / "artifacts")))
@@ -198,7 +203,9 @@ def session_files(session_dir: Path) -> list[Path]:
         current = Path(dirpath)
         dirnames[:] = sorted(
             name for name in dirnames
-            if not name.startswith(".") and not (current / name).is_symlink()
+            if not name.startswith(".")
+            and not (current / name).is_symlink()
+            and not (current == session_dir and name == INBOX_DIR)
         )
         for name in sorted(filenames):
             if len(files) >= MAX_FILES_PER_SESSION:
@@ -336,11 +343,168 @@ def scan() -> int:
     return 1 if failures > 0 and published == 0 else 0
 
 
+def inbox_api_key() -> str:
+    env = os.environ.get("ORCASYNAPSE_HERMES_INBOX_KEY", "").strip()
+    if env:
+        return env
+    env_path = STATE_ROOT / "data" / ".env"
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("API_SERVER_KEY="):
+                return line.split("=", 1)[1].strip()
+    except OSError as error:
+        raise PublishError(f"could not read the Hermes API key: {error}") from error
+    raise PublishError("Hermes API_SERVER_KEY is missing; inbox refuses to start")
+
+
+def chown_hermes(path: Path) -> None:
+    if os.geteuid() != 0:
+        return
+    try:
+        import pwd
+        account = pwd.getpwnam("orcasynapse-hermes")
+    except (ImportError, KeyError):
+        return
+    os.chown(path, account.pw_uid, account.pw_gid, follow_symlinks=False)
+
+
+def safe_inbox_file(session_id: str, file_name: str) -> Path:
+    if not SESSION_NAME.match(session_id):
+        raise PublishError("session id is not a plausible session directory name")
+    if "/" in file_name or "\\" in file_name or ".." in file_name:
+        raise PublishError("inbox file name is not allowed")
+    name = Path(file_name).name
+    if name in {"", ".", ".."} or name.startswith("."):
+        raise PublishError("inbox file name is not allowed")
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$", name):
+        raise PublishError("inbox file name is not allowed")
+    session_root = (ARTIFACT_ROOT / session_id).resolve()
+    dest = (session_root / INBOX_DIR / name).resolve()
+    inbox_root = (session_root / INBOX_DIR).resolve()
+    if dest != inbox_root and not str(dest).startswith(str(inbox_root) + os.sep):
+        raise PublishError("inbox path escaped the session inbox")
+    return dest
+
+
+def write_inbox_file(session_id: str, file_name: str, data: bytes) -> Path:
+    if len(data) == 0:
+        raise PublishError("inbox file is empty")
+    if len(data) > INBOX_BODY_LIMIT:
+        raise PublishError("inbox file exceeds the 4 MiB inline limit")
+    dest = safe_inbox_file(session_id, file_name)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    chown_hermes(dest.parent)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(dest, flags, 0o664)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+    chown_hermes(dest)
+    return dest
+
+
+def serve_inbox() -> int:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    key = inbox_api_key()
+    host, _, port_text = INBOX_BIND.rpartition(":")
+    host = host.strip() or "0.0.0.0"
+    try:
+        port = int(port_text)
+    except ValueError as error:
+        raise PublishError(f"invalid inbox bind {INBOX_BIND!r}") from error
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, format: str, *args: object) -> None:
+            sys.stderr.write("inbox: " + (format % args) + "\n")
+
+        def _unauthorized(self) -> None:
+            self.send_response(401)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", "12")
+            self.end_headers()
+            self.wfile.write(b"unauthorized")
+
+        def _reject(self, status: int, message: str) -> None:
+            body = message.encode("utf-8")
+            self.send_response(status)
+            self.send_header("content-type", "text/plain; charset=utf-8")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:
+            if self.path.rstrip("/") == "/healthz":
+                self.send_response(200)
+                self.send_header("content-type", "text/plain")
+                self.send_header("content-length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+                return
+            self._reject(404, "not found")
+
+        def do_PUT(self) -> None:
+            auth = self.headers.get("authorization", "")
+            expected = f"Bearer {key}"
+            if len(auth) != len(expected) or not hmac_compare(auth, expected):
+                self._unauthorized()
+                return
+            match = re.match(r"^/v1/session-uploads/([^/]+)/([^/]+)$", self.path)
+            if not match:
+                self._reject(404, "not found")
+                return
+            from urllib.parse import unquote
+            session_id, file_name = unquote(match.group(1)), unquote(match.group(2))
+            try:
+                length = int(self.headers.get("content-length", "0"))
+            except ValueError:
+                self._reject(400, "content-length required")
+                return
+            if length <= 0 or length > INBOX_BODY_LIMIT:
+                self._reject(413, "inbox file exceeds the 4 MiB inline limit")
+                return
+            data = self.rfile.read(length)
+            try:
+                dest = write_inbox_file(session_id, file_name, data)
+            except PublishError as error:
+                self._reject(400, str(error))
+                return
+            body = json.dumps({"path": dest.as_posix()}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = ThreadingHTTPServer((host, port), Handler)
+    print(f"session inbox listening on {host}:{port}", file=sys.stderr)
+    try:
+        httpd.serve_forever()
+    finally:
+        httpd.server_close()
+    return 0
+
+
+def hmac_compare(left: str, right: str) -> bool:
+    if len(left) != len(right):
+        return False
+    result = 0
+    for index, char in enumerate(left):
+        result |= ord(char) ^ ord(right[index])
+    return result == 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scan", action="store_true", help="publish one pass of the artifact root (the default)")
-    parser.parse_args()
+    parser.add_argument("--serve-inbox", action="store_true", help="accept user uploads from the control plane onto this node")
+    args = parser.parse_args()
     try:
+        if args.serve_inbox:
+            return serve_inbox()
         return scan()
     except PublishError as error:
         print(f"error: {error}", file=sys.stderr)

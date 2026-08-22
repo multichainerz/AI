@@ -334,6 +334,23 @@ export interface HermesRunTextExcerpt {
   text: string; // already decoded, already per-file capped; framing happens here
 }
 
+export interface SessionInboxUpload {
+  fileName: string;
+  bytes: Uint8Array;
+}
+
+/** Same host as Hermes, port 8643 — the node inbox that writes `artifacts/<session>/inbox/`. */
+export function hermesInboxOrigin(baseUrl: string, configuration: Record<string, unknown> = {}): URL {
+  const override = configuration.inboxUrl;
+  if (typeof override === "string" && override.trim()) return new URL(override.trim());
+  const url = new URL(baseUrl);
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
+  url.port = "8643";
+  return url;
+}
+
 export interface HermesRunSubmission {
   input: string;
   instructions: string;
@@ -667,6 +684,35 @@ export class HermesClient {
     const connection = await this.resolver.resolveOne("HERMES");
     await this.assertAdmittedToolBoundaryFor(connection, input.admittedToolsets ?? []);
     return this.startNativeSession(connection, input);
+  }
+
+  /**
+   * Place control-plane uploads on the node under `artifacts/<session>/inbox/`
+   * so Hermes native file tools can read and edit them. Same bearer as Hermes.
+   */
+  async materializeSessionInbox(sessionId: string, files: readonly SessionInboxUpload[]): Promise<void> {
+    if (files.length === 0) return;
+    const connection = await this.resolver.resolveOne("HERMES");
+    const origin = hermesInboxOrigin(connection.baseUrl, connection.configuration as Record<string, unknown>);
+    for (const file of files) {
+      const url = new URL(
+        `v1/session-uploads/${encodeURIComponent(sessionId)}/${encodeURIComponent(file.fileName)}`,
+        origin,
+      );
+      const response = await this.fetcher(url, {
+        method: "PUT",
+        redirect: "error",
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(file.bytes.byteLength),
+          ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
+        },
+        body: Buffer.from(file.bytes),
+      });
+      if (!response.ok) {
+        throw new Error(`Session inbox refused ${file.fileName} with status ${response.status}.`);
+      }
+    }
   }
 
   /**

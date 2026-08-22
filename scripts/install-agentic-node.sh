@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v9.7.1"
+INSTALLER_VERSION="v9.7.2"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -11,6 +11,7 @@ HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 CORPUS_SERVICE="orcasynapse-hermes-corpus"
 ARTIFACT_SERVICE="orcasynapse-hermes-artifacts"
+INBOX_SERVICE="orcasynapse-hermes-inbox"
 # The handle for all four. Not a fifth job -- a target owns no process; it
 # exists so an operator has one thing to start, stop and read the state of.
 NODE_TARGET="orcasynapse-hermes-node"
@@ -691,6 +692,7 @@ platform_toolsets:
   api_server:
     - no_mcp
     - memory
+    - file
 security:
   redact_secrets: true
   allow_lazy_installs: false
@@ -1616,7 +1618,7 @@ text = open(config_path).read()
 # Drop any block a previous pass wrote, so this stays idempotent.
 text = re.sub(r"\nagent:\n  disabled_toolsets:\n(?:    - .*\n)*", "\n", text)
 
-allowlist = list(dict.fromkeys(["no_mcp", "memory"] + admitted))
+allowlist = list(dict.fromkeys(["no_mcp", "memory", "file"] + admitted))
 text = re.sub(
     r"(platform_toolsets:\n  api_server:\n)(?:    - .*\n)+",
     lambda m: m.group(1) + "".join(f"    - {name}\n" for name in allowlist),
@@ -2042,6 +2044,41 @@ WantedBy=timers.target
 EOF
   systemctl daemon-reload
   systemctl enable --now "${ARTIFACT_SERVICE}.timer" >/dev/null
+
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${INBOX_SERVICE}.service" <<EOF
+[Unit]
+Description=Accept Session uploads from OrcaSynapse onto this Hermes node
+After=network-online.target ${RUNTIME_SERVICE}.service
+Wants=network-online.target
+PartOf=${NODE_TARGET}.target
+
+[Service]
+Type=simple
+Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
+Environment=ORCASYNAPSE_HERMES_INBOX_BIND=0.0.0.0:8643
+ExecStart=${HERMES_PYTHON} /usr/local/lib/orcasynapse/hermes-artifact-publisher.py --serve-inbox
+Restart=on-failure
+RestartSec=3s
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+ReadWritePaths=${STATE_ROOT}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "${INBOX_SERVICE}.service" >/dev/null
 }
 
 # The node's operator CLI: status, update, sync, doctor, logs, decommission.
@@ -2530,7 +2567,7 @@ EOF
   info "Toolset changes made in the dashboard reach this node within five minutes."
   info "Hermes memory and skill changes appear in Agents > Corpus within one minute."
   info "Run 'orcasynapse-agent' any time on this host for status, updates and diagnosis."
-  warning "Before production, allow OrcaSynapse to reach TCP/8642 and restrict VM2 egress to OrcaSynapse HTTPS plus approved inference and MCP destinations."
+  warning "Before production, allow OrcaSynapse to reach TCP/8642 (Hermes) and TCP/8643 (Session inbox) and restrict VM2 egress to OrcaSynapse HTTPS plus approved inference and MCP destinations."
   ui_next "Return to OrcaSynapse and confirm this node reports Healthy."
 }
 

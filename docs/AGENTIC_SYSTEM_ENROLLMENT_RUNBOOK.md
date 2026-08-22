@@ -70,7 +70,7 @@ OrcaSynapse has no standing SSH credential or remote execution path on VM2, so h
 4. installs Hermes at the approved commit, creates the unprivileged `orcasynapse-hermes` service account, starts `orcasynapse-hermes.service`, and verifies that the pin exposes the native memory and Skill mutation APIs required by the Corpus plane before consuming the enrollment claim;
 5. enrolls with the single-use claim;
 6. receives the OrcaSynapse `/internal/v1` URL, dashboard-selected model alias, and a node-scoped bearer key;
-7. pins the model route, Hermes-native memory, and baseline guardrails in managed scope, admitting only the built-in `memory` tool and disabling default MCP discovery and every other unapproved native toolset;
+7. pins the model route, Hermes-native memory, and baseline guardrails in managed scope, admitting the built-in `memory` and `file` toolsets and disabling default MCP discovery and every other unapproved native toolset;
 8. installs the root-owned corpus coordinator with Hermes's pinned virtualenv, performs filesystem scanning and mutations as the unprivileged Hermes account, and starts its one-minute timer for signed, bounded snapshots and mutation polling;
 9. installs the artifact publisher with the same pinned virtualenv, creates the group-writable `artifacts/` root for per-session deliverables, and starts its one-minute timer for signed uploads;
 10. starts a systemd timer that sends signed replay-protected heartbeats every minute.

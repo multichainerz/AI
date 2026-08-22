@@ -1,7 +1,7 @@
 import { AGENT_RUN_ENDED_EVENT_TYPE } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient, frameUserFileText, nativeSessionChatBody, persistFlattenedUserText, SAFE_EVENT_TYPES } from "./hermes-client.js";
+import { HermesClient, frameUserFileText, hermesInboxOrigin, nativeSessionChatBody, persistFlattenedUserText, SAFE_EVENT_TYPES } from "./hermes-client.js";
 
 function resolver(): DrizzleRuntimeConnectionResolver {
   return {
@@ -208,6 +208,21 @@ describe("HermesClient native sessions", () => {
     expect(persistFlattenedUserText(withExcerpts)).toBe(`describe this\n${framed}\n[screenshot]`);
     expect(persistFlattenedUserText({ ...withExcerpts, images: [] })).toBe(`describe this\n${framed}`);
     expect(nativeSessionChatBody({ ...withExcerpts, images: [], textExcerpts: [] }).message).toBe("describe this");
+  });
+
+  it("puts session uploads on the inbox port, not the Hermes chat port", async () => {
+    expect(hermesInboxOrigin("http://192.0.2.10:8642").origin).toBe("http://192.0.2.10:8643");
+    expect(hermesInboxOrigin("https://hermes.example/", { inboxUrl: "https://hermes.example:9443/" }).origin)
+      .toBe("https://hermes.example:9443");
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      expect(input.toString()).toBe("https://hermes.orcasynapse.internal:8643/v1/session-uploads/session-1/notes.txt");
+      expect(init?.method).toBe("PUT");
+      expect((init?.headers as Record<string, string>).authorization).toBe("Bearer strong-hermes-key");
+      expect(Buffer.from(init?.body as Buffer)).toEqual(Buffer.from([1, 2, 3]));
+      return new Response(JSON.stringify({ path: "/var/lib/orcasynapse-hermes/artifacts/session-1/inbox/notes.txt" }));
+    });
+    const client = new HermesClient(resolver(), fetcher);
+    await client.materializeSessionInbox("session-1", [{ fileName: "notes.txt", bytes: new Uint8Array([1, 2, 3]) }]);
   });
 });
 

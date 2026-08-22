@@ -480,6 +480,7 @@ describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () =
     await enrolledNode();
 
     expect(await admissions()).toEqual([
+      { name: "file", admitted: true },
       { name: "memory", admitted: true },
       { name: "no_mcp", admitted: true },
     ]);
@@ -493,7 +494,7 @@ describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () =
       .from(auditEvent)
       .where(eq(auditEvent.action, "tool.toolset_admitted_on_enrollment"));
     expect(event).toMatchObject({ actorType: "SERVICE", resourceId: node.id, outcome: "SUCCESS" });
-    expect((event!.metadata as { toolsets: string[] }).toolsets.sort()).toEqual(["memory", "no_mcp"]);
+    expect((event!.metadata as { toolsets: string[] }).toolsets.sort()).toEqual(["file", "memory", "no_mcp"]);
   });
 
   it("never re-admits a toolset an operator revoked", async () => {
@@ -510,6 +511,7 @@ describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () =
     await enrolledNode();
 
     expect(await admissions()).toEqual([
+      { name: "file", admitted: true },
       { name: "memory", admitted: false },
       { name: "no_mcp", admitted: true },
     ]);
@@ -524,6 +526,7 @@ describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () =
     await enrolledNode();
 
     expect(await admissions()).toEqual([
+      { name: "file", admitted: true },
       { name: "memory", admitted: true },
       { name: "no_mcp", admitted: true },
     ]);
@@ -920,7 +923,7 @@ describe("runtime node pure helpers", () => {
         nodeId: node.id,
         // The enrolment baseline is always present; `clarify` is this test's
         // own operator admission on top of it.
-        admittedToolsets: ["clarify", "memory", "no_mcp"],
+        admittedToolsets: ["clarify", "file", "memory", "no_mcp"],
       });
     });
 
@@ -937,7 +940,7 @@ describe("runtime node pure helpers", () => {
       const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
       expect(Object.hasOwn(document, "admittedToolsets")).toBe(true);
-      expect(document.admittedToolsets).toEqual(["memory", "no_mcp"]);
+      expect(document.admittedToolsets).toEqual(["file", "memory", "no_mcp"]);
     });
 
     it("omits a toolset whose admission was revoked", async () => {
@@ -948,7 +951,7 @@ describe("runtime node pure helpers", () => {
       ]);
       const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
-      expect(document.admittedToolsets).toEqual(["clarify", "memory", "no_mcp"]);
+      expect(document.admittedToolsets).toEqual(["clarify", "file", "memory", "no_mcp"]);
       expect(document.admittedToolsets).not.toContain("code_execution");
     });
 

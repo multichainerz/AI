@@ -5,6 +5,30 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.2 — 2026-08-22
+
+Puts Session uploads on the Hermes node so the agent can edit the actual file.
+
+### Upgrade notes
+
+- **API, worker, and the Agentic System node must ship together.** Before
+  each turn the worker copies INLINE Session uploads to
+  `artifacts/<sessionId>/inbox/` on VM2 (TCP/8643, same Hermes API key). Native
+  `file` tools are now part of the enrolment baseline. Existing deployments
+  gain the `file` admission on migrate; repair/re-enroll installs the inbox
+  unit. Open TCP/8643 from VM1 to VM2.
+- The publisher does not re-upload `inbox/` files. Edited copies the user
+  should keep belong under the session deliverables directory.
+- This-turn image and small UTF-8 inject from v9.7.1 still runs.
+
+### Changes
+
+- materialize Session uploads onto the node inbox before Hermes start
+- skip `inbox/` in the artifact publisher so user files are not ingested as
+  agent deliverables
+- admit the native `file` toolset in the enrolment baseline
+- keep this-turn image and small UTF-8 inject on the Hermes POST
+
 ## v9.7.1 — 2026-08-22
 
 Presents this-turn Session images and small UTF-8 files on the Hermes POST.

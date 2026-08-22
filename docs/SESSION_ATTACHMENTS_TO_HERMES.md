@@ -1,12 +1,15 @@
 # Session attachments to Hermes
 
-v9.7.1 injects this-turn Session images on the Hermes native-session POST.
-PNG, JPEG, GIF, and WebP bound to the user message ride as `image_url` /
-`data:image` parts. Hermes persist stores `[screenshot]`; later turns and
-native forks replay that placeholder, not pixels. Re-attach to show an
-image again.
+v9.7.2 copies each Session upload onto the Hermes node under
+`/var/lib/orcasynapse-hermes/artifacts/<sessionId>/inbox/` before the turn
+starts. Native `file` tools (`read_file`, `write_file`, `patch`, `search_files`)
+are in the enrolment baseline so the agent can edit that blob. The artifact
+publisher skips `inbox/` so those files are not echoed back as agent
+deliverables. Save a copy the user should keep under the session deliverables
+directory.
 
-The same tag inlines small this-turn UTF-8 (plain text, Markdown, CSV, JSON
-under 16,384 bytes) as extra text parts, skip-and-labelled against the
-combined persist bound. There is no session inbox, no VM2 disk write of
-user files, and no `read_file` token in ATTACHED FILES.
+This-turn PNG/JPEG/GIF/WebP still ride the Hermes POST as `image_url` /
+`data:image` parts (later turns persist `[screenshot]`). Small this-turn UTF-8
+still inlines as extra text. There is no session-inbox companion besides the
+existing publisher binary serving `--serve-inbox` on TCP/8643 with the Hermes
+API key.

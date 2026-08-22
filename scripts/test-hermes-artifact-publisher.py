@@ -172,6 +172,21 @@ class ArtifactPublisherTests(unittest.TestCase):
         self.assertEqual(entry["sizeBytes"], str(len(big)))
         self.assertEqual(entry["sha256"], hashlib.sha256(big).hexdigest())
 
+    def test_does_not_publish_the_session_inbox(self) -> None:
+        self.write("session-1", "inbox/notes.txt", b"from the control plane")
+        self.write("session-1", "out/report.md", b"# Report\n")
+        self.module.scan()
+        self.assertEqual([entry["path"] for entry in self.sent[0]["body"]["artifacts"]], ["out/report.md"])
+
+    def test_writes_an_inbox_file_under_the_session(self) -> None:
+        dest = self.module.write_inbox_file("session-1", "notes.txt", b"hello")
+        self.assertEqual(dest.read_bytes(), b"hello")
+        self.assertEqual(dest.parent.name, "inbox")
+        with self.assertRaises(self.module.PublishError):
+            self.module.write_inbox_file("session-1", "../escape.txt", b"no")
+        with self.assertRaises(self.module.PublishError):
+            self.module.write_inbox_file("session-1", ".hidden", b"no")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

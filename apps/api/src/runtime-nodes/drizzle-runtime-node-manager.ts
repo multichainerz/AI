@@ -58,22 +58,24 @@ import {
 /**
  * What a newly enrolled node is allowed to run before an operator says anything.
  *
- * The same two names the installer writes into managed scope
- * (`platform_toolsets: api_server: [no_mcp, memory]`), stated here because the
+ * The same names the installer writes into managed scope
+ * (`platform_toolsets: api_server: [no_mcp, memory, file]`), stated here because the
  * dashboard and the node have to agree on the starting position: the reconciler
  * computes what to suppress as everything-minus-admitted, so an admission set
  * wider than this one silently empties that suppression list.
  *
- * `memory` is the built-in the runbook names. `no_mcp` is not a capability but
- * the marker that suppresses dynamic MCP discovery, and it is admitted for the
- * same reason it appears in the installer's allowlist -- it has to survive the
- * intersection or discovery comes back.
+ * `memory` is the built-in the runbook names. `file` is native read/write/patch
+ * so a Session upload materialized under `artifacts/<session>/inbox/` can be
+ * edited on the node. `no_mcp` is not a capability but the marker that
+ * suppresses dynamic MCP discovery, and it is admitted for the same reason it
+ * appears in the installer's allowlist -- it has to survive the intersection or
+ * discovery comes back.
  *
- * Widening this is a product decision, not a deployment one. An operator widens
- * their own deployment through the admission screen, which is the recorded,
- * audited path this seeding deliberately does not replace.
+ * Widening past this set is a product decision, not a deployment one. An
+ * operator widens their own deployment through the admission screen, which is
+ * the recorded, audited path this seeding deliberately does not replace.
  */
-const BASELINE_ADMITTED_TOOLSETS = ["no_mcp", "memory"] as const;
+const BASELINE_ADMITTED_TOOLSETS = ["no_mcp", "memory", "file"] as const;
 
 const SIGNATURE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const NONCE_RETENTION_MS = 24 * 60 * 60 * 1_000;
