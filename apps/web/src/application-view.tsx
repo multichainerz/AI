@@ -31,7 +31,7 @@ export function ApplicationView({ session, currentVersion, onConfigure }: Applic
       title="System"
       mark="S"
       reason="Sign in as an administrator to check for releases and read this installation's version."
-      actionLabel="Open platform settings"
+      actionLabel="Open Settings"
       onAction={onConfigure}
     />;
   }

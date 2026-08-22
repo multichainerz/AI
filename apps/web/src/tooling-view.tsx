@@ -37,7 +37,12 @@ interface ToolingViewProps {
  * omitting it made "0 allowed" read as "my agents can do nothing", which is the
  * opposite of what the boundary does.
  */
-const BASELINE = "memory";
+const BASELINE = ["memory", "file"] as const;
+const MCP_PIN = "no_mcp";
+
+function isBaseline(name: string): boolean {
+  return (BASELINE as readonly string[]).includes(name);
+}
 
 /**
  * One row of the list: a tool group the runtime reports, or a decision this
@@ -114,7 +119,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     const decisions = new Map(admissions.map((entry) => [entry.toolsetName, entry]));
     const reported = catalogue?.toolsets ?? [];
     const list: ToolRow[] = reported
-      .filter(({ name }) => name !== BASELINE)
+      .filter(({ name }) => !isBaseline(name) && name !== MCP_PIN)
       .map((toolset) => ({
         name: toolset.name,
         label: toolset.label,
@@ -127,7 +132,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
       }));
     const known = new Set(list.map(({ name }) => name));
     for (const entry of admissions) {
-      if (known.has(entry.toolsetName) || entry.toolsetName === BASELINE) continue;
+      if (known.has(entry.toolsetName) || isBaseline(entry.toolsetName) || entry.toolsetName === MCP_PIN) continue;
       list.push({
         name: entry.toolsetName,
         label: null,
@@ -141,19 +146,23 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     }
     list.sort((left, right) => left.name.localeCompare(right.name));
 
-    const memory = reported.find(({ name }) => name === BASELINE) ?? null;
-    return [{
-      name: BASELINE,
-      label: memory?.label ?? null,
-      toolCount: memory?.toolCount ?? 0,
-      enabled: memory?.enabled ?? false,
-      reported: memory !== null,
-      permitted: true,
-      baseline: true,
-      reason: null,
-    }, ...list];
+    const baselineRows: ToolRow[] = BASELINE.map((name) => {
+      const reportedRow = reported.find((toolset) => toolset.name === name) ?? null;
+      return {
+        name,
+        label: reportedRow?.label ?? null,
+        toolCount: reportedRow?.toolCount ?? 0,
+        enabled: reportedRow?.enabled ?? false,
+        reported: reportedRow !== null,
+        permitted: true,
+        baseline: true,
+        reason: null,
+      };
+    });
+    return [...baselineRows, ...list];
   }, [catalogue, admissions]);
 
+  const mcpAdmitted = admissions.some((entry) => entry.toolsetName === MCP_PIN && entry.admitted);
   const others = useMemo(() => rows.filter(({ baseline }) => !baseline), [rows]);
   /** Decisions on record. This is what "N of M allowed" counts, and only that. */
   const allowed = useMemo(() => others.filter(({ permitted }) => permitted), [others]);
@@ -218,8 +227,8 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     return {
       tone: usable.length > 0 ? "warn" : "good",
       headline: usable.length > 0
-        ? `Agents can use built-in memory and ${plural(usable.length, "other tool")}.`
-        : "Agents can use built-in memory only.",
+        ? `Agents can use built-in memory, native file tools, and ${plural(usable.length, "other tool")}.`
+        : "Agents can use built-in memory and native file tools.",
       detail: dormant.length === 0 ? call : `${call} ${plural(dormant.length, "tool")} allowed here (${dormant.join(", ")}) ${
         dormant.length === 1 ? "is" : "are"
       } not switched on at the runtime, so no run can reach ${dormant.length === 1 ? "it" : "them"} yet.`,
@@ -418,6 +427,37 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
       )}
 
       <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
+        <Tile as="article" aria-label="no_mcp" className="grid gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-x-5 gap-y-3">
+            <div className="min-w-0">
+              <strong className="font-mono text-label font-semibold text-text">no_mcp</strong>
+              <small className="mt-1.5 block max-w-[72ch] text-caption leading-relaxed text-muted">
+                Pin Hermes MCP discovery off. MCP servers stay reachable unless this is allowed. This is not a
+                catalogue toolset — it is the platform sentinel.
+              </small>
+            </div>
+            <div className="flex shrink-0 items-center gap-2.5">
+              <span className={cn("text-caption", draft[MCP_PIN] !== undefined ? "font-medium text-accent" : "text-muted")}>
+                {draft[MCP_PIN] !== undefined
+                  ? draft[MCP_PIN] ? "Pin off — pending" : "MCP on — pending"
+                  : mcpAdmitted ? "MCP pinned off" : "MCP on"}
+              </span>
+              <Switch
+                aria-label="Pin MCP off"
+                checked={draft[MCP_PIN] ?? mcpAdmitted}
+                disabled={!canManage || busy !== null}
+                onCheckedChange={(next) => {
+                  setDraft((current) => {
+                    const changed = { ...current };
+                    if (next === mcpAdmitted) delete changed[MCP_PIN];
+                    else changed[MCP_PIN] = next;
+                    return changed;
+                  });
+                }}
+              />
+            </div>
+          </div>
+        </Tile>
         {rows.map((row) => {
           const drifting = row.enabled && !row.permitted;
           const pending = draft[row.name];
@@ -450,10 +490,16 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
                         ? <StatusText dot tone="good">on at the runtime</StatusText>
                         : <StatusText tone="neutral">off at the runtime</StatusText>)}
                   </div>
-                  {row.baseline && (
+                  {row.baseline && row.name === "memory" && (
                     <small className="mt-1.5 block max-w-[72ch] text-caption leading-relaxed text-muted">
                       Built-in memory is permitted on every run and cannot be turned off here. It writes only the
                       runtime's own MEMORY.md and USER.md; OrcaSynapse neither receives nor mirrors that content.
+                    </small>
+                  )}
+                  {row.baseline && row.name === "file" && (
+                    <small className="mt-1.5 block max-w-[72ch] text-caption leading-relaxed text-muted">
+                      Native file tools are the enrolment baseline so Session uploads on the inbox path can be read
+                      and edited. They cannot be turned off here.
                     </small>
                   )}
                   {row.reason ? (
@@ -501,11 +547,11 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         <EmptyState
           className="w-full px-3 py-5"
           title={catalogueRead
-            ? "The runtime reports no tools beyond built-in memory"
+            ? "The runtime reports no tools beyond the enrolment baseline"
             : "Nothing could be read from the runtime"}
         >
           {catalogueRead
-            ? "There is nothing else to allow or block. A tool group appears here as soon as the runtime offers one."
+            ? "Memory and native file tools are always allowed. A further tool group appears here as soon as the runtime offers one."
             : "The runtime did not answer, so nothing can be listed."}
         </EmptyState>
       )}

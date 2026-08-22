@@ -501,10 +501,11 @@ export class HermesClient {
   ): Promise<void> {
     const { toolsets } = await this.assertBaseBoundary(connection);
     const permitted = new Set(admitted);
-    // The built-in memory tool is the one intentional native capability in
-    // Hermes-session mode. It writes only Hermes-owned MEMORY.md / USER.md;
-    // OrcaSynapse neither receives nor mirrors that content.
+    // Built-in memory and native file tools are the enrolment baseline.
+    // Memory writes only Hermes-owned MEMORY.md / USER.md. File is how
+    // Session uploads on the inbox path are opened and edited.
     permitted.add("memory");
+    permitted.add("file");
     const unadmitted = toolsets
       .filter((toolset) => toolset.enabled && !permitted.has(toolset.name))
       .map((toolset) => toolset.name);
@@ -629,23 +630,36 @@ export class HermesClient {
     if (files.length === 0) return;
     const connection = await this.resolver.resolveOne("HERMES");
     const origin = hermesInboxOrigin(connection.baseUrl, connection.configuration as Record<string, unknown>);
+    const timeoutMs = Math.min(30_000, Math.max(1_000, numberSetting(connection, "timeoutMs", 8_000)));
     for (const file of files) {
       const url = new URL(
         `v1/session-uploads/${encodeURIComponent(sessionId)}/${encodeURIComponent(file.fileName)}`,
         origin,
       );
-      const response = await this.fetcher(url, {
-        method: "PUT",
-        redirect: "error",
-        headers: {
-          "content-type": "application/octet-stream",
-          "content-length": String(file.bytes.byteLength),
-          ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
-        },
-        body: Buffer.from(file.bytes),
-      });
-      if (!response.ok) {
-        throw new Error(`Session inbox refused ${file.fileName} with status ${response.status}.`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await this.fetcher(url, {
+          method: "PUT",
+          redirect: "error",
+          signal: controller.signal,
+          headers: {
+            "content-type": "application/octet-stream",
+            "content-length": String(file.bytes.byteLength),
+            ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
+          },
+          body: Buffer.from(file.bytes),
+        });
+        if (!response.ok) {
+          throw new Error(`Session inbox refused ${file.fileName} with status ${response.status}.`);
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new Error(`Session inbox timed out placing ${file.fileName}.`);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
       }
     }
   }

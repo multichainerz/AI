@@ -28,14 +28,14 @@ something an operator is being asked to go and fix.
 - OrcaSynapse is installed and the temporary local-administrator password has been replaced (`dashboardReady`);
 - exactly one AI Inference connection is enabled and healthy, and exactly one ACTIVE default AGENT route exists on Gateway → Models (`inferenceReady`) — *exactly* one of each, because `seedableInferenceModelAlias()` refuses to guess between two healthy connections or two defaults;
 - VM2 is a clean Ubuntu systemd VM on x86_64 or aarch64 with outbound access to OrcaSynapse and the artifact sources during installation;
-- OrcaSynapse can reach the VM2 Hermes address on TCP 8642;
+- OrcaSynapse can reach the VM2 Hermes address on TCP 8642 and the Session inbox on TCP 8643;
 - the invitation uses a hostname/address that matches customer DNS and TLS policy.
 
 Enter a Hermes commit in the dashboard invitation: the full 40-character git SHA of the runtime revision to install. A commit SHA is a content digest of the tree, so it is as immutable as the registry digest it replaces, and unlike a tag it cannot be moved to different code after review. OrcaSynapse requires one for Production enrollment; the installer reads the pin back out of the finished checkout and refuses to enroll if the installed revision is not the approved one.
 
 ## Dashboard workflow
 
-1. Open **Settings → Setup** and select step 2, *Install the agent runtime*. It is also addressable directly at `#settings/setup/runtime`.
+1. Open **Gateway → Models** and admit exactly one ACTIVE default AGENT route on the unique healthy inference connection. Then open **Settings → Setup**. Step 2 (*Install the agent runtime*) is also addressable at `#settings/setup/runtime`.
 2. Create an invitation with the runtime display name, slug, reachable Hermes base URL, approved Hermes commit, and short TTL.
 3. Copy the one-time claim. OrcaSynapse stores only its digest.
 4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard. The route is unavailable before dashboard setup and healthy AI Inference are present. It remains available afterward for protected local recovery, while a live claim is required to begin a new enrollment.
@@ -49,7 +49,7 @@ Enter a Hermes commit in the dashboard invitation: the full 40-character git SHA
    **Expect step 4 to take 15-20 minutes on a first install, with long silent stretches.** It clones the Hermes repository and fetches the pinned commit (~180k objects), builds a Python virtual environment, and runs `npm install`. It is not hung. `--skip-browser` suppresses only the Chromium download, not the Node dependency install, and upstream offers no flag for the latter.
 
 6. Return to the dashboard and verify that Hermes and the signed heartbeat are healthy.
-7. Run the AI-services and Hermes-profile checks before activation.
+7. Confirm Hermes and the signed heartbeat are healthy, then activate an Agent Profile from Agents → Profiles.
 
 For an offline administrative transfer, download the JSON bundle and run `sudo bash install-agentic-node.sh enrollment.json` instead. Do not place the claim in a URL, command argument, or shell history.
 
@@ -70,7 +70,7 @@ OrcaSynapse has no standing SSH credential or remote execution path on VM2, so h
 4. installs Hermes at the approved commit, creates the unprivileged `orcasynapse-hermes` service account, starts `orcasynapse-hermes.service`, and verifies that the pin exposes the native memory and Skill mutation APIs required by the Corpus plane before consuming the enrollment claim;
 5. enrolls with the single-use claim;
 6. receives the OrcaSynapse `/internal/v1` URL, dashboard-selected model alias, and a node-scoped bearer key;
-7. pins the model route, Hermes-native memory, and baseline guardrails in managed scope, admitting the built-in `memory` and `file` toolsets and disabling default MCP discovery and every other unapproved native toolset;
+7. pins the model route, Hermes-native memory, and baseline guardrails in managed scope, admitting the built-in `memory` and `file` toolsets; MCP discovery stays on unless an operator later admits `no_mcp`; unadmitted native toolsets are listed in `disabled_toolsets`;
 8. installs the root-owned corpus coordinator with Hermes's pinned virtualenv, performs filesystem scanning and mutations as the unprivileged Hermes account, and starts its one-minute timer for signed, bounded snapshots and mutation polling;
 9. installs the artifact publisher with the same pinned virtualenv, creates the group-writable `artifacts/` root for per-session deliverables, and starts its one-minute timer for signed uploads;
 10. starts a systemd timer that sends signed replay-protected heartbeats every minute.
@@ -86,16 +86,17 @@ The inference bootstrap never contains the upstream serving credential. Revoking
 | Source | Destination | Required use |
 | --- | --- | --- |
 | VM2 | OrcaSynapse HTTPS | enrollment, heartbeat, inference gateway, signed corpus snapshots and mutation polling, signed artifact uploads |
-| OrcaSynapse | VM2 TCP 8642 | Hermes health and governed agent calls |
+| OrcaSynapse | VM2 TCP 8642 | Hermes health and native session calls |
+| OrcaSynapse | VM2 TCP 8643 | Session inbox: control-plane uploads for native file tools |
 | VM2 | Ubuntu archive, `hermes-agent.nousresearch.com`, GitHub, PyPI, npm, `astral.sh` | installation and upgrade only - see below |
 
 **Install-time egress is wider than it was under the container runtime, and this is a deliberate trade.** A native Hermes install resolves its own dependency chain - `uv`, a Python toolchain, Node - from the upstream sources above, and those transitive downloads are not checksum-pinned by us. The pin covers the Hermes revision itself, not every dependency it pulls.
 
-**Observed, and worth stating plainly: the dependency set is not reproducible.** Hermes's installer tries a hash-verified `uv.lock` tier first, and at a pinned commit it can fail (`the lockfile needs to be updated, but --locked was provided`) and fall back to a live PyPI resolve, which it reports as `installed via fallback tier`. Two nodes enrolled a month apart therefore run identical Hermes code and possibly different dependency versions. The commit pin is an accurate statement about the runtime tree and *not* a statement about the whole installed environment. Where reproducibility of the full dependency set is a requirement, that has to come from an internal mirror rather than from this installer. This egress is needed only while `install-agentic-node.sh` runs; once the node is enrolled, steady-state traffic is the two rows above and nothing else, so the allowlist can be narrowed again after installation.
+**Observed, and worth stating plainly: the dependency set is not reproducible.** Hermes's installer tries a hash-verified `uv.lock` tier first, and at a pinned commit it can fail (`the lockfile needs to be updated, but --locked was provided`) and fall back to a live PyPI resolve, which it reports as `installed via fallback tier`. Two nodes enrolled a month apart therefore run identical Hermes code and possibly different dependency versions. The commit pin is an accurate statement about the runtime tree and *not* a statement about the whole installed environment. Where reproducibility of the full dependency set is a requirement, that has to come from an internal mirror rather than from this installer. This egress is needed only while `install-agentic-node.sh` runs; once the node is enrolled, steady-state traffic is the OrcaSynapse HTTPS row plus VM1→VM2 TCP 8642 and 8643, so the install-time archive/GitHub/PyPI/npm rows can be narrowed after installation.
 
 **An air-gapped install is not supported on this path.** The previous container image could be mirrored into an internal registry and installed with no public egress; a native install cannot, because the dependency resolution happens on the host at install time. An air-gapped deployment needs an internal mirror of each source above, which is outside what this installer does today. Treat that as a known limitation when planning a disconnected production environment.
 
-Deny VM2 access to OrcaSynapse PostgreSQL, enterprise storage administration, hypervisor/deployment APIs, and unrestricted external networks. Do not expose port 8642 to user networks or the public internet.
+Deny VM2 access to OrcaSynapse PostgreSQL, enterprise storage administration, hypervisor/deployment APIs, and unrestricted external networks. Do not expose ports 8642 or 8643 to user networks or the public internet.
 
 ## Secrets and state
 

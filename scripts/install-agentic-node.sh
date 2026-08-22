@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v9.7.7"
+INSTALLER_VERSION="v9.7.8"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -12,8 +12,8 @@ DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 CORPUS_SERVICE="orcasynapse-hermes-corpus"
 ARTIFACT_SERVICE="orcasynapse-hermes-artifacts"
 INBOX_SERVICE="orcasynapse-hermes-inbox"
-# The handle for all four. Not a fifth job -- a target owns no process; it
-# exists so an operator has one thing to start, stop and read the state of.
+# The handle for the node's units. Not another job -- a target owns no process;
+# it exists so an operator has one thing to start, stop and read the state of.
 NODE_TARGET="orcasynapse-hermes-node"
 # Hermes runs as an unprivileged service account rather than a container
 # identity. The name is the unit name so `systemctl`, `journalctl` and `ps` all
@@ -1092,7 +1092,7 @@ EOF
   systemctl daemon-reload
 }
 
-# One handle for the four units this installer manages.
+# One handle for the units this installer manages.
 #
 # Additive on purpose. Every unit keeps its own `WantedBy=` -- the timers are
 # still wanted by timers.target and the runtime by multi-user.target -- so boot
@@ -1101,11 +1101,11 @@ EOF
 # the state of the set with one command, which is what an operator reaches for
 # and what nobody had.
 #
-# It is not an argument for merging the four into one program. They run under
-# four different privilege profiles: the runtime is unprivileged, the heartbeat
-# is root but cannot write a byte to the state root, the corpus reconciler
-# writes it, and the desired-state client re-installs Hermes. One unit would
-# hold the union of those, which is the loosest of them.
+# It is not an argument for merging the units into one program. They run under
+# different privilege profiles: the runtime is unprivileged, the heartbeat is
+# root but cannot write a byte to the state root, the corpus reconciler writes
+# it, and the desired-state client re-installs Hermes. One unit would hold the
+# union of those, which is the loosest of them.
 write_hermes_node_target() {
   write_file_from_stdin 0644 root root "/etc/systemd/system/${NODE_TARGET}.target" <<EOF
 [Unit]
@@ -1113,12 +1113,13 @@ Description=OrcaSynapse Agentic System node
 Documentation=https://github.com/multichainerz/AI
 # Wants, not Requires: a node whose corpus timer has been deliberately masked is
 # a degraded node rather than a failed target, and Requires would refuse to
-# start the other three because of it.
+# start the rest of the node because of it.
 Wants=${RUNTIME_SERVICE}.service
 Wants=${HEARTBEAT_SERVICE}.timer
 Wants=${DESIRED_STATE_SERVICE}.timer
 Wants=${CORPUS_SERVICE}.timer
 Wants=${ARTIFACT_SERVICE}.timer
+Wants=${INBOX_SERVICE}.service
 After=${RUNTIME_SERVICE}.service
 # Proof of ownership for the decommissioner, the same marker the runtime unit
 # carries -- this file is removed by name rather than by the
@@ -1628,7 +1629,7 @@ text = re.sub(
     count=1,
 )
 
-disabled = [name for name in every if name not in admitted and name != "memory"]
+disabled = [name for name in every if name not in allowlist]
 if disabled:
     block = "agent:\n  disabled_toolsets:\n" + "".join(f"    - {name}\n" for name in disabled)
     text = text.rstrip("\n") + "\n" + block
@@ -1833,7 +1834,7 @@ Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
 # the desired-state unit gives about its own paths: the runtime service name is
 # overridable, and a client that assumed the default would report on a unit that
 # does not exist -- which reads as "down" and would be worse than not reporting.
-Environment=ORCASYNAPSE_HERMES_REPORTED_UNITS=${RUNTIME_SERVICE}.service ${HEARTBEAT_SERVICE}.timer ${DESIRED_STATE_SERVICE}.timer ${CORPUS_SERVICE}.timer
+Environment=ORCASYNAPSE_HERMES_REPORTED_UNITS=${RUNTIME_SERVICE}.service ${HEARTBEAT_SERVICE}.timer ${DESIRED_STATE_SERVICE}.timer ${CORPUS_SERVICE}.timer ${ARTIFACT_SERVICE}.timer ${INBOX_SERVICE}.service
 ExecStart=/usr/local/lib/orcasynapse/hermes-heartbeat.sh
 User=root
 Group=root
@@ -2177,9 +2178,9 @@ repair_runtime_installation() {
   write_artifact_publisher "$(<"${STATE_ROOT}/control-plane-url")"
   install_operator_cli "$(<"${STATE_ROOT}/control-plane-url")"
   record_installer_version
-  # After all four units exist, so the target's Wants= name units that are
-  # on disk. It is enabled and not started -- each site below starts what it
-  # needs, in the order it needs.
+  # After the units exist, so the target's Wants= name units that are on disk.
+  # It is enabled and not started -- each site below starts what it needs, in
+  # the order it needs.
   write_hermes_node_target
   systemctl enable --now "${HEARTBEAT_SERVICE}.timer" >/dev/null
   systemctl start "${HEARTBEAT_SERVICE}.service" \
@@ -2520,9 +2521,9 @@ EOF
   write_artifact_publisher "${control_plane_url}"
   install_operator_cli "${control_plane_url}"
   record_installer_version
-  # After all four units exist, so the target's Wants= name units that are
-  # on disk. It is enabled and not started -- each site below starts what it
-  # needs, in the order it needs.
+  # After the units exist, so the target's Wants= name units that are on disk.
+  # It is enabled and not started -- each site below starts what it needs, in
+  # the order it needs.
   write_hermes_node_target
   systemctl daemon-reload
   systemctl enable --now "${HEARTBEAT_SERVICE}.timer"

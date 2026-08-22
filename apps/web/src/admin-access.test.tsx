@@ -62,7 +62,7 @@ describe("platform governance views", () => {
       // the shell it describes was unchanged.
       const html = renderToStaticMarkup(render(pendingPasswordChange));
       expect(html).toContain("Administrator session required");
-      expect(html).toContain("Open platform settings");
+      expect(html).toContain("Open Settings");
       // A heading names the area, so the two screens are distinguishable.
       expect(html).toMatch(new RegExp(`<h1[^>]*>${name}</h1>`));
     });

@@ -15,12 +15,7 @@ import {
   getEnterpriseSession,
   getChatConversations,
   cancelChatRun,
-  getToolRuntime,
-  recordProductionReadinessApproval,
-  updateProductionReadinessControl,
-  rollbackConfiguration,
   streamChatEvents,
-  updateToolRuntime,
   updateConnectionMonitoring,
   getModelDeployments,
   getModelObservations,
@@ -484,39 +479,6 @@ describe("OrcaSynapse browser API", () => {
     );
   });
 
-  it("sends the optimistic active-revision guard when restoring configuration", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      connection: {
-        id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
-        slug: "vllm-primary",
-        displayName: "vLLM Primary",
-        kind: "INFERENCE",
-        environment: "PRODUCTION",
-        baseUrl: "https://vllm.orcasynapse.internal",
-        enabled: true,
-        status: "NOT_TESTED",
-        configuration: {},
-        activeRevision: 3,
-        secretFieldNames: ["apiKey"],
-        lastHealthcheckAt: null,
-        lastHealthcheckMessage: null,
-        updatedAt: "2026-07-30T00:00:00.000Z",
-      },
-      rolledBackFromRevision: 2,
-      targetRevision: 1,
-      createdRevision: 3,
-      preservedSecretFields: ["apiKey"],
-      message: "Configuration restored; active credentials were preserved.",
-    }));
-
-    await rollbackConfiguration("8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d", 1, 2);
-
-    const [url, options] = fetchMock.mock.calls[0]!;
-    expect(url).toContain("/revisions/1/rollback");
-    expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
-    expect(JSON.parse(String(options?.body))).toEqual({ expectedActiveRevision: 2 });
-  });
-
   it("turns a non-JSON gateway failure into an actionable API error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("upstream unavailable", { status: 502, statusText: "Bad Gateway" }),
@@ -557,88 +519,4 @@ describe("OrcaSynapse browser API", () => {
     expect(events).toEqual(["started", "delta"]);
   });
 
-  it("reads and updates the governed-tool kill switch through the scoped admin API", async () => {
-    const runtime = {
-      enabled: false,
-      reason: "Live Hermes propagation is not enabled yet.",
-      approvalTtlMinutes: 30,
-      updatedAt: "2026-07-30T00:00:00.000Z",
-      updatedBy: null,
-    };
-    const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse(runtime))
-      .mockResolvedValueOnce(jsonResponse({ ...runtime, approvalTtlMinutes: 45 }));
-
-    await getToolRuntime();
-    await updateToolRuntime({
-      enabled: false,
-      reason: "Keep the boundary closed during interoperability testing.",
-      approvalTtlMinutes: 45,
-    });
-
-    expect(fetchMock.mock.calls[0]).toEqual([
-      "/api/v1/admin/tooling/runtime",
-      { credentials: "same-origin" },
-    ]);
-    const [url, options] = fetchMock.mock.calls[1]!;
-    expect(url).toBe("/api/v1/admin/tooling/runtime");
-    expect(options).toMatchObject({ method: "PATCH", credentials: "same-origin" });
-    expect(JSON.parse(String(options?.body))).toEqual({
-      enabled: false,
-      reason: "Keep the boundary closed during interoperability testing.",
-      approvalTtlMinutes: 45,
-    });
-  });
-
-  it("sends concurrency-safe readiness evidence and external approval records", async () => {
-    const control = {
-      key: "security-threat-model",
-      title: "Threat model and security review",
-      domain: "SECURITY",
-      description: "OrcaSynapse Security reviews the intended pilot scope.",
-      status: "VERIFIED",
-      owner: "OrcaSynapse Security",
-      evidenceRefs: ["evidence/security-review.pdf"],
-      note: "Review completed.",
-      lastUpdatedBy: "security-admin",
-      verifiedAt: "2026-07-30T00:10:00.000Z",
-      revision: 2,
-      updatedAt: "2026-07-30T00:10:00.000Z",
-    };
-    const approval = {
-      id: "c43149d0-a76d-43ee-932e-7a4d527673e8",
-      role: "SECURITY",
-      decision: "APPROVED",
-      authority: "OrcaSynapse Security Review Board",
-      evidenceRef: "approval/security/2026-07-30",
-      reason: "Approved for the bounded pilot scope.",
-      recordedBy: "platform-admin",
-      recordedAt: "2026-07-30T00:12:00.000Z",
-      isCurrent: true,
-    };
-    const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse(control))
-      .mockResolvedValueOnce(jsonResponse(approval, 201));
-    const decision = {
-      status: "VERIFIED" as const,
-      owner: "OrcaSynapse Security",
-      evidenceRefs: ["evidence/security-review.pdf"],
-      note: "Review completed.",
-      expectedRevision: 1,
-    };
-
-    await updateProductionReadinessControl(control.key, decision);
-    await recordProductionReadinessApproval({
-      role: "SECURITY",
-      decision: "APPROVED",
-      authority: approval.authority,
-      evidenceRef: approval.evidenceRef,
-      reason: approval.reason,
-    });
-
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/admin/operations/readiness/controls/${control.key}`);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(decision);
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/v1/admin/operations/readiness/approvals");
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({ authority: approval.authority, decision: "APPROVED" });
-  });
 });

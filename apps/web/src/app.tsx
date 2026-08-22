@@ -1,6 +1,5 @@
 import type {
   AdministratorSession,
-  ConfigurationRevisionList,
   ConnectionMonitoringControl,
   ConnectionTestResult,
   PlatformMeta,
@@ -53,14 +52,12 @@ import {
   getAgentRuntime,
   getHermesRuntimeNodes,
   getModelDeployments,
-  getConfigurationRevisions,
   getConnectionMonitoring,
   getConnections,
   getPlatformMeta,
   revokeAdministratorSession,
   revokeEnterpriseSession,
   recoverLocalAdministrator,
-  rollbackConfiguration,
   testConnection,
   updateConnection,
 } from "./api.js";
@@ -478,8 +475,6 @@ function App() {
   // be `deploymentInitialTab` here, which is why Back from the nodes panel left
   // Settings and a reload mid-enrolment returned to the overview.
   const [setupStep, setSetupStep] = useState<SetupStepKey | null>(() => setupStepFromHash(window.location.hash));
-  const [revisionHistory, setRevisionHistory] = useState<ConfigurationRevisionList | null>(null);
-  const [revisionConnectionId, setRevisionConnectionId] = useState<string | null>(null);
   const sessionGeneration = useRef(0);
   const activeNavigationItem = useRef<HTMLButtonElement | null>(null);
 
@@ -1067,8 +1062,6 @@ function App() {
         }
       }
       setManagedConnections((await getConnections()).items);
-      setRevisionHistory(null);
-      setRevisionConnectionId(null);
     } catch (error) {
       setSettingsError(handleAdminError(error, "Unable to save the connection."));
     } finally {
@@ -1158,37 +1151,6 @@ function App() {
     }
   };
 
-  const loadRevisions = async (connectionId: string) => {
-    setSettingsBusy(true);
-    setSettingsError(null);
-    try {
-      setRevisionConnectionId(connectionId);
-      setRevisionHistory(await getConfigurationRevisions(connectionId));
-    } catch (error) {
-      setSettingsError(handleAdminError(error, "Unable to load revision history."));
-    } finally {
-      setSettingsBusy(false);
-    }
-  };
-
-  const restoreRevision = async (
-    connectionId: string,
-    targetRevision: number,
-    expectedActiveRevision: number,
-  ) => {
-    setSettingsBusy(true);
-    setSettingsError(null);
-    try {
-      await rollbackConfiguration(connectionId, targetRevision, expectedActiveRevision);
-      setManagedConnections((await getConnections()).items);
-      setRevisionHistory(await getConfigurationRevisions(connectionId));
-    } catch (error) {
-      setSettingsError(handleAdminError(error, "Unable to restore the selected revision."));
-    } finally {
-      setSettingsBusy(false);
-    }
-  };
-
   const signOut = async () => {
     sessionGeneration.current += 1;
     setSettingsError(null);
@@ -1200,8 +1162,6 @@ function App() {
     setManagedConnections([]);
     setModelDeployments([]);
     setConnectionMonitoring(null);
-    setRevisionHistory(null);
-    setRevisionConnectionId(null);
     await Promise.allSettled([
       revokeAdministratorSession(),
       revokeEnterpriseSession(),
@@ -1544,7 +1504,11 @@ function App() {
             />
           ),
           Files: () => (
-            <FilesView onSessionExpired={forgetAnySession} />
+            <FilesView
+              unlocked={chatUnlocked}
+              onSessionExpired={forgetAnySession}
+              onConfigure={() => openConnectionSettings()}
+            />
           ),
           Models: () => (
             <ModelsView
@@ -1661,6 +1625,8 @@ function App() {
                 onTest: runConnectionTest,
                 onDiscoverInference: discoverInference,
                 onLoadInferenceCatalogue: loadCatalogue,
+                canWrite: can("connections:write"),
+                canTest: can("connections:test"),
               }}
               onOpenWorkspace={(workspace) => selectView(workspace)}
               onRuntimeNodesChange={setRuntimeNodes}
@@ -1725,16 +1691,14 @@ function App() {
         error={settingsError}
         initialKind={drawerKind}
         open={drawerOpen}
-        revisionConnectionId={revisionConnectionId}
-        revisionHistory={revisionHistory}
         onClose={() => showSurface(() => setDrawerOpen(false))}
         onOpenAgenticSystem={() => openConnectionSettings("HERMES")}
         onSave={saveConnection}
         onTest={runConnectionTest}
         onDiscoverInference={discoverInference}
         onLoadInferenceCatalogue={loadCatalogue}
-        onLoadRevisions={loadRevisions}
-        onRollback={restoreRevision}
+        canWrite={can("connections:write")}
+        canTest={can("connections:test")}
       />
       <AdminSignInDialog
         open={signInOpen}

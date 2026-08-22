@@ -68,12 +68,18 @@ afterEach(() => {
 
 async function view() {
   const onSessionExpired = vi.fn();
-  render(<FilesView onSessionExpired={onSessionExpired} />);
+  render(<FilesView unlocked onSessionExpired={onSessionExpired} />);
   await waitFor(() => screen.getByText("findings.md"));
   return onSessionExpired;
 }
 
 describe("files view", () => {
+  it("does not fetch when the session cannot use Chat", () => {
+    render(<FilesView unlocked={false} onSessionExpired={vi.fn()} onConfigure={vi.fn()} />);
+    expect(screen.getByText("Authenticated workspace required")).toBeTruthy();
+    expect(getChatArtifacts).not.toHaveBeenCalled();
+  });
+
   it("renders each file with its origin, and downloads via a plain navigation", async () => {
     await view();
     const rows = within(screen.getByLabelText("Files"));
@@ -133,13 +139,13 @@ describe("files view", () => {
   it("treats 401 as expiry and 403 as a refusal that leaves the session", async () => {
     getChatArtifacts.mockRejectedValueOnce(new OrcaSynapseApiError(401, "unsigned"));
     const expiredOn401 = vi.fn();
-    render(<FilesView onSessionExpired={expiredOn401} />);
+    render(<FilesView unlocked onSessionExpired={expiredOn401} />);
     await waitFor(() => expect(expiredOn401).toHaveBeenCalled());
 
     cleanup();
     getChatArtifacts.mockRejectedValueOnce(new OrcaSynapseApiError(403, "The administrator session does not grant 'chat:use'."));
     const expiredOn403 = vi.fn();
-    render(<FilesView onSessionExpired={expiredOn403} />);
+    render(<FilesView unlocked onSessionExpired={expiredOn403} />);
     await waitFor(() => screen.getByText(/does not grant/));
     expect(expiredOn403).not.toHaveBeenCalled();
     expect(screen.queryByText("No files yet")).toBeNull();
@@ -147,7 +153,7 @@ describe("files view", () => {
 
   it("renders a failed load as a failure, never as an empty library", async () => {
     getChatArtifacts.mockRejectedValueOnce(new Error("the artifact service is unreachable"));
-    render(<FilesView onSessionExpired={vi.fn()} />);
+    render(<FilesView unlocked onSessionExpired={vi.fn()} />);
 
     await waitFor(() => screen.getByText(/artifact service is unreachable/));
     expect(screen.queryByText("No files yet")).toBeNull();

@@ -89,12 +89,12 @@ describe("Button", () => {
 describe("LockedScreen", () => {
   it("names the area so governance screens stay distinguishable", () => {
     const html = markup(
-      <LockedScreen title="Models" mark="M" actionLabel="Open platform settings" onAction={vi.fn()} />,
+      <LockedScreen title="Models" mark="M" actionLabel="Open Settings" onAction={vi.fn()} />,
     );
     expect(html).toContain("<h1");
     expect(html).toContain("Models");
     expect(html).toContain("Administrator session required");
-    expect(html).toContain("Open platform settings");
+    expect(html).toContain("Open Settings");
   });
 
   it("says what it actually needs, which is not always an administrator", () => {

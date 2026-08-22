@@ -3,6 +3,7 @@ import {
   chatSchedule,
   enterpriseUser,
   localAdministrator,
+  localUser,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, eq, isNull, lte, sql } from "drizzle-orm";
@@ -274,14 +275,18 @@ export class ScheduleRuntime {
 
     if (schedule.createdByMode === "ADMINISTRATOR_PREVIEW") {
       const [administrator] = await this.database
-        .select({ id: localAdministrator.id, role: localAdministrator.role })
+        .select({
+          id: localAdministrator.id,
+          role: localAdministrator.role,
+          passwordChangeRequired: localAdministrator.passwordChangeRequired,
+        })
         .from(localAdministrator)
         .where(and(
           eq(localAdministrator.id, schedule.createdBy),
           isNull(localAdministrator.disabledAt),
         ))
         .limit(1);
-      if (!administrator) return null;
+      if (!administrator || administrator.passwordChangeRequired) return null;
       const scopes = scopesForAdminRole(administrator.role);
       if (!scopes.includes("chat:use")) return null;
       return {
@@ -294,11 +299,16 @@ export class ScheduleRuntime {
 
     if (schedule.createdByMode === "ENTERPRISE") {
       const [person] = await this.database
-        .select({ id: enterpriseUser.id, divisionId: enterpriseUser.divisionId })
+        .select({
+          id: enterpriseUser.id,
+          divisionId: enterpriseUser.divisionId,
+          passwordChangeRequired: localUser.passwordChangeRequired,
+        })
         .from(enterpriseUser)
+        .leftJoin(localUser, eq(localUser.userId, enterpriseUser.id))
         .where(and(eq(enterpriseUser.id, schedule.createdBy), eq(enterpriseUser.enabled, true)))
         .limit(1);
-      if (!person) return null;
+      if (!person || person.passwordChangeRequired) return null;
       // The scope pair every enterprise session carries. A literal in
       // `EnterprisePrincipal`, so there is nothing per-user to read.
       return {

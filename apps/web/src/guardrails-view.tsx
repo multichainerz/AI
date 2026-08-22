@@ -394,7 +394,7 @@ export function GuardrailsView({
       title="Guardrails"
       mark="G"
       reason="Sign in as an administrator to inspect policy versions and their activation history; the workspace session you already have stays active."
-      actionLabel="Open platform settings"
+      actionLabel="Open Settings"
       onAction={onConfigureInference}
     />;
   }

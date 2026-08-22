@@ -3,7 +3,6 @@ import {
   OPENROUTER_INFERENCE,
   type CreateServiceConnection,
   type ConnectionTestResult,
-  type ConfigurationRevisionList,
   type Environment,
   type InferenceCatalogueRequest,
   type InferenceCatalogueResult,
@@ -39,20 +38,14 @@ interface ConnectionDrawerProps {
   diagnostic: ConnectionTestResult | null;
   initialKind: ServiceKind;
   open: boolean;
-  revisionConnectionId?: string | null;
-  revisionHistory?: ConfigurationRevisionList | null;
   onClose: () => void;
   onOpenAgenticSystem: () => void;
   onSave: (draft: ConnectionDraft) => Promise<void>;
   onTest: (id: string) => Promise<void>;
   onDiscoverInference: (input: InferenceDiscoveryRequest) => Promise<InferenceDiscoveryResult | null>;
   onLoadInferenceCatalogue: (input: InferenceCatalogueRequest) => Promise<InferenceCatalogueResult | null>;
-  onLoadRevisions?: (connectionId: string) => Promise<void>;
-  onRollback?: (
-    connectionId: string,
-    targetRevision: number,
-    expectedActiveRevision: number,
-  ) => Promise<void>;
+  canWrite?: boolean;
+  canTest?: boolean;
   /**
    * Setup step 1 owns this form. The dialog is the same editor for every other
    * surface; embedding it here is what keeps "connect inference" on the step
@@ -202,7 +195,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const [enabled, setEnabled] = useState(false);
   const [configuration, setConfiguration] = useState<ServiceConnectionConfiguration>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
-  const [rollbackCandidate, setRollbackCandidate] = useState<number | null>(null);
 
   const [inferenceDiscovery, setInferenceDiscovery] = useState<InferenceDiscoveryResult | null>(null);
   const [inferenceEndpointMode, setInferenceEndpointMode] = useState<InferenceEndpointMode>("local");
@@ -242,7 +234,9 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const localNeedsDiscovery = selectedKind === "INFERENCE" && !openRouterMode && (
     !existing || (existing.baseUrl ?? "") !== baseUrl.trim()
   );
-  const submitDisabled = props.busy || (localNeedsDiscovery && inferenceDiscovery?.status !== "READY");
+  const canWrite = props.canWrite !== false;
+  const canTest = props.canTest !== false;
+  const submitDisabled = !canWrite || props.busy || (localNeedsDiscovery && inferenceDiscovery?.status !== "READY");
   const submitLabel = props.busy
     ? selectedKind === "INFERENCE" && enabled ? "Saving and verifying…" : "Saving…"
     : selectedKind === "INFERENCE" && (inferenceDiscovery?.status === "READY" || openRouterCatalogue !== null)
@@ -265,7 +259,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     setInferenceDiscovery(null);
     setInferenceEndpointMode(isOpenRouterEndpoint(existing?.baseUrl) ? "openrouter" : "local");
     setOpenRouterCatalogue(null);
-    setRollbackCandidate(null);
     // `existingKey`, not `existing` -- see the note where it is derived. The
     // effect reads `existing`, and may: when the key is unchanged every field it
     // reads is equal by value, and when it changes the effect re-runs.
@@ -449,11 +442,13 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 </p>
               )}
             </div>
+            {canTest ? (
             <Button size="sm" disabled={props.busy} onClick={() => void props.onTest(existing.id)}>
               {props.busy
                 ? existing.kind === "INFERENCE" && !existing.enabled ? "Testing and activating…" : "Testing…"
                 : existing.kind === "INFERENCE" && !existing.enabled ? "Test & activate" : "Test connection"}
             </Button>
+            ) : null}
           </div>
         ) : null}
 
@@ -626,78 +621,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           </div>
         ) : identityFields}
 
-        {/*
-          * Revisions are a property every connection has. Setup does not show
-          * them: that screen is connect-and-test, and the audit trail is
-          * Audit. Restore stays on the connection dialog.
-          */}
-        {existing && !props.embedded && props.onLoadRevisions && props.onRollback ? (
-          <section className="grid gap-3" aria-labelledby="revision-history-title">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p id="revision-history-title" className="text-label font-semibold text-foreground">Configuration history</p>
-                <p className="text-caption text-muted">Credentials are never restored from an older revision.</p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={props.busy}
-                onClick={() => void props.onLoadRevisions?.(existing.id)}
-              >
-                {props.revisionConnectionId === existing.id ? "Refresh history" : "View history"}
-              </Button>
-            </div>
-            {props.revisionConnectionId === existing.id && props.revisionHistory ? (
-              <div className="grid gap-2">
-                {props.revisionHistory.items.map((revision) => (
-                  <article key={revision.id} className="flex items-center justify-between gap-3 py-2">
-                    <div className="min-w-0">
-                      <p className="text-body font-semibold text-foreground">
-                        {revision.displayName} · revision {revision.revision}
-                      </p>
-                      <p className="text-caption text-muted">
-                        {revision.active
-                          ? "Active configuration"
-                          : `${revision.environment.toLowerCase()} · ${revision.enabled ? "enabled" : "disabled"} · ${new Date(revision.createdAt).toLocaleString()}`}
-                      </p>
-                      <p className="text-caption text-faint">{revision.baseUrl ?? "No endpoint configured"}</p>
-                    </div>
-                    {revision.active ? (
-                      <StatusText tone="good">Active</StatusText>
-                    ) : rollbackCandidate === revision.revision ? (
-                      <div className="grid max-w-[240px] justify-items-end gap-2 text-right text-caption text-warn">
-                        <span>Restore settings from this revision while keeping current credentials?</span>
-                        <div className="flex gap-2">
-                          <Button variant="ghost" size="sm" onClick={() => setRollbackCandidate(null)}>Cancel</Button>
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            disabled={props.busy}
-                            onClick={() => {
-                              setRollbackCandidate(null);
-                              void props.onRollback?.(
-                                existing.id,
-                                revision.revision,
-                                props.revisionHistory!.activeRevision,
-                              );
-                            }}
-                          >
-                            Confirm restore
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Button size="sm" disabled={props.busy} onClick={() => setRollbackCandidate(revision.revision)}>
-                        Restore
-                      </Button>
-                    )}
-                  </article>
-                ))}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-        {props.embedded ? (
+        {props.embedded && canWrite ? (
           <div className="flex justify-end">
             <Button variant="primary" type="submit" disabled={submitDisabled}>
               {submitLabel}
@@ -722,9 +646,11 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
       footer={
         <>
           <Button type="button" onClick={props.onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" form="connection-form" disabled={submitDisabled}>
-            {submitLabel}
-          </Button>
+          {canWrite ? (
+            <Button variant="primary" type="submit" form="connection-form" disabled={submitDisabled}>
+              {submitLabel}
+            </Button>
+          ) : null}
         </>
       }
     >

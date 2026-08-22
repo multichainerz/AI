@@ -89,7 +89,7 @@ function sleep(milliseconds: number): Promise<void> {
 
 export interface AgentHermesRuntime {
   assertAdmittedToolBoundary(admitted?: Iterable<string>): Promise<void>;
-  materializeSessionInbox?(sessionId: string, files: readonly SessionInboxUpload[]): Promise<void>;
+  materializeSessionInbox(sessionId: string, files: readonly SessionInboxUpload[]): Promise<void>;
   start(input: HermesRunSubmission): Promise<string>;
   status(runId: string): Promise<{
     id: string;
@@ -278,8 +278,13 @@ function uploadSize(sizeBytes: number): string {
 }
 
 function inboxFileName(upload: ConversationUpload): string {
-  const stem = upload.name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[^A-Za-z0-9]+/, "").slice(0, 80);
-  return `${upload.artifactId}-${stem || "file"}`;
+  const stem = upload.name
+    .replaceAll("..", ".")
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .replace(/^\.+/, "")
+    .slice(0, 80);
+  return `${upload.artifactId}-${stem || "file"}`.slice(0, 180);
 }
 
 function inboxAbsolutePath(sessionId: string, fileName: string): string {
@@ -1031,8 +1036,7 @@ export class DrizzleAgentProcessor {
     uploads: readonly ConversationUpload[],
   ): Promise<Map<string, string>> {
     const paths = new Map<string, string>();
-    if (!this.hermes.materializeSessionInbox) return paths;
-    const inline = uploads.filter((upload) => upload.storage === "INLINE").slice(0, 20);
+    const inline = uploads.filter((upload) => upload.storage === "INLINE").slice(0, UPLOAD_LIST_LIMIT);
     if (inline.length === 0) return paths;
     const contents = await this.database
       .select({ artifactId: chatArtifactContent.artifactId, bytes: chatArtifactContent.bytes })
@@ -1042,19 +1046,15 @@ export class DrizzleAgentProcessor {
     const files: SessionInboxUpload[] = [];
     for (const upload of inline) {
       const bytes = bytesById.get(upload.artifactId);
-      if (!bytes || bytes.byteLength === 0) continue;
+      if (!bytes || bytes.byteLength === 0) {
+        throw new Error(`Session upload ${upload.name} has no retained bytes.`);
+      }
       const fileName = inboxFileName(upload);
       files.push({ fileName, bytes });
       paths.set(upload.artifactId, inboxAbsolutePath(run.sessionId, fileName));
     }
-    if (files.length === 0) return paths;
-    try {
-      await this.hermes.materializeSessionInbox(run.sessionId, files);
-      return paths;
-    } catch (error) {
-      console.warn(`session inbox materialize failed: ${error instanceof Error ? error.message : String(error)}`);
-      return new Map();
-    }
+    await this.hermes.materializeSessionInbox(run.sessionId, files);
+    return paths;
   }
 
   /**
@@ -1328,13 +1328,10 @@ export class DrizzleAgentProcessor {
          * left them with a code to search for and nothing to find.
          *
          * It names an endpoint rather than a screen, and that is not a stylistic
-         * choice: there is no screen. `getToolRuntime` and `updateToolRuntime`
-         * exist in the web client and are called by `api.test.ts` and by nothing
-         * else, so the switch that produced this refusal has no control surface
-         * in the dashboard at all. Sending an operator to a page that does not
-         * exist would be worse than the message it replaces. Worth fixing on the
-         * web side; until it is, this has to be honest about where the switch
-         * is.
+         * choice: there is no screen. The dashboard does not call the tooling
+         * runtime control, so the switch that produced this refusal has no
+         * control surface in the console. Sending an operator to a page that
+         * does not exist would be worse than the message it replaces.
          *
          * An operator's own reason, when they set one, is better than anything
          * written here and is preferred.

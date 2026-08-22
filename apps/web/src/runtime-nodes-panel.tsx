@@ -1,4 +1,5 @@
 import type {
+  AdministratorSession,
   CreateHermesNodeInvitation,
   HermesNodeInvitation,
   HermesRuntimeNode,
@@ -14,6 +15,7 @@ import {
   mutateHermesRuntimeNode,
   removeHermesRuntimeNode,
 } from "./api.js";
+import { adminAccess } from "./admin-access.js";
 import { Alert, Button, CopyButton, Dialog, Field, Input, Mark, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
 import { Switch } from "@/components/ui/switch";
 
@@ -42,6 +44,7 @@ interface RuntimeNodesPanelProps {
   onConfigureInference: () => void;
   onNodesChange?: (nodes: HermesRuntimeNode[]) => void;
   onSessionExpired: () => void;
+  session?: AdministratorSession | null;
 }
 
 /** `mm:ss`, because the first minute of a 20-minute wait is the anxious one. */
@@ -197,7 +200,10 @@ export function RuntimeNodesPanel({
   onConfigureInference,
   onNodesChange,
   onSessionExpired,
+  session,
 }: RuntimeNodesPanelProps) {
+  const { can } = adminAccess(session ?? null);
+  const canManage = session === undefined ? true : can("readiness:manage");
   const [nodes, setNodes] = useState<HermesRuntimeNode[]>([]);
   const [form, setForm] = useState<CreateHermesNodeInvitation>(defaultForm);
   /*
@@ -319,7 +325,7 @@ export function RuntimeNodesPanel({
 
   const issueInvitation = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy || !inferenceReady || !agentModelReady || !targetKnown) return;
+    if (!canManage || busy || !inferenceReady || !agentModelReady || !targetKnown) return;
     setBusy("invite");
     setError(null);
     try {
@@ -338,7 +344,7 @@ export function RuntimeNodesPanel({
   };
 
   const act = async (node: HermesRuntimeNode, action: MutateHermesRuntimeNode["action"]) => {
-    if (busy) return;
+    if (!canManage || busy) return;
     setBusy(`${action}-${node.id}`);
     setError(null);
     try {
@@ -522,7 +528,7 @@ export function RuntimeNodesPanel({
             */}
           <div><dt>Node services</dt><dd>{unitSummary(node)}</dd></div></dl>
         <div className="runtime-node-actions">
-          {node.status === "DRAINING" || node.status === "SUSPENDED" ? <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void act(node, "RESUME")}>Resume</Button> : <Button variant="ghost" size="sm" disabled={busy !== null || node.status === "PENDING" || node.status === "OFFLINE"} onClick={() => void act(node, "DRAIN")}>Drain</Button>}
+          {canManage ? (node.status === "DRAINING" || node.status === "SUSPENDED" ? <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void act(node, "RESUME")}>Resume</Button> : <Button variant="ghost" size="sm" disabled={busy !== null || node.status === "PENDING" || node.status === "OFFLINE"} onClick={() => void act(node, "DRAIN")}>Drain</Button>) : null}
           {!["PENDING", "SUSPENDED", "REVOKED"].includes(node.status) && <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => { if (window.confirm(`Suspend ${node.displayName}? Active work will be stopped and new work will be denied until you resume it.`)) void act(node, "SUSPEND"); }}>Suspend</Button>}
           {node.status !== "REVOKED" && <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => { if (window.confirm(`Permanently revoke ${node.displayName}? The node must be re-enrolled to reconnect.`)) void act(node, "REVOKE"); }}>Revoke</Button>}
           {node.status === "REVOKED" && <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => openRemoval(node)}>Remove</Button>}
@@ -591,9 +597,11 @@ export function RuntimeNodesPanel({
           </>
         : <>
             <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
+            {canManage ? (
             <Button variant="primary" form="vm2-installer-form" type="submit" disabled={busy !== null || productionArtifactBlocked}>
               {busy === "invite" ? "Preparing installer…" : productionArtifactBlocked ? "Review production options" : "Generate install command"}
             </Button>
+            ) : null}
           </>}
     >
       <div className="grid gap-5">
@@ -601,7 +609,7 @@ export function RuntimeNodesPanel({
       {!invitation ? <form id="vm2-installer-form" className="grid gap-5" onSubmit={(event) => void issueInvitation(event)}>
         <Field
           label="VM2 private address"
-          hint="Normally http://VM2-IP:8642. Port 8642 must be reachable only from OrcaSynapse."
+          hint="Normally http://VM2-IP:8642. OrcaSynapse must reach TCP 8642 (Hermes) and TCP 8643 (Session inbox) from VM1 only."
         >
           <Input required type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} />
         </Field>

@@ -46,7 +46,7 @@ describe("the System tab", () => {
     })} />);
 
     expect(screen.queryByRole("button", { name: "Check for updates" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Open platform settings" }));
+    await user.click(screen.getByRole("button", { name: "Open Settings" }));
     expect(onConfigure).toHaveBeenCalled();
   });
 

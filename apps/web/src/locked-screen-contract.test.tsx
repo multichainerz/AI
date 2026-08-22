@@ -137,7 +137,7 @@ describe("locked governance screens", () => {
     // added, and a number in a comment is the thing nothing checks.
     expect(screen.getByText(/Sign in as an administrator/)).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Open platform settings" }));
+    await user.click(screen.getByRole("button", { name: "Open Settings" }));
     expect(elevate, "the locked screen's button does not reach sign-in").toHaveBeenCalled();
     // Navigating instead lands the operator on another locked screen.
     expect(navigate).not.toHaveBeenCalled();

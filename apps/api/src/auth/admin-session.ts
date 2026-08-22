@@ -938,3 +938,37 @@ export async function requireAdmin(
   }
   return principal;
 }
+
+/** Any one of the listed scopes is enough. Used where two roles own one write. */
+export async function requireAdminAny(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  manager: AdminSessionManager | undefined,
+  requiredScopes: readonly AdminScope[],
+): Promise<AdminPrincipal | null> {
+  if (!manager) {
+    await reply.code(423).send({
+      error: "PLATFORM_LOCKED",
+      message: "OrcaSynapse administrator sessions are not ready.",
+    });
+    return null;
+  }
+  const authentication = await authenticateAdministrator(request, reply, manager);
+  if (authentication.outcome === "REFUSED") return null;
+  if (authentication.outcome === "NO_SESSION") {
+    await reply.code(401).send({
+      error: "UNAUTHORIZED",
+      message: "An active administrator session with the required scope is required.",
+    });
+    return null;
+  }
+  const { principal } = authentication;
+  if (!requiredScopes.some((scope) => principal.scopes.includes(scope))) {
+    await reply.code(403).send({
+      error: "FORBIDDEN",
+      message: `The administrator session does not grant '${requiredScopes.join("' or '")}'.`,
+    });
+    return null;
+  }
+  return principal;
+}

@@ -41,16 +41,9 @@ async function operationsApp() {
 }
 
 describe("administrator runtime operations routes", () => {
-  it("fails closed without administrator authentication", async () => {
+  it("no longer serves the duplicate runtime snapshot beside Health", async () => {
     const { app } = await operationsApp();
-    expect((await app.inject({ method: "GET", url: "/api/v1/admin/runtime" })).statusCode).toBe(401);
-  });
-
-  it("returns PostgreSQL workload and executor health", async () => {
-    const { app, manager } = await operationsApp();
-    const response = await app.inject({ method: "GET", url: "/api/v1/admin/runtime", headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` } });
-    expect(manager.start).toHaveBeenCalledOnce();
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ engine: "postgresql-state", workloads: [{ name: "hermes-runs" }], executors: [{ status: "ONLINE" }] });
+    const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` };
+    expect((await app.inject({ method: "GET", url: "/api/v1/admin/runtime", headers })).statusCode).toBe(404);
   });
 });

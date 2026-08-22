@@ -60,6 +60,8 @@ interface OnboardingViewProps {
     | "onTest"
     | "onDiscoverInference"
     | "onLoadInferenceCatalogue"
+    | "canWrite"
+    | "canTest"
   >;
   onOpenWorkspace: (workspace: "Chat" | "Agents") => void;
   onRuntimeNodesChange: (nodes: HermesRuntimeNode[]) => void;
@@ -377,11 +379,14 @@ export function OnboardingView({
               onTest={connectionEditor.onTest}
               onDiscoverInference={connectionEditor.onDiscoverInference}
               onLoadInferenceCatalogue={connectionEditor.onLoadInferenceCatalogue}
+              canWrite={connectionEditor.canWrite ?? true}
+              canTest={connectionEditor.canTest ?? true}
             />
           )}
 
           {active.key === "runtime" && (
             <RuntimeNodesPanel
+              session={session}
               targetEnvironment={architecture?.targetEnvironment ?? null}
               inferenceReady={readiness.inferenceReady}
               agentModelReady={readiness.agentModelReady}

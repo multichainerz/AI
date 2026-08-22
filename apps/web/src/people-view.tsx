@@ -359,7 +359,7 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
         title="Access"
         mark="AC"
         reason="Sign in as an administrator to manage people and divisions."
-        actionLabel="Open platform settings"
+        actionLabel="Open Settings"
         onAction={onOpenSettings}
       />
     );

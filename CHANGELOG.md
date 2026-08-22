@@ -5,6 +5,31 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.8 — 2026-08-22
+
+Fail-closes Session inbox, puts reporting and docs on the same map, and drops UI-dead control-plane routes.
+
+### Upgrade notes
+
+- **API, worker, and the Agentic System node should ship together.** Inbox PUT
+  failure now fails the run. Repair or re-enroll VM2 so the node target
+  `Wants=` the inbox unit and heartbeats report it.
+- Allow OrcaSynapse → VM2 **TCP 8643** as well as 8642. MCP stays on unless
+  Agents → Tools pins `no_mcp`. Native `file` tools are locked on with memory.
+- `GET /admin/operations/readiness*`, `GET /admin/runtime`, `/admin/prompts`,
+  onboarding architecture/component/step/complete writes, and chat message
+  feedback PUT are unmounted. Tables remain.
+
+### Changes
+
+- fail the run when session inbox materialize fails; abort inbox PUT on the Hermes timeout
+- add the inbox unit to the node target, remover, agent CLI, and heartbeat report
+- lock native `file` tools with memory; add a dedicated MCP-off pin on Tools
+- let Operations write scheduled checks; gate Files on `chat:use`
+- unmount retired readiness, prompt, runtime snapshot, onboarding-write, and feedback HTTP routes
+- drop unused avatar, separator, and sheet controls
+- align enrolment runbook, bootstrap, and handoff with Agent runs, 8643, and MCP-on
+
 ## v9.7.7 — 2026-08-22
 
 Puts reporting in Operations and trims Setup, Models, and Tools to the jobs they own.

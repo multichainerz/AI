@@ -186,6 +186,14 @@ class ArtifactPublisherTests(unittest.TestCase):
             self.module.write_inbox_file("session-1", "../escape.txt", b"no")
         with self.assertRaises(self.module.PublishError):
             self.module.write_inbox_file("session-1", ".hidden", b"no")
+        with self.assertRaises(self.module.PublishError):
+            self.module.write_inbox_file("session-1", "foo..bar.txt", b"no")
+        inbox = dest.parent
+        dest.unlink()
+        inbox.rmdir()
+        inbox.symlink_to("/tmp")
+        with self.assertRaises(self.module.PublishError):
+            self.module.write_inbox_file("session-1", "notes2.txt", b"no")
 
 
 if __name__ == "__main__":

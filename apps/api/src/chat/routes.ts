@@ -5,7 +5,6 @@ import {
   chatMessageSubmissionSchema,
   agentRunApprovalSchema,
   chatStreamEventSchema,
-  chatFeedbackSchema,
   chatMetricsSchema,
   chatScheduleSchema,
   chatScheduleListSchema,
@@ -14,7 +13,6 @@ import {
   decideAgentRunApprovalSchema,
   forkChatConversationSchema,
   sendChatMessageSchema,
-  setChatFeedbackSchema,
   updateChatConversationSchema,
   updateChatScheduleSchema,
 } from "@orcasynapse/contracts";
@@ -483,27 +481,6 @@ export async function registerChatRoutes(
     if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
     try {
       return chatConversationSchema.parse(await options.manager.cancelActiveRun(principal, id));
-    } catch (error) {
-      await sendChatError(reply, error);
-    }
-  });
-
-  app.put("/messages/:messageId/feedback", async (request, reply) => {
-    const principal = await requireChatPrincipal(request, reply, options);
-    if (!principal) return;
-    if (!options.manager) {
-      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
-    }
-    const id = uuidParam((request.params as Record<string, unknown>).messageId);
-    const input = setChatFeedbackSchema.safeParse(request.body);
-    if (!id || !input.success) {
-      return reply.code(400).send({
-        error: "INVALID_REQUEST",
-        message: id ? input.error?.issues[0]?.message : "Message ID is invalid.",
-      });
-    }
-    try {
-      return chatFeedbackSchema.parse(await options.manager.setFeedback(principal, id, input.data));
     } catch (error) {
       await sendChatError(reply, error);
     }

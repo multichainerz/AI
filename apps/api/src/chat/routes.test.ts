@@ -393,22 +393,23 @@ describe("controlled chat routes", () => {
     );
   });
 
-  it("records ownership-scoped response feedback", async () => {
+  it("no longer serves message feedback writes", async () => {
     const manager = memoryChatManager();
     const app = await chatApp(manager);
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/v1/chat/conversations",
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
+    });
+    expect(listed.statusCode).toBe(200);
     const response = await app.inject({
       method: "PUT",
       url: `/api/v1/chat/messages/${MESSAGE_ID}/feedback`,
       headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
       payload: { rating: "HELPFUL" },
     });
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ rating: "HELPFUL", comment: null });
-    expect(manager.setFeedback).toHaveBeenCalledWith(
-      expect.objectContaining({ identityMode: "ADMINISTRATOR_PREVIEW" }),
-      MESSAGE_ID,
-      { rating: "HELPFUL" },
-    );
+    expect(response.statusCode).toBe(404);
+    expect(manager.setFeedback).not.toHaveBeenCalled();
   });
 
   it("exposes aggregate chat telemetry only through an admin-scoped route", async () => {

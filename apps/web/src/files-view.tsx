@@ -13,11 +13,13 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { OrcaSynapseApiError, chatArtifactContentUrl, getChatArtifacts } from "./api.js";
 import { Badge } from "@/components/ui/badge";
 import {
-  Alert, Button, EmptyState, Input, Panel, StatusText, WorkspaceDock, WorkspaceIntro, cn,
+  Alert, Button, EmptyState, Input, LockedScreen, Panel, StatusText, WorkspaceDock, WorkspaceIntro, cn,
 } from "./ui/index.js";
 
 interface FilesViewProps {
+  unlocked: boolean;
   onSessionExpired: () => void;
+  onConfigure?: () => void;
 }
 
 /*
@@ -66,7 +68,7 @@ const ORIGIN_FILTERS: Array<{ key: OriginFilter; label: string }> = [
  * -- this view renders exactly what the list route returns, and the origin
  * filter narrows the rendering, never the tenancy.
  */
-export function FilesView({ onSessionExpired }: FilesViewProps) {
+export function FilesView({ unlocked, onSessionExpired, onConfigure }: FilesViewProps) {
   // `null` is "not loaded", distinct from the empty array that means "no
   // files": collapsing the two would render a failed load as an empty library.
   const [artifacts, setArtifacts] = useState<ChatArtifact[] | null>(null);
@@ -75,6 +77,7 @@ export function FilesView({ onSessionExpired }: FilesViewProps) {
   const [origin, setOrigin] = useState<OriginFilter>("ALL");
 
   useEffect(() => {
+    if (!unlocked) return;
     let cancelled = false;
     getChatArtifacts()
       .then((list) => {
@@ -91,7 +94,21 @@ export function FilesView({ onSessionExpired }: FilesViewProps) {
         setFailure(error instanceof Error ? error.message : String(error));
       });
     return () => { cancelled = true; };
-  }, [onSessionExpired]);
+  }, [unlocked, onSessionExpired]);
+
+  if (!unlocked) {
+    return (
+      <LockedScreen
+        kicker="Workspace"
+        title="Files"
+        mark="FL"
+        headline="Authenticated workspace required"
+        reason="Sign in with a session that can use Chat to see files your agents produced and files you uploaded."
+        actionLabel="Open Settings"
+        onAction={onConfigure ?? onSessionExpired}
+      />
+    );
+  }
 
   const visible = useMemo(() => {
     if (!artifacts) return null;

@@ -89,7 +89,7 @@ An in-flight native turn is attached to the worker process; a worker restart can
 - Corpus snapshots and mutation receipts use that node identity; mutation commands use the pinned control-plane signing key and expire after dispatch.
 - Destructive corpus operations require a different administrator to approve them. Audit events carry paths, hashes, state, and decisions—not file content.
 - The Hermes unit is unprivileged, filesystem-confined, and receives root-owned managed policy read-only.
-- Native toolsets fail closed unless admitted by an operator; built-in memory is the intentional baseline capability.
+- Native toolsets fail closed unless admitted by an operator; built-in memory and native file tools are the enrolment baseline. MCP discovery stays on unless an operator admits `no_mcp`.
 - Secrets on VM1 use envelope encryption, and browser sessions are role- and scope-checked.
 - VM2 has no PostgreSQL access, standing SSH control channel, or Docker socket access.
 

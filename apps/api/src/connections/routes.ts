@@ -20,6 +20,7 @@ import type { FastifyInstance } from "fastify";
 import {
   authenticateAdministrator,
   requireAdmin,
+  requireAdminAny,
   type AdminSessionManager,
 } from "../auth/admin-session.js";
 import { ModelRefreshError, type InferenceRefreshService } from "../models/inference-refresh-service.js";
@@ -80,7 +81,10 @@ export async function registerConnectionRoutes(
   });
 
   app.patch("/monitoring", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, dependencies.sessionManager, "connections:write");
+    const principal = await requireAdminAny(request, reply, dependencies.sessionManager, [
+      "connections:write",
+      "operations:execute",
+    ]);
     if (!principal) return;
     if (!dependencies.monitor) {
       return reply.code(503).send({

@@ -371,18 +371,24 @@ def chown_hermes(path: Path) -> None:
 def safe_inbox_file(session_id: str, file_name: str) -> Path:
     if not SESSION_NAME.match(session_id):
         raise PublishError("session id is not a plausible session directory name")
-    if "/" in file_name or "\\" in file_name or ".." in file_name:
+    if "/" in file_name or "\\" in file_name or file_name in {".", ".."}:
         raise PublishError("inbox file name is not allowed")
     name = Path(file_name).name
-    if name in {"", ".", ".."} or name.startswith("."):
+    if name != file_name or name in {"", ".", ".."} or name.startswith(".") or ".." in name:
         raise PublishError("inbox file name is not allowed")
     if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$", name):
         raise PublishError("inbox file name is not allowed")
-    session_root = (ARTIFACT_ROOT / session_id).resolve()
-    dest = (session_root / INBOX_DIR / name).resolve()
-    inbox_root = (session_root / INBOX_DIR).resolve()
-    if dest != inbox_root and not str(dest).startswith(str(inbox_root) + os.sep):
-        raise PublishError("inbox path escaped the session inbox")
+    root = ARTIFACT_ROOT.resolve()
+    session_dir = root / session_id
+    inbox_dir = session_dir / INBOX_DIR
+    dest = inbox_dir / name
+    for path in (session_dir, inbox_dir, dest):
+        if path.is_symlink():
+            raise PublishError("inbox path escaped the session inbox")
+    try:
+        dest.relative_to(inbox_dir)
+    except ValueError as error:
+        raise PublishError("inbox path escaped the session inbox") from error
     return dest
 
 

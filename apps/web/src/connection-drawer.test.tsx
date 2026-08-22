@@ -20,16 +20,12 @@ describe("ConnectionDrawer inference endpoint", () => {
       diagnostic={null}
       initialKind="INFERENCE"
       open
-      revisionConnectionId={null}
-      revisionHistory={null}
       onClose={vi.fn()}
       onOpenAgenticSystem={vi.fn()}
       onSave={vi.fn(async () => undefined)}
       onTest={vi.fn(async () => undefined)}
       onDiscoverInference={vi.fn(async () => null)}
       onLoadInferenceCatalogue={vi.fn(async () => null)}
-      onLoadRevisions={vi.fn(async () => undefined)}
-      onRollback={vi.fn(async () => undefined)}
     />);
 
     expect(html).toContain("Connect a model server");
@@ -89,16 +85,12 @@ const props: Omit<ComponentProps<typeof ConnectionDrawer>, "initialKind"> = {
   error: null,
   diagnostic: null,
   open: true,
-  revisionConnectionId: null,
-  revisionHistory: null,
   onClose: vi.fn(),
   onOpenAgenticSystem: vi.fn(),
   onSave: vi.fn(async () => undefined),
   onTest: vi.fn(async () => undefined),
   onDiscoverInference: vi.fn(async () => null),
   onLoadInferenceCatalogue: vi.fn(async () => null),
-  onLoadRevisions: vi.fn(async () => undefined),
-  onRollback: vi.fn(async () => undefined),
 };
 
 /**

@@ -44,7 +44,7 @@ On a clean Debian or Ubuntu VM1:
 curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
 ```
 
-The installer provisions Docker, stock PostgreSQL 17, the API, worker, workspace, protected secrets, and the first administrator. Open the address it prints, connect inference, then use **Settings → Setup**, step 2 (*Install the agent runtime*), to generate the one-time VM2 enrollment command.
+The installer provisions Docker, stock PostgreSQL 17, the API, worker, workspace, protected secrets, and the first administrator. Open the address it prints, connect inference, admit exactly one ACTIVE default AGENT route on **Gateway → Models**, then use **Settings → Setup**, step 2 (*Install the agent runtime*), to generate the one-time VM2 enrollment command.
 
 VM2 installs vanilla Hermes at the approved commit, applies the managed native-memory and toolset baseline, enrolls its node identity, reports signed heartbeats, and publishes a signed allowlisted corpus snapshot. OrcaSynapse does not require SSH credentials or a remote shell channel.
 
@@ -52,9 +52,9 @@ VM2 installs vanilla Hermes at the approved commit, applies the managed native-m
 
 - **Dashboard:** one-screen readiness and operations command center.
 - **Session:** durable conversations over Hermes’ native session API, with streaming, cancellation, telemetry, feedback, archive, export, and audit projections.
-- **Agents:** immutable Profile Distributions and run history (Profiles), a repository-style view of Hermes-native Skills and memory, and runtime toolset admissions (Tools).
+- **Agents:** immutable Profile Distributions and the Hermes kill switch (Profiles), a repository-style view of Hermes-native Skills and memory, and runtime toolset admissions (Tools).
 - **Gateway:** everything on the governed inference path — the routes a deployment may serve (Models), the input rules it enforces (Guardrails), and what it consumed (Usage). System text for a run comes from the active Agent Profile, not a separate prompt catalogue.
-- **Operations:** health and incidents, and the audit trail.
+- **Operations:** health and incidents, agent runs and inspection, and the audit trail.
 - **Settings:** bring-up and Hermes enrollment (Setup), administrators and the divisions they belong to (Access), encrypted connections and application updates (System).
 - **Operator CLIs:** each installer leaves a host-side front door — `orcasynapse` on the control plane, `orcasynapse-agent` on the Agentic System node — for status, updates, logs and diagnosis. Both only execute commands the product already ships; see *Operating the hosts* in [deploy/BOOTSTRAP.md](deploy/BOOTSTRAP.md).
 

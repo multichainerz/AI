@@ -43,13 +43,13 @@ export const CHAT_SUGGESTIONS: readonly ChatSuggestion[] = [
   },
   {
     label: "Review toolset admission",
-    sub: "Default-deny except built-in memory",
-    prompt: "Explain native Hermes toolset admission: what is denied by default, why built-in memory is admitted, and how an operator admits another toolset.",
+    sub: "Default-deny except memory and file",
+    prompt: "Explain native Hermes toolset admission: what is denied by default, why built-in memory and native file tools are admitted, how MCP stays on unless no_mcp is pinned, and how an operator admits another toolset.",
   },
   {
     label: "Summarize corpus observability",
     sub: "What the mirror can and cannot do",
-    prompt: "Summarize the Hermes corpus mirror: allowlisted paths, expected-hash mutations, two-person destructive approval, and why PostgreSQL is not a second memory store.",
+    prompt: "Summarize the Skills and Memory mirrors: allowlisted paths, expected-hash mutations, two-person destructive approval, and why PostgreSQL is not a second memory store.",
   },
   {
     label: "Sketch an incident response",

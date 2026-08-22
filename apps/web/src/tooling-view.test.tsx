@@ -160,14 +160,21 @@ describe("browsing what exists", () => {
     expect(within(web).getByText(/Reviewed with the data owner/)).toBeTruthy();
   });
 
-  it("shows built-in memory as always allowed rather than as a zero", async () => {
-    // `HermesClient.assertAdmittedToolBoundaryFor` adds `memory` to the
-    // permitted set unconditionally, so a screen that draws it as off — or
-    // omits it and reports "0 allowed" — states the opposite of the boundary.
+  it("shows built-in memory and native file tools as always allowed rather than as a zero", async () => {
     await view();
     const memory = screen.getByLabelText("memory");
     expect(within(memory).getByText(/Always allowed/i)).toBeTruthy();
     expect(within(memory).getByRole("switch").getAttribute("aria-checked")).toBe("true");
+    const file = screen.getByLabelText("file");
+    expect(within(file).getByText(/Always allowed/i)).toBeTruthy();
+    expect(within(file).getByRole("switch").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("offers a dedicated MCP pin rather than a free-text unlisted form", async () => {
+    await view();
+    expect(screen.getByRole("switch", { name: "Pin MCP off" })).toBeTruthy();
+    expect(screen.getByText("MCP on")).toBeTruthy();
+    expect(screen.queryByText(/Not listed above/i)).toBeNull();
   });
 
   it("says the runtime is unreachable instead of presenting an empty list as fact", async () => {
@@ -178,7 +185,7 @@ describe("browsing what exists", () => {
   it("explains an empty catalogue rather than leaving a bare gap", async () => {
     await view();
     const list = screen.getByLabelText("Session tools");
-    expect(within(list).getByText(/reports no tools beyond built-in memory/i)).toBeTruthy();
+    expect(within(list).getByText(/reports no tools beyond the enrolment baseline/i)).toBeTruthy();
   });
 
   it("does not claim an empty runtime before the runtime has answered", async () => {
@@ -197,13 +204,13 @@ describe("browsing what exists", () => {
     const list = screen.getByLabelText("Session tools");
     // The list is on screen, so the absence below is a judgement about its copy.
     expect(within(list).getByLabelText("memory")).toBeTruthy();
-    expect(within(list).queryByText(/reports no tools beyond built-in memory/i)).toBeNull();
+    expect(within(list).queryByText(/reports no tools beyond the enrolment baseline/i)).toBeNull();
     // The remedy is the indicator's tooltip now, not a paragraph under the
     // title -- the headline is what is on screen, the detail one hover away.
     expect(screen.getByTitle(/asking the runtime which tools it offers/i)).toBeTruthy();
 
     answer({ toolsets: [], skills: [], enabledToolsets: 0 });
-    expect(await screen.findByText(/reports no tools beyond built-in memory/i)).toBeTruthy();
+    expect(await screen.findByText(/reports no tools beyond the enrolment baseline/i)).toBeTruthy();
   });
 });
 
@@ -374,7 +381,7 @@ describe("what the headline counts", () => {
     });
     expect(within(screen.getByLabelText("web_search")).getByText(/off at the runtime/i)).toBeTruthy();
     expect(within(screen.getByLabelText("clarify")).getByText(/decision on record only/i)).toBeTruthy();
-    expect(screen.getByText(/Agents can use built-in memory only\./)).toBeTruthy();
+    expect(screen.getByText(/Agents can use built-in memory and native file tools\./)).toBeTruthy();
     // ...and says where the two allowed-but-idle tools went, so the headline
     // does not read as a contradiction of the rows beneath it.
     expect(screen.getByTitle(/2 tools allowed here \(clarify, web_search\)/)).toBeTruthy();
@@ -390,7 +397,7 @@ describe("what the headline counts", () => {
       catalogue: catalogue({ name: "web_search", enabled: true }),
       admissions: [{ toolsetName: "web_search", admitted: true, reason: "Reviewed." }],
     });
-    expect(screen.getByText(/built-in memory and 1 other tool\./)).toBeTruthy();
+    expect(screen.getByText(/built-in memory, native file tools, and 1 other tool\./)).toBeTruthy();
   });
 });
 
@@ -412,7 +419,7 @@ describe("runtime drift", () => {
     // The row is on screen, so the absence below is a judgement about it.
     expect(screen.getByLabelText("memory")).toBeTruthy();
     expect(screen.queryByText(/Agent runs and chat are blocked/i)).toBeNull();
-    expect(screen.getByText(/built-in memory only/i)).toBeTruthy();
+    expect(screen.getByText(/built-in memory and native file tools/i)).toBeTruthy();
   });
 });
 

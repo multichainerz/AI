@@ -5,12 +5,6 @@ import {
   operationalIncidentListSchema,
   operationalIncidentSchema,
   operationalIncidentIdentifierSchema,
-  productionReadinessApprovalSchema,
-  productionReadinessControlKeySchema,
-  productionReadinessControlSchema,
-  productionReadinessSchema,
-  recordProductionReadinessApprovalSchema,
-  updateProductionReadinessControlSchema,
 } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
@@ -85,41 +79,4 @@ export async function registerAiOpsRoutes(app: FastifyInstance, options: AiOpsRo
     });
   }
 
-  app.get("/readiness", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:read");
-    if (!principal) return reply;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return reply;
-    return productionReadinessSchema.parse(await manager.productionReadiness());
-  });
-
-  app.patch<{ Params: { controlKey: string } }>("/readiness/controls/:controlKey", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:manage");
-    if (!principal) return reply;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return reply;
-    const controlKey = productionReadinessControlKeySchema.safeParse(request.params.controlKey);
-    if (!controlKey.success) return reply.code(400).send({ error: "INVALID_CONTROL", message: "The readiness control identifier is invalid." });
-    const input = updateProductionReadinessControlSchema.safeParse(request.body);
-    if (!input.success) return reply.code(400).send({ error: "INVALID_CONTROL_DECISION", message: "The readiness control decision is invalid." });
-    try {
-      return productionReadinessControlSchema.parse(await manager.updateReadinessControl(principal, controlKey.data, input.data));
-    } catch (error) {
-      return conflictResponse(error, reply);
-    }
-  });
-
-  app.post("/readiness/approvals", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:approve");
-    if (!principal) return reply;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return reply;
-    const input = recordProductionReadinessApprovalSchema.safeParse(request.body);
-    if (!input.success) return reply.code(400).send({ error: "INVALID_APPROVAL", message: "The external approval record is invalid." });
-    try {
-      return reply.code(201).send(productionReadinessApprovalSchema.parse(await manager.recordReadinessApproval(principal, input.data)));
-    } catch (error) {
-      return conflictResponse(error, reply);
-    }
-  });
 }

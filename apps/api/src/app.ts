@@ -8,7 +8,7 @@ import { sql } from "drizzle-orm";
 import Fastify, { type FastifyInstance } from "fastify";
 import { registerConnectionRoutes } from "./connections/routes.js";
 import { createRuntimeServices, type RuntimeServices } from "./runtime.js";
-import { registerOperationsRoutes } from "./operations/routes.js";
+
 import { registerAdminSessionRoutes } from "./auth/routes.js";
 import { registerChatMetricsRoutes, registerChatRoutes } from "./chat/routes.js";
 import { registerIdentityRoutes } from "./identity/routes.js";
@@ -20,7 +20,7 @@ import { registerAdminToolingRoutes, registerMcpGatewayRoutes } from "./tooling/
 import { registerAiOpsRoutes } from "./ai-ops/routes.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { registerGuardrailRoutes } from "./guardrails/routes.js";
-import { registerPromptRoutes } from "./prompts/routes.js";
+
 import { registerAuditRoutes } from "./audit/routes.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
 import {
@@ -316,14 +316,6 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   );
 
   await app.register(
-    async (prompts) => registerPromptRoutes(prompts, {
-      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
-      ...(runtime.promptManager ? { manager: runtime.promptManager } : {}),
-    }),
-    { prefix: "/api/v1/admin/prompts" },
-  );
-
-  await app.register(
     async (audit) => registerAuditRoutes(audit, {
       ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
       ...(runtime.auditManager ? { manager: runtime.auditManager } : {}),
@@ -480,17 +472,6 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.aiOpsManager ? { manager: runtime.aiOpsManager } : {}),
       }),
     { prefix: "/api/v1/admin/operations" },
-  );
-
-  await app.register(
-    async (adminOperations) =>
-      registerOperationsRoutes(adminOperations, {
-        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
-        ...(runtime.operationsManager ? { manager: runtime.operationsManager } : {}),
-      }),
-    // Sibling of, not a sub-resource of, /admin/operations. That module is the
-    // AI-operations surface; this one reports worker and workload runtime state.
-    { prefix: "/api/v1/admin/runtime" },
   );
 
   app.setErrorHandler(async (error, request, reply) => {

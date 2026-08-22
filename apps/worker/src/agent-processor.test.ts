@@ -163,6 +163,7 @@ function completedState(overrides: Partial<Awaited<ReturnType<AgentHermesRuntime
 function runtime(overrides: Partial<AgentHermesRuntime> = {}): AgentHermesRuntime {
   return {
     assertAdmittedToolBoundary: async () => undefined,
+    materializeSessionInbox: async () => undefined,
     start: async () => "hermes-native-1",
     status: async () => completedState(),
     stop: async () => undefined,
@@ -322,8 +323,7 @@ describe("DrizzleAgentProcessor governed tool plane", () => {
     // The message is the only thing an operator sees -- the dashboard prints the
     // code and this string and nothing else -- so it has to name the switch and
     // where to reach it. An endpoint rather than a screen, because the switch
-    // has no screen: nothing in apps/web calls `updateToolRuntime` but its own
-    // API-client test.
+    // has no dashboard control.
     expect(state.failureMessage).toContain("/api/v1/admin/tooling/runtime");
   });
 
@@ -1268,6 +1268,35 @@ describe("DrizzleAgentProcessor session inbox", () => {
       `/var/lib/orcasynapse-hermes/artifacts/${fixture.conversationId}/inbox/${artifactId}-brief.pdf`,
     );
     expect(seen?.instructions).toContain("Native file tools can read and edit it");
+  });
+
+  it("fails the run when the session inbox refuses the upload", async () => {
+    const fixture = await seed();
+    await bindConversation(fixture);
+    await attachUpload({
+      conversationId: fixture.conversationId,
+      messageId: fixture.userMessageId,
+      name: "brief.pdf",
+      mediaType: "application/pdf",
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+    });
+    let started = false;
+    const processor = new DrizzleAgentProcessor(context.database, runtime({
+      materializeSessionInbox: async () => {
+        throw new Error("Session inbox refused brief.pdf with status 503.");
+      },
+      start: async () => {
+        started = true;
+        return "hermes-native-inbox";
+      },
+    }), CAPABILITIES);
+    const result = await processor.process({ runId: fixture.runId }, fixture.jobId, WORKER_ID);
+    expect(started).toBe(false);
+    expect(result).toMatchObject({ status: "FAILED" });
+    const [row] = await context.database.select().from(agentRun).where(eq(agentRun.id, fixture.runId));
+    expect(row?.status).toBe("FAILED");
+    expect(row?.failureCode).toBe("HERMES_EXECUTION_FAILED");
+    expect(row?.failureMessage).toContain("Session inbox refused");
   });
 });
 

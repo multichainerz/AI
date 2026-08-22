@@ -2,7 +2,7 @@ import { ADMIN_SCOPES, type AdministratorSession, type OnboardingSnapshot } from
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
-import { OnboardingConflictError, type OnboardingManager } from "./onboarding-manager.js";
+import type { OnboardingManager } from "./onboarding-manager.js";
 
 const TOKEN = "o".repeat(43);
 const ADMIN_ID = "ac369dab-cad5-4fd9-83ed-b4fbf528028a";
@@ -71,33 +71,28 @@ describe("production onboarding routes", () => {
     expect((await app.inject({ method: "GET", url: "/api/v1/admin/onboarding/" })).statusCode).toBe(401);
   });
 
-  it("returns the evidence-backed setup snapshot and validates passed evidence", async () => {
-    const { app, onboardingManager } = await testApp();
+  it("returns the evidence-backed setup snapshot", async () => {
+    const { app } = await testApp();
     const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
     expect((await app.inject({ method: "GET", url: "/api/v1/admin/onboarding/", headers })).json()).toMatchObject({ gate: { ready: false }, components: [{ key: "hermes-api" }] });
-    const invalid = await app.inject({
-      method: "PATCH", url: "/api/v1/admin/onboarding/components/hermes-api", headers,
-      payload: { status: "PASSED", note: "Checked the target.", expectedRevision: 0 },
-    });
-    expect(invalid.statusCode).toBe(400);
-    const valid = await app.inject({
-      method: "PATCH", url: "/api/v1/admin/onboarding/components/hermes-api", headers,
-      payload: { status: "PASSED", observedVersion: "0.13.0", evidenceRef: "report:hermes:42", attestationAuthority: "OrcaSynapse Security", note: "Checked the target.", expectedRevision: 0 },
-    });
-    expect(valid.statusCode).toBe(200);
-    expect(onboardingManager.updateComponent).toHaveBeenCalledWith(expect.objectContaining({ id: ADMIN_ID }), "hermes-api", expect.objectContaining({ status: "PASSED" }));
   });
 
-  it("maps stale completion attempts to a stable conflict", async () => {
-    const onboardingManager = manager();
-    onboardingManager.complete = vi.fn(async () => { throw new OnboardingConflictError("Evidence is stale."); });
-    const { app } = await testApp(onboardingManager);
-    const response = await app.inject({
-      method: "POST", url: "/api/v1/admin/onboarding/complete",
-      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` }, payload: { reason: "Approve the reviewed evidence.", expectedRevision: 1 },
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toMatchObject({ error: "ONBOARDING_CONFLICT" });
+  it("no longer serves the retired onboarding write routes", async () => {
+    const { app, onboardingManager } = await testApp();
+    const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
+    expect((await app.inject({ method: "GET", url: "/api/v1/admin/onboarding/", headers })).statusCode).toBe(200);
+    for (const [method, url] of [
+      ["PATCH", "/api/v1/admin/onboarding/architecture"],
+      ["PATCH", "/api/v1/admin/onboarding/components/hermes-api"],
+      ["PATCH", "/api/v1/admin/onboarding/steps/system-topology"],
+      ["POST", "/api/v1/admin/onboarding/complete"],
+    ] as const) {
+      expect((await app.inject({ method, url, headers, payload: {} })).statusCode).toBe(404);
+    }
+    expect(onboardingManager.updateArchitecture).not.toHaveBeenCalled();
+    expect(onboardingManager.updateComponent).not.toHaveBeenCalled();
+    expect(onboardingManager.updateStep).not.toHaveBeenCalled();
+    expect(onboardingManager.complete).not.toHaveBeenCalled();
   });
 
   it("runs an automated stage validation through the readiness manager", async () => {

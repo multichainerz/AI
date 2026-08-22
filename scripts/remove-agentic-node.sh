@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v9.7.7"
+INSTALLER_VERSION="v9.7.8"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
@@ -18,10 +18,9 @@ DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 DESIRED_STATE_CLIENT="/usr/local/lib/orcasynapse/hermes-desired-state.sh"
 CORPUS_SERVICE="orcasynapse-hermes-corpus"
 ARTIFACT_SERVICE="orcasynapse-hermes-artifacts"
-# Removed by name. Every other unit here is deleted by the
-# orcasynapse-hermes-* glob elsewhere in this script, and that glob matches
-# .service and .timer only -- a .target left behind would keep pulling four
-# units that no longer exist on every boot.
+INBOX_SERVICE="orcasynapse-hermes-inbox"
+# Removed by name. The node target is a .target, so it is not matched by a
+# .service/.timer glob and must be deleted explicitly.
 NODE_TARGET="orcasynapse-hermes-node"
 CORPUS_CLIENT="/usr/local/lib/orcasynapse/hermes-corpus-reconciler.py"
 ARTIFACT_CLIENT="/usr/local/lib/orcasynapse/hermes-artifact-publisher.py"
@@ -543,6 +542,7 @@ managed_install_exists() {
     || -e "/etc/systemd/system/${CORPUS_SERVICE}.timer" \
     || -e "/etc/systemd/system/${ARTIFACT_SERVICE}.service" \
     || -e "/etc/systemd/system/${ARTIFACT_SERVICE}.timer" \
+    || -e "/etc/systemd/system/${INBOX_SERVICE}.service" \
     || -e "${HEARTBEAT_CLIENT}" \
     || -e "${DESIRED_STATE_CLIENT}" \
     || -e "${CORPUS_CLIENT}" \
@@ -639,6 +639,7 @@ stop_managed_services() {
   systemctl stop "${CORPUS_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl disable --now "${ARTIFACT_SERVICE}.timer" >/dev/null 2>&1 || true
   systemctl stop "${ARTIFACT_SERVICE}.service" >/dev/null 2>&1 || true
+  systemctl disable --now "${INBOX_SERVICE}.service" >/dev/null 2>&1 || true
 
   # Every call above tolerates failure, so success has to be checked rather than
   # assumed. A stop job that hangs or times out would otherwise be reported as
@@ -726,6 +727,7 @@ remove_managed_state() {
     "/etc/systemd/system/${CORPUS_SERVICE}.timer" \
     "/etc/systemd/system/${ARTIFACT_SERVICE}.service" \
     "/etc/systemd/system/${ARTIFACT_SERVICE}.timer" \
+    "/etc/systemd/system/${INBOX_SERVICE}.service" \
     "${HEARTBEAT_CLIENT}" \
     "${DESIRED_STATE_CLIENT}" \
     "${CORPUS_CLIENT}" \
@@ -735,6 +737,7 @@ remove_managed_state() {
   systemctl reset-failed "${DESIRED_STATE_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl reset-failed "${CORPUS_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl reset-failed "${ARTIFACT_SERVICE}.service" >/dev/null 2>&1 || true
+  systemctl reset-failed "${INBOX_SERVICE}.service" >/dev/null 2>&1 || true
 
   rm -rf --one-file-system -- "${STATE_ROOT}"
   [[ ! -e "${STATE_ROOT}" ]] \

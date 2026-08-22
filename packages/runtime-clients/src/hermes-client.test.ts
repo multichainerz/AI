@@ -55,25 +55,13 @@ describe("HermesClient native sessions", () => {
     await expect(client.assertAdmittedToolBoundary(["terminal"])).resolves.toBeUndefined();
   });
 
-  /*
-   * `memory` is permitted without being admitted, and that is what makes this
-   * boundary a one-tool boundary rather than the zero-tool one it is sometimes
-   * described as.
-   *
-   * Worth its own test because the description outlived the code. The refusal
-   * carried a second message -- "OrcaSynapse requires a zero-tool boundary for
-   * this run" -- behind `permitted.size === 0`, which cannot happen: `memory`
-   * is added unconditionally, so the set is never empty and that sentence had
-   * never been shown to anybody. It is gone; this pins the fact that made it
-   * unreachable, so removing the built-in grant fails here rather than quietly
-   * changing what an installation admitting nothing is allowed to run.
-   */
-  it("admits Hermes' built-in memory toolset without an operator admitting it", async () => {
+  it("admits Hermes' built-in memory and file toolsets without an operator admitting them", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input) => new Response(JSON.stringify(
       input.toString().endsWith("/v1/capabilities")
         ? capabilities
         : { object: "list", platform: "api_server", data: [
             { name: "memory", enabled: true, tools: ["memory"] },
+            { name: "file", enabled: true, tools: ["read_file", "write_file"] },
           ] },
     ), { status: 200 }));
     const client = new HermesClient(resolver(), fetcher);

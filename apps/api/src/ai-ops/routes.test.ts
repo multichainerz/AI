@@ -10,7 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
-import { AiOpsConflictError, type AiOpsManager } from "./ai-ops-manager.js";
+import type { AiOpsManager } from "./ai-ops-manager.js";
 
 const TOKEN = "o".repeat(43);
 const SESSION_ID = "ac369dab-cad5-4fd9-83ed-b4fbf528028a";
@@ -156,54 +156,16 @@ describe("AI operations routes", () => {
     }
   });
 
-  it("returns production readiness and validates optimistic control updates", async () => {
-    const { app, manager } = await harness();
+  it("no longer serves the retired production-readiness endpoints", async () => {
+    const { app } = await harness();
     const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
-    const summary = await app.inject({ method: "GET", url: "/api/v1/admin/operations/readiness", headers });
-    expect(summary.statusCode).toBe(200);
-    expect(summary.json()).toMatchObject({ status: "NOT_READY", summary: { totalControls: 1 } });
-
-    const invalid = await app.inject({
-      method: "PATCH",
-      url: "/api/v1/admin/operations/readiness/controls/security-threat-model",
-      headers,
-      payload: { status: "VERIFIED", owner: "Security", evidenceRefs: [], note: "Done", expectedRevision: 0 },
-    });
-    expect(invalid.statusCode).toBe(400);
-    expect(manager.updateReadinessControl).not.toHaveBeenCalled();
-  });
-
-  it("records an external approval without conflating its authority with the recorder", async () => {
-    const { app, manager } = await harness();
-    const input = {
-      role: "SECURITY",
-      decision: "APPROVED",
-      authority: "OrcaSynapse Security Review Board",
-      evidenceRef: "approval/security/2026-07-30",
-      reason: "Approved for the bounded pilot scope.",
-    } as const;
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/v1/admin/operations/readiness/approvals",
-      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` },
-      payload: input,
-    });
-    expect(response.statusCode).toBe(201);
-    expect(response.json()).toMatchObject({ authority: input.authority, recordedBy: "platform-admin" });
-    expect(manager.recordReadinessApproval).toHaveBeenCalledWith(principal, input);
-  });
-
-  it("keeps premature approval conflicts explicit", async () => {
-    const manager = fakeManager();
-    vi.mocked(manager.recordReadinessApproval).mockRejectedValueOnce(new AiOpsConflictError("Readiness controls are incomplete."));
-    const { app } = await harness(manager);
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/v1/admin/operations/readiness/approvals",
-      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` },
-      payload: { role: "SECURITY", decision: "APPROVED", authority: "OrcaSynapse Security", evidenceRef: "approval/security", reason: "Approved for pilot." },
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toMatchObject({ error: "CONFLICT" });
+    expect((await app.inject({ method: "GET", url: "/api/v1/admin/operations/incidents", headers })).statusCode).toBe(200);
+    for (const [method, url] of [
+      ["GET", "/api/v1/admin/operations/readiness"],
+      ["PATCH", "/api/v1/admin/operations/readiness/controls/security-threat-model"],
+      ["POST", "/api/v1/admin/operations/readiness/approvals"],
+    ] as const) {
+      expect((await app.inject({ method, url, headers, payload: {} })).statusCode).toBe(404);
+    }
   });
 });

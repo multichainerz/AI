@@ -226,7 +226,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired, onMonit
 
   const { unlocked, scopes } = adminAccess(session);
   const canOperate = scopes.includes("operations:execute");
-  const canWriteChecks = scopes.includes("connections:write");
+  const canWriteChecks = scopes.includes("connections:write") || scopes.includes("operations:execute");
 
   // Held in a ref so `handleError` keeps one identity for the life of the view.
   //
@@ -377,7 +377,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired, onMonit
         title="Operations"
         mark="OP"
         reason="Unlock the control plane to inspect protected operational telemetry and recovery controls."
-        actionLabel="Open platform settings"
+        actionLabel="Open Settings"
         onAction={onConfigure}
       />
     );

@@ -13,14 +13,12 @@ import {
   inferenceCatalogueResultSchema,
   inferenceDiscoveryResultSchema,
   administratorSessionSchema,
-  configurationRevisionListSchema,
   platformMetaSchema,
   platformReleaseTargetSchema,
   platformUpdateActivitySchema,
   platformUpdateSchema,
   serviceConnectionListSchema,
   serviceConnectionSummarySchema,
-  rollbackConfigurationResultSchema,
   chatConversationListSchema,
   chatConversationSchema,
   chatConversationSummarySchema,
@@ -42,7 +40,6 @@ import {
   type InferenceDiscoveryRequest,
   type InferenceDiscoveryResult,
   type UpdateConnectionMonitoringControl,
-  type ConfigurationRevisionList,
   type ApproveReleaseTarget,
   type PlatformMeta,
   type PlatformReleaseTarget,
@@ -50,7 +47,6 @@ import {
   type PlatformUpdateActivity,
   type ServiceConnectionList,
   type ServiceConnectionSummary,
-  type RollbackConfigurationResult,
   type ChatConversation,
   type ChatConversationList,
   type ChatConversationSummary,
@@ -87,28 +83,19 @@ import {
   governedToolListSchema,
   toolsetAdmissionListSchema,
   toolsetAdmissionSchema,
-  toolRuntimeControlSchema,
   toolMetricsSchema,
   type GovernedToolList,
   type ToolsetAdmission,
   type ToolsetAdmissionList,
-  type ToolRuntimeControl,
   type ToolMetrics,
-  type UpdateToolRuntimeControl,
   aiOpsOverviewSchema,
   operationalIncidentListSchema,
   operationalIncidentSchema,
-  productionReadinessControlSchema,
-  productionReadinessApprovalSchema,
   type AiOpsOverview,
   type OperationalIncident,
   type OperationalIncidentList,
   type CreateOperationalIncident,
   type IncidentDecision,
-  type ProductionReadinessControl,
-  type ProductionReadinessApproval,
-  type UpdateProductionReadinessControl,
-  type RecordProductionReadinessApproval,
   modelDeploymentListSchema,
   modelDeploymentSchema,
   modelObservationListSchema,
@@ -468,33 +455,6 @@ export async function loadInferenceCatalogue(
     body: JSON.stringify(input),
   });
   return inferenceCatalogueResultSchema.parse(await parsedResponse(response));
-}
-
-export async function getConfigurationRevisions(
-  id: string,
-): Promise<ConfigurationRevisionList> {
-  const response = await fetch(
-    `/api/v1/admin/connections/${encodeURIComponent(id)}/revisions`,
-    { credentials: "same-origin" },
-  );
-  return configurationRevisionListSchema.parse(await parsedResponse(response));
-}
-
-export async function rollbackConfiguration(
-  id: string,
-  targetRevision: number,
-  expectedActiveRevision: number,
-): Promise<RollbackConfigurationResult> {
-  const response = await fetch(
-    `/api/v1/admin/connections/${encodeURIComponent(id)}/revisions/${targetRevision}/rollback`,
-    {
-      method: "POST",
-      headers: adminHeaders(),
-      credentials: "same-origin",
-      body: JSON.stringify({ expectedActiveRevision }),
-    },
-  );
-  return rollbackConfigurationResultSchema.parse(await parsedResponse(response));
 }
 
 export async function getChatArtifacts(filter: { conversationId?: string } = {}): Promise<ChatArtifactList> {
@@ -921,18 +881,6 @@ export async function getGovernedTools(): Promise<GovernedToolList> {
   return governedToolListSchema.parse(await parsedResponse(response));
 }
 
-export async function getToolRuntime(): Promise<ToolRuntimeControl> {
-  const response = await fetch("/api/v1/admin/tooling/runtime", { credentials: "same-origin" });
-  return toolRuntimeControlSchema.parse(await parsedResponse(response));
-}
-
-export async function updateToolRuntime(input: UpdateToolRuntimeControl): Promise<ToolRuntimeControl> {
-  const response = await fetch("/api/v1/admin/tooling/runtime", {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return toolRuntimeControlSchema.parse(await parsedResponse(response));
-}
-
 export async function getToolMetrics(): Promise<ToolMetrics> {
   const response = await fetch("/api/v1/admin/tooling/metrics", { credentials: "same-origin" });
   return toolMetricsSchema.parse(await parsedResponse(response));
@@ -964,25 +912,6 @@ export async function decideOperationalIncident(
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return operationalIncidentSchema.parse(await parsedResponse(response));
-}
-
-export async function updateProductionReadinessControl(
-  key: string,
-  input: UpdateProductionReadinessControl,
-): Promise<ProductionReadinessControl> {
-  const response = await fetch(`/api/v1/admin/operations/readiness/controls/${encodeURIComponent(key)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return productionReadinessControlSchema.parse(await parsedResponse(response));
-}
-
-export async function recordProductionReadinessApproval(
-  input: RecordProductionReadinessApproval,
-): Promise<ProductionReadinessApproval> {
-  const response = await fetch("/api/v1/admin/operations/readiness/approvals", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return productionReadinessApprovalSchema.parse(await parsedResponse(response));
 }
 
 export async function getAuditEvents(query: AuditEventQuery): Promise<AuditEventList> {

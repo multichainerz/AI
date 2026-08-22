@@ -18,7 +18,7 @@
 # so `orcasynapse-agent status` works in a script or a cron line unchanged.
 set -Eeuo pipefail
 
-CLI_VERSION="v9.7.7"
+CLI_VERSION="v9.7.8"
 
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_USER="${ORCASYNAPSE_HERMES_USER:-orcasynapse-hermes}"
@@ -28,6 +28,7 @@ HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 CORPUS_SERVICE="orcasynapse-hermes-corpus"
 ARTIFACT_SERVICE="orcasynapse-hermes-artifacts"
+INBOX_SERVICE="orcasynapse-hermes-inbox"
 
 # The signed channel refuses requests outside this window; doctor checks the
 # same number the control plane enforces (SIGNATURE_CLOCK_SKEW_MS).
@@ -94,7 +95,7 @@ command_status() {
   say ""
   say "${BOLD}Services${RESET}"
   local unit
-  for unit in "${RUNTIME_SERVICE}.service" "${HEARTBEAT_SERVICE}.timer" "${DESIRED_STATE_SERVICE}.timer" "${CORPUS_SERVICE}.timer" "${ARTIFACT_SERVICE}.timer"; do
+  for unit in "${RUNTIME_SERVICE}.service" "${HEARTBEAT_SERVICE}.timer" "${DESIRED_STATE_SERVICE}.timer" "${CORPUS_SERVICE}.timer" "${ARTIFACT_SERVICE}.timer" "${INBOX_SERVICE}.service"; do
     local state
     state="$(unit_state "${unit}")"
     if [[ "${state}" == "active" ]]; then
@@ -110,6 +111,11 @@ command_status() {
     ok "Hermes answers on 127.0.0.1:8642"
   else
     bad "Hermes does not answer on 127.0.0.1:8642 — journalctl -u ${RUNTIME_SERVICE} -n 50"
+  fi
+  if curl --silent --max-time 5 -o /dev/null http://127.0.0.1:8643/; then
+    ok "Session inbox answers on 127.0.0.1:8643"
+  else
+    bad "Session inbox does not answer on 127.0.0.1:8643 — journalctl -u ${INBOX_SERVICE} -n 50"
   fi
   local beat
   beat="$(systemctl show "${HEARTBEAT_SERVICE}.service" --property=ExecMainExitTimestamp --value 2>/dev/null)" || beat=""
@@ -212,7 +218,7 @@ command_doctor() {
   fi
 
   local unit
-  for unit in "${RUNTIME_SERVICE}.service" "${HEARTBEAT_SERVICE}.timer" "${DESIRED_STATE_SERVICE}.timer" "${CORPUS_SERVICE}.timer" "${ARTIFACT_SERVICE}.timer"; do
+  for unit in "${RUNTIME_SERVICE}.service" "${HEARTBEAT_SERVICE}.timer" "${DESIRED_STATE_SERVICE}.timer" "${CORPUS_SERVICE}.timer" "${ARTIFACT_SERVICE}.timer" "${INBOX_SERVICE}.service"; do
     if [[ "$(unit_state "${unit}")" == "active" ]]; then
       ok "${unit} active"
     else
@@ -264,6 +270,7 @@ command_logs() {
     state)     unit="${DESIRED_STATE_SERVICE}" ;;
     corpus)    unit="${CORPUS_SERVICE}" ;;
     artifacts) unit="${ARTIFACT_SERVICE}" ;;
+    inbox)     unit="${INBOX_SERVICE}" ;;
   esac
   exec journalctl -u "${unit}" -n 100 --no-pager
 }
@@ -293,7 +300,7 @@ orcasynapse-agent ${CLI_VERSION} — operate this Agentic System node
   update        repair the node in place from the release OrcaSynapse serves
   sync          run the desired-state, corpus and artifact publishers now
   doctor        clock, connectivity, units, deliverable path, disk
-  logs [unit]   journal for runtime|heartbeat|state|corpus|artifacts
+  logs [unit]   journal for runtime|heartbeat|state|corpus|artifacts|inbox
   decommission  remove the runtime from this host (confirmed, destructive)
 
 Run with no arguments on a terminal for the menu.

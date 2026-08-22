@@ -25,17 +25,17 @@ answers. Setup is a three-step wizard — inference, agent runtime, Agent Profil
 — with one step open at a time and every blocker stated inside the step it
 blocks. Application updates have their own Settings tab.
 
-`v5.1.0` settles the tab strips. **Agents is four tabs — Profiles, Skills,
-Memory, Tools** — after Runtime folded back into Profiles, which now owns what
-an agent is, what it is doing, and whether it may run at all; `#agents/runtime`
-stays alive as a redirect. **Operations is two — Health and Audit trail** —
-after Release gates went with the evaluation subsystem it governed and Pilot
-readiness was deleted outright (below); `#operations/releases`,
+`v5.1.0` settled the tab strips. **Agents is four tabs — Profiles, Skills,
+Memory, Tools.** The kill switch stayed on Profiles; the execution ledger and
+run inspection moved to **Operations → Agent runs** (`#operations/runs`).
+`#agents/runtime` redirects there. **Operations is three — Health, Agent runs,
+and Audit trail** — after Release gates went with the evaluation subsystem it
+governed and Pilot readiness was deleted outright (below); `#operations/releases`,
 `#operations/evaluations` and `#releases` redirect to Health.
 
-The six areas and their tabs, in menu order, are: Dashboard; Session; Agents
+The six areas and their tabs, in menu order, are: Dashboard; Session; Files; Agents
 (Profiles, Skills, Memory, Tools); Gateway (Models, Guardrails, Usage);
-Operations (Health, Audit trail); Settings (Setup, Access, System).
+Operations (Health, Agent runs, Audit trail); Settings (Setup, Access, System).
 `apps/web/src/workspace-navigation.tsx` is the source of truth, and
 `workspace-navigation.test.ts` pins every one of those strips literally —
 this paragraph said "Agents is five (Profiles, Runtime, Skills, Memory, Agent
@@ -56,14 +56,16 @@ panel it may see and a refusal in place of the other.
 
 Pilot readiness is removed from the console. `ProductionReadinessControl` has
 no create route and no seed, so that screen could never display a row; the
-tables remain untouched. `POST /onboarding/complete` consequently has no client
-surface, which changes nothing operationally — it already required a gate that
-automated validation cannot satisfy on a PRODUCTION target.
+tables remain untouched. `POST /onboarding/complete`, architecture/component/step
+writes, and `PUT /chat/messages/:id/feedback` are unmounted; managers and tables
+stay. Completing onboarding already required a gate automated validation cannot
+satisfy on a PRODUCTION target.
 
 Gateway Prompts is gone for the same class of reason: `PromptTemplate` CRUD
-still exists, but nothing at runtime reads the active row. System text comes
-from the agent profile. `#gateway/prompts` and the older `#settings/prompts`
-and `#platform/prompts` hashes land on Models.
+still exists in the manager, but the HTTP routes are unmounted and nothing at
+runtime reads the active row. System text comes from the agent profile.
+`#gateway/prompts` and the older `#settings/prompts` and `#platform/prompts`
+hashes land on Models.
 
 Settings includes release awareness, not unattended self-update. VM1 checks
 official stable tags through its API and can present a pinned installer command
@@ -100,7 +102,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 4. Corpus writes use signed commands, expected hashes, Hermes-native mutation APIs, and two-person approval for destructive operations. VM1 never mounts VM2 storage or opens a remote shell.
 5. Native session databases remain opaque and are never mirrored or used to reconstruct model context.
 6. PostgreSQL holds sanitized execution evidence, the non-authoritative corpus mirror, and the append-only audit trail.
-7. Native toolsets are default-deny except built-in memory and explicit operator admissions.
+7. Native toolsets are default-deny except built-in memory and native file tools. MCP discovery stays on unless an operator admits `no_mcp`.
 8. The upstream inference credential remains on VM1.
 9. VM2 has no database access or standing remote-administration channel.
 10. Schema epoch `hermes-native-v1` is greenfield-only and rejects older populated databases.

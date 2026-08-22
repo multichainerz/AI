@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { createDrizzleClient, type OrcaSynapseDatabase } from "./drizzle/client.js";
 import { runMigrations } from "./drizzle/migrate.js";
@@ -115,11 +114,3 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   };
 }
 
-/** Bare Drizzle client against an existing database, without migrating it. */
-export function connectTestDatabase(connectionString: string): {
-  database: OrcaSynapseDatabase;
-  close: () => Promise<void>;
-} {
-  const pool = new Pool({ connectionString });
-  return { database: drizzle(pool), close: () => pool.end() };
-}

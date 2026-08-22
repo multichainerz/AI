@@ -368,7 +368,7 @@ export function ModelsView({
       title="Models"
       mark="M"
       reason="Sign in as an administrator to view or change model routes; the workspace session you already have stays active. Serving credentials remain inside the encrypted credential store."
-      actionLabel="Open platform settings"
+      actionLabel="Open Settings"
       onAction={onConfigureConnections}
     />;
   }

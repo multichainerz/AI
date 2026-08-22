@@ -285,6 +285,42 @@ describe("administrator connection routes", () => {
     expect(updated.json()).toMatchObject({ enabled: true, reason: "Pilot monitoring approved", updatedBy: SESSION_ID });
   });
 
+  it("lets an operations administrator write scheduled monitoring without connections:write", async () => {
+    let control: ConnectionMonitoringControl = {
+      enabled: false,
+      intervalSeconds: 300,
+      reason: "Acceptance pending",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+      updatedBy: null,
+    };
+    const monitor: ConnectionMonitorService = {
+      start: async () => undefined,
+      stop: async () => undefined,
+      getControl: async () => control,
+      updateControl: async (actor, input) => {
+        control = { ...input, updatedAt: "2026-07-30T00:01:00.000Z", updatedBy: actor.id };
+        return control;
+      },
+    };
+    const operations: AdministratorSession = {
+      ...principal,
+      role: "OPERATIONS_ADMIN",
+      scopes: ["connections:read", "operations:read", "operations:execute"],
+    };
+    const { app } = await authenticatedApp(
+      new MemoryConnectionManager(), undefined, new MemorySessionManager(operations), monitor,
+    );
+
+    const updated = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/admin/connections/monitoring",
+      headers: sessionHeaders,
+      payload: { enabled: true, intervalSeconds: 300, reason: "Operations owns Health" },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ enabled: true, updatedBy: SESSION_ID });
+  });
+
   it("fails closed without an administrator session", async () => {
     const { app } = await authenticatedApp();
 

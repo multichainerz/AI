@@ -377,7 +377,7 @@ systemctl is-enabled orcasynapse-hermes-corpus.timer >/dev/null 2>&1 \
   && pass "corpus reconciler installed" || bad "corpus reconciler missing"
 
 # ---------------------------------------------------------------------------
-# The node target: one handle for the four units above
+# The node target: one handle for the units above
 # ---------------------------------------------------------------------------
 # Asserted by behaviour, not by the presence of the file. A target whose Wants=
 # name their units correctly but whose members carry no PartOf= installs
@@ -400,20 +400,21 @@ systemctl is-active orcasynapse-hermes.service >/dev/null 2>&1 \
 
 # The half Wants= alone does not give. Start-time dependencies do not propagate
 # a stop, so without PartOf= on each member this command is silent and leaves
-# all four running -- an operator would read "stopped" and be wrong.
+# all six running -- an operator would read "stopped" and be wrong.
 systemctl stop orcasynapse-hermes-node.target >/dev/null 2>&1 || true
 target_stopped=0
 for unit in orcasynapse-hermes.service orcasynapse-hermes-heartbeat.timer \
-  orcasynapse-hermes-desired-state.timer orcasynapse-hermes-corpus.timer; do
+  orcasynapse-hermes-desired-state.timer orcasynapse-hermes-corpus.timer \
+  orcasynapse-hermes-artifacts.timer orcasynapse-hermes-inbox.service; do
   if systemctl is-active "${unit}" >/dev/null 2>&1; then
     bad "stopping the node target left ${unit} active"
   else
     target_stopped=$((target_stopped + 1))
   fi
 done
-(( target_stopped == 4 )) \
-  && pass "stopping the node target stopped all four members" \
-  || bad "stopping the node target stopped only ${target_stopped} of 4 members"
+(( target_stopped == 6 )) \
+  && pass "stopping the node target stopped all six members" \
+  || bad "stopping the node target stopped only ${target_stopped} of 6 members"
 
 # Put the node back the way the rest of this file expects to find it.
 systemctl start orcasynapse-hermes-node.target >/dev/null 2>&1 || true
@@ -438,8 +439,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 if [[ -s "${WORK}/heartbeat.json" ]]; then
   pass "the heartbeat reached the control plane"
-  jq -e '.units | type == "array" and length == 4' "${WORK}/heartbeat.json" >/dev/null 2>&1 \
-    && pass "the heartbeat reports all four of this node's units" \
+  jq -e '.units | type == "array" and length == 6' "${WORK}/heartbeat.json" >/dev/null 2>&1 \
+    && pass "the heartbeat reports all six of this node's units" \
     || bad "the heartbeat units array is $(jq -c '.units' "${WORK}/heartbeat.json" 2>/dev/null)"
   # Booleans, not the strings "true"/"false" -- jq --argjson is what keeps them
   # that way, and the contract refuses a string.

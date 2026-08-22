@@ -1,7 +1,10 @@
 # Letting the agent reach its memory — enabling MCP on VM2
 
-Status: **blocked on a decision, not on effort.** Written at v8.0.0, verified
-against the tree and against Hermes at the pinned commit at v8.1.0.
+Status: **installer MCP-on shipped in v9.7.6.** `platform_toolsets` is
+`memory` + `file` + admitted; `no_mcp` is included only when an operator admits
+it. Operators pin MCP off from Agents → Tools. VM1 `remember` / `recall` still
+are not sent on the Hermes native session. Written at v8.0.0, verified against
+the tree and against Hermes at the pinned commit at v8.1.0.
 
 The five pieces this document used to describe were necessary and **not
 sufficient**. Verification found one missing prerequisite, now shipped, and one

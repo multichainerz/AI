@@ -427,9 +427,9 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
             */}
           {!memoryScope ? (
             <ConfigurationSetsPanel embedded kind="skills" canManage={canWrite} onSessionExpired={onSessionExpired} />
-          ) : (
+          ) : canReadContent ? (
             <ScopedMemoryPanel embedded canWrite={canWrite} canDelete={canDelete} onSessionExpired={onSessionExpired} />
-          )}
+          ) : null}
       </div>
 
       {/* The repository takes one of three columns rather than a fixed 260px,

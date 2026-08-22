@@ -254,7 +254,7 @@ export function UsageView({ session, onConfigure, onSessionExpired }: UsageViewP
       // The same words and the same button as every other locked governance
       // screen, which `locked-screen-contract.test.tsx` asserts across all of
       // them: an operator moving between them is not relearning the rule.
-      actionLabel="Open platform settings"
+      actionLabel="Open Settings"
       onAction={onConfigure}
     />;
   }
