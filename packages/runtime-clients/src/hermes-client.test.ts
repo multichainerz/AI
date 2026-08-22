@@ -1,7 +1,7 @@
 import { AGENT_RUN_ENDED_EVENT_TYPE } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient, hermesInboxOrigin, SAFE_EVENT_TYPES } from "./hermes-client.js";
+import { HermesClient, describeNetworkFailure, hermesInboxOrigin, SAFE_EVENT_TYPES } from "./hermes-client.js";
 
 function resolver(): DrizzleRuntimeConnectionResolver {
   return {
@@ -155,10 +155,13 @@ describe("HermesClient native sessions", () => {
 
   it("puts session uploads on the inbox port, not the Hermes chat port", async () => {
     expect(hermesInboxOrigin("http://192.0.2.10:8642").origin).toBe("http://192.0.2.10:8643");
+    // The inbox is cleartext http.server. A TLS-fronted Hermes URL must not
+    // promote 8643 to https or undici fails the handshake as "fetch failed".
+    expect(hermesInboxOrigin("https://hermes.example:8642/").origin).toBe("http://hermes.example:8643");
     expect(hermesInboxOrigin("https://hermes.example/", { inboxUrl: "https://hermes.example:9443/" }).origin)
       .toBe("https://hermes.example:9443");
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
-      expect(input.toString()).toBe("https://hermes.orcasynapse.internal:8643/v1/session-uploads/session-1/notes.txt");
+      expect(input.toString()).toBe("http://hermes.orcasynapse.internal:8643/v1/session-uploads/session-1/notes.txt");
       expect(init?.method).toBe("PUT");
       expect((init?.headers as Record<string, string>).authorization).toBe("Bearer strong-hermes-key");
       expect(Buffer.from(init?.body as Buffer)).toEqual(Buffer.from([1, 2, 3]));
@@ -166,6 +169,22 @@ describe("HermesClient native sessions", () => {
     });
     const client = new HermesClient(resolver(), fetcher);
     await client.materializeSessionInbox("session-1", [{ fileName: "notes.txt", bytes: new Uint8Array([1, 2, 3]) }]);
+  });
+
+  it("names the inbox and the system error when the PUT never reaches the node", async () => {
+    const cause = Object.assign(new Error("connect ECONNREFUSED 192.0.2.10:8643"), { code: "ECONNREFUSED" });
+    const failed = Object.assign(new TypeError("fetch failed"), { cause });
+    const client = new HermesClient(resolver(), vi.fn<typeof fetch>(async () => { throw failed; }));
+    await expect(client.materializeSessionInbox("session-1", [{ fileName: "photo.jpg", bytes: new Uint8Array([1]) }]))
+      .rejects.toThrow(/Session inbox at http:\/\/hermes.orcasynapse.internal:8643 could not place photo.jpg: fetch failed: connect ECONNREFUSED 192.0.2.10:8643/);
+  });
+});
+
+describe("describeNetworkFailure", () => {
+  it("unwraps Node's fetch-failed cause so the ledger is not just 'fetch failed'", () => {
+    const cause = new Error("connect ECONNREFUSED 10.0.0.12:8643");
+    const failed = Object.assign(new TypeError("fetch failed"), { cause });
+    expect(describeNetworkFailure(failed)).toBe("fetch failed: connect ECONNREFUSED 10.0.0.12:8643");
   });
 });
 

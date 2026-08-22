@@ -141,7 +141,28 @@ const conversation = {
     }),
     message({ id: "m3", role: "USER", content: "Run it.", totalTokens: null, latencyMs: null }),
     message({
-      id: "m4", status: "FAILED", content: "", errorCode: "RUNTIME_UNREACHABLE", totalTokens: null, latencyMs: null,
+      id: "m4", status: "FAILED", content: "", errorCode: "HERMES_EXECUTION_FAILED", totalTokens: null, latencyMs: null,
+      runtimeEvents: [{
+        id: "ended",
+        cursor: "451",
+        type: "RUN_ENDED",
+        summary: "fetch failed",
+        preview: null,
+        status: "FAILED",
+        errorCode: "HERMES_EXECUTION_FAILED",
+        toolName: null,
+        toolCallKey: null,
+        text: null,
+        contentOffset: 0,
+        childSessionId: null,
+        approvalId: null,
+        durationMs: null,
+        inputTokens: null,
+        outputTokens: null,
+        reasoningTokens: null,
+        costUsd: null,
+        occurredAt: "2026-08-22T12:31:54.247Z",
+      }],
     }),
   ],
 } as unknown as ChatConversation;
@@ -349,7 +370,9 @@ describe("chat transcript", () => {
   it("says why a turn failed and offers the way back", async () => {
     await transcript();
 
-    expect(screen.getByText(/Generation failed · RUNTIME_UNREACHABLE/)).toBeTruthy();
+    expect(screen.getByText(/Generation failed · HERMES_EXECUTION_FAILED/)).toBeTruthy();
+    expect(screen.getByText("fetch failed")).toBeTruthy();
+    expect(screen.queryByText("No content returned.")).toBeNull();
     expect(screen.getByRole("button", { name: "Retry prompt" })).toBeTruthy();
     // A failed turn has nothing to measure, so it must not draw a telemetry row.
     expect(screen.getAllByLabelText("Response telemetry")).toHaveLength(1);

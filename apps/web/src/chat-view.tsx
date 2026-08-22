@@ -175,6 +175,13 @@ type ResponseFlowBlock =
   | { kind: "text"; text: string }
   | { kind: "activity"; entries: TimelineEntry<ChatRuntimeEvent>[] };
 
+/** What the run itself said when it died, which "No content returned." hides. */
+function failedRunDetail(message: ChatMessage): string {
+  const ended = [...message.runtimeEvents].reverse().find((event) => event.type === "RUN_ENDED");
+  const summary = ended?.summary?.trim();
+  return summary || "The run failed before an answer was produced.";
+}
+
 /** Lifecycle bookkeeping stays in the audit log without crowding the answer. */
 function visibleTimelineEntries(message: ChatMessage): TimelineEntry<ChatRuntimeEvent>[] {
   return groupRuntimeEvents(message.runtimeEvents).filter((entry) => {
@@ -501,7 +508,9 @@ function AgentResponseFlow({
         * static "Thinking…" above it was a second voice for the same fact.
         */}
       {empty ? (
-        message.status === "PENDING" ? null : <MarkdownMessage content="No content returned." streaming={false} />
+        message.status === "PENDING" ? null
+          : message.status === "FAILED" ? <MarkdownMessage content={failedRunDetail(message)} streaming={false} />
+            : <MarkdownMessage content="No content returned." streaming={false} />
       ) : blocks.map((block, index) => block.kind === "text" ? (
         <MarkdownMessage
           content={block.text}

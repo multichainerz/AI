@@ -5,6 +5,16 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.8.4 — 2026-08-22
+
+Stops a Session image upload from dying as an opaque "fetch failed" before Hermes starts.
+
+### Changes
+
+- place Session inbox PUTs on HTTP :8643 even when Hermes is reached over HTTPS
+- unwrap Node's `fetch failed` cause so the run names the inbox host, port, and system error
+- show that failure summary in the Session transcript instead of "No content returned."
+
 ## v9.8.3 — 2026-08-22
 
 Stops an OpenRouter catalogue from painting the served-model picker as a full-height listbox and cropping admitted routes.

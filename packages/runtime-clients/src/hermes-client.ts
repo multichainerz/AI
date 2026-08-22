@@ -281,6 +281,25 @@ function numberSetting(connection: RuntimeConnection, name: string, fallback: nu
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+/**
+ * Node's `fetch` throws `TypeError: fetch failed` and hides the system error
+ * on `cause` (ECONNREFUSED, ERR_SSL_WRONG_VERSION_NUMBER, …). The run ledger
+ * stored only the outer message, so a Session upload that could not reach the
+ * inbox rendered as "fetch failed" with no host, port, or reason.
+ */
+export function describeNetworkFailure(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    const text = current.message.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+    if (text && !parts.includes(text)) parts.push(text);
+    current = current.cause;
+  }
+  return (parts.join(": ") || "unknown error").slice(0, 400);
+}
+
 function endpoint(connection: RuntimeConnection, path: string): URL {
   const base = new URL(connection.baseUrl);
   const url = new URL(path, `${connection.baseUrl.replace(/\/+$/, "")}/`);
@@ -336,6 +355,10 @@ export function hermesInboxOrigin(baseUrl: string, configuration: Record<string,
   url.pathname = "/";
   url.search = "";
   url.hash = "";
+  // The inbox is Python `http.server` on 8643. Copying `https` from a
+  // TLS-fronted Hermes URL makes undici fail the handshake as "fetch failed"
+  // before a byte is placed. Operators who terminate TLS on 8643 set inboxUrl.
+  url.protocol = "http:";
   url.port = "8643";
   return url;
 }
@@ -657,7 +680,11 @@ export class HermesClient {
         if (error instanceof Error && error.name === "AbortError") {
           throw new Error(`Session inbox timed out placing ${file.fileName}.`);
         }
-        throw error;
+        if (error instanceof Error && error.message.startsWith("Session inbox")) throw error;
+        throw new Error(
+          `Session inbox at ${origin.origin} could not place ${file.fileName}: ${describeNetworkFailure(error)}. `
+          + "OrcaSynapse must reach TCP 8643 on the Hermes node, and orcasynapse-hermes-inbox must be running.",
+        );
       } finally {
         clearTimeout(timeout);
       }
@@ -779,6 +806,12 @@ export class HermesClient {
         throw new Error(`Hermes rejected the request with status ${response.status}${detail ? `: ${detail}` : ""}.`);
       }
       return { status: response.status, body };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error("Hermes request timed out.");
+      }
+      if (error instanceof Error && error.message.startsWith("Hermes ")) throw error;
+      throw new Error(`Hermes request to ${url.origin} failed: ${describeNetworkFailure(error)}.`);
     } finally {
       clearTimeout(timeout);
     }
@@ -791,24 +824,33 @@ export class HermesClient {
   ): Promise<void> {
     let authoritativeOutputSeen = false;
     const sessionsPath = stringSetting(connection, "sessionsPath", "/api/sessions").replace(/\/+$/, "");
-    const response = await this.fetcher(
-      endpoint(connection, `${sessionsPath}/${encodeURIComponent(input.sessionId)}/chat/stream`),
-      {
-        method: "POST",
-        redirect: "error",
-        signal: run.controller.signal,
-        headers: {
-          accept: "text/event-stream",
-          "content-type": "application/json",
-          ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
+    const streamUrl = endpoint(connection, `${sessionsPath}/${encodeURIComponent(input.sessionId)}/chat/stream`);
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        streamUrl,
+        {
+          method: "POST",
+          redirect: "error",
+          signal: run.controller.signal,
+          headers: {
+            accept: "text/event-stream",
+            "content-type": "application/json",
+            ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            message: input.input,
+            instructions: input.instructions,
+            model: input.modelAlias,
+          }),
         },
-        body: JSON.stringify({
-          message: input.input,
-          instructions: input.instructions,
-          model: input.modelAlias,
-        }),
-      },
-    );
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error("Hermes native session stream was aborted.");
+      }
+      throw new Error(`Hermes native session stream to ${streamUrl.origin} failed: ${describeNetworkFailure(error)}.`);
+    }
     if (!response.ok) throw new Error(`Hermes rejected the native session stream with status ${response.status}.`);
     if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
       throw new Error("Hermes returned an invalid native session stream content type.");
@@ -1111,6 +1153,12 @@ export class HermesClient {
         throw new Error(`Hermes rejected the request with status ${response.status}${detail ? `: ${detail}` : ""}.`);
       }
       return body;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error("Hermes request timed out.");
+      }
+      if (error instanceof Error && error.message.startsWith("Hermes ")) throw error;
+      throw new Error(`Hermes request to ${url.origin} failed: ${describeNetworkFailure(error)}.`);
     } finally {
       clearTimeout(timeout);
     }
