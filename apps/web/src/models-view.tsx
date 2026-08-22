@@ -19,7 +19,9 @@ import {
   refreshConnectionModels,
   updateModelDeployment,
 } from "./api.js";
+import { isOpenRouterEndpoint } from "@orcasynapse/contracts";
 import { adminAccess } from "./admin-access.js";
+import { admitLimits, setupAgentDeploymentSlug } from "./setup-agent-model.js";
 import { slugAsTyped, slugify } from "./slug.js";
 import {
   Alert,
@@ -111,26 +113,27 @@ function admittedLabel(workloads: ModelWorkload[]): string {
   return "no";
 }
 
-function inContextBounds(value: number | null): value is number {
-  return value !== null && value >= 1_024 && value <= 4_194_304;
+function draftFromObservation(observation: ModelObservation, workload: ModelWorkload): ModelDraft {
+  const limits = admitLimits(observation);
+  const name = (observation.displayName ?? observation.alias).slice(0, 120);
+  return {
+    slug: setupAgentDeploymentSlug(observation.alias),
+    displayName: name.length >= 2 ? name : observation.alias.slice(0, 120).padEnd(2, "x"),
+    modelAlias: observation.alias,
+    workload,
+    connectionId: observation.connectionId,
+    version: "observed",
+    license: null,
+    contextWindowTokens: limits.contextWindowTokens,
+    maxOutputTokens: limits.maxOutputTokens,
+    maxConcurrentRequests: 2,
+  };
 }
 
-function inOutputBounds(value: number | null): value is number {
-  return value !== null && value >= 64 && value <= 131_072;
-}
-
-function prefillLimits(observation: ModelObservation | null): { contextWindowTokens: LimitValue; maxOutputTokens: LimitValue } {
-  if (!observation) return { contextWindowTokens: "", maxOutputTokens: "" };
-  const context = inContextBounds(observation.observedContextWindowTokens)
-    ? observation.observedContextWindowTokens
-    : "";
-  const output = inOutputBounds(observation.observedMaxOutputTokens)
-    ? observation.observedMaxOutputTokens
-    : "";
-  if (context !== "" && output !== "" && output > context) {
-    return { contextWindowTokens: context, maxOutputTokens: "" };
-  }
-  return { contextWindowTokens: context, maxOutputTokens: output };
+function usedFallbackLimits(observation: ModelObservation): boolean {
+  const limits = admitLimits(observation);
+  return observation.observedContextWindowTokens !== limits.contextWindowTokens
+    || observation.observedMaxOutputTokens !== limits.maxOutputTokens;
 }
 
 function asLimit(value: LimitValue): number | null {
@@ -199,8 +202,6 @@ export function ModelsView({
     }
   };
 
-  useEffect(() => { void load(); }, [session, refreshConnection?.id]);
-
   const resyncAfterConflict = async (cause: unknown) => {
     if (!(cause instanceof OrcaSynapseApiError) || cause.status !== 409) return;
     const loaded = await load();
@@ -213,21 +214,8 @@ export function ModelsView({
   }, [eligibleConnections, draft.connectionId]);
 
   const startAdmit = (observation: ModelObservation) => {
-    const limits = prefillLimits(observation);
-    const name = (observation.displayName ?? observation.alias).slice(0, 120);
     setEditing(null);
-    setDraft({
-      slug: slugify(observation.alias) || "model",
-      displayName: name.length >= 2 ? name : observation.alias.slice(0, 120),
-      modelAlias: observation.alias,
-      workload: "AGENT",
-      connectionId: observation.connectionId,
-      version: "observed",
-      license: null,
-      contextWindowTokens: limits.contextWindowTokens,
-      maxOutputTokens: limits.maxOutputTokens,
-      maxConcurrentRequests: 2,
-    });
+    setDraft(draftFromObservation(observation, "AGENT"));
     setShowEditor(true);
     setError(null);
     setMessage(null);
@@ -339,21 +327,25 @@ export function ModelsView({
     }
   };
 
-  const refresh = async () => {
+  const refresh = async (options: { silent?: boolean } = {}) => {
     if (!refreshConnection) {
       setError("Exactly one healthy inference connection is required to refresh.");
       return;
     }
     setBusy(true);
-    setError(null);
-    setMessage(null);
+    if (!options.silent) {
+      setError(null);
+      setMessage(null);
+    }
     try {
       const result = await refreshConnectionModels(refreshConnection.id);
       setObservations(result.items);
       setRefreshedAt(result.refreshedAt);
       if (result.backfill) setModels((current) => [result.backfill!, ...current.filter(({ id }) => id !== result.backfill!.id)]);
-      else await load();
-      setMessage(`Refreshed ${result.upserted} observed model${result.upserted === 1 ? "" : "s"}.`);
+      else if (!options.silent) await load();
+      if (!options.silent) {
+        setMessage(`Refreshed ${result.upserted} observed model${result.upserted === 1 ? "" : "s"}.`);
+      }
     } catch (refreshError) {
       if (refreshError instanceof OrcaSynapseApiError && refreshError.status === 401) onSessionExpired();
       else setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh the model catalogue.");
@@ -361,6 +353,20 @@ export function ModelsView({
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      await load();
+      if (cancelled || !refreshConnection) return;
+      if (!can("models:manage") && !can("connections:test")) return;
+      await refresh({ silent: true });
+    };
+    void run();
+    return () => { cancelled = true; };
+    // Catalogue identity is the unique healthy inference connection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, refreshConnection?.id]);
 
   if (!unlocked) {
     return <LockedScreen
@@ -379,6 +385,9 @@ export function ModelsView({
     return item.alias.toLowerCase().includes(query)
       || (item.displayName ?? "").toLowerCase().includes(query);
   });
+  const openRouter = isOpenRouterEndpoint(refreshConnection?.baseUrl);
+  const admitChoices = observations.filter((item) => !item.missingFromUpstream);
+  const selectedObservation = admitChoices.find((item) => item.alias === draft.modelAlias) ?? null;
 
   return <div className="workspace-stack models-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
     <WorkspaceIntro
@@ -390,7 +399,11 @@ export function ModelsView({
           </Button>
         ) : undefined}
     >
-      <p className="mb-0 text-body text-muted">What this deployment is allowed to send Hermes.</p>
+      <p className="mb-0 text-body text-muted">
+        {openRouter
+          ? "What this deployment is allowed to send Hermes. The live OpenRouter catalogue is fetched on this screen; Admit fills the route from that payload."
+          : "What this deployment is allowed to send Hermes. The live catalogue is fetched from the connected inference server; Admit fills the route from that payload."}
+      </p>
       <div className="flex flex-wrap items-center gap-2">
         {refreshConnection ? (
           <StatusText dot tone={toneFor("healthy")}>{refreshConnection.displayName}</StatusText>
@@ -416,24 +429,49 @@ export function ModelsView({
             <p className="mb-0 mt-1.5 text-body text-muted">
               {editing
                 ? "Active routes must be suspended before editing."
-                : "New routes remain draft until they are activated. Limits stay empty unless the endpoint published them."}
+                : "New routes remain draft until they are activated. Name, alias, and limits come from the live catalogue; edit only if you need to override them."}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto" data-testid="route-editor-body">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {!editing && admitChoices.length > 0 ? (
+            <Field label="Served model" className="sm:col-span-2 lg:col-span-3">
+              <Select
+                aria-label="Served model"
+                value={draft.modelAlias}
+                onChange={(event) => {
+                  const observation = admitChoices.find((item) => item.alias === event.target.value);
+                  if (observation) setDraft(draftFromObservation(observation, draft.workload));
+                }}
+              >
+                {admitChoices.map((item) => (
+                  <option key={item.id} value={item.alias}>
+                    {item.displayName ? `${item.displayName} (${item.alias})` : item.alias}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : null}
           <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
           <Field label="Slug"><Input value={draft.slug} required disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })} onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))} /></Field>
           <Field label="Workload"><Select value={draft.workload} disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, workload: event.target.value as ModelWorkload })}><option value="CHAT">Chat</option><option value="AGENT">Hermes agent</option></Select></Field>
           <Field label="Serving connection"><Select value={draft.connectionId} required onChange={(event) => setDraft({ ...draft, connectionId: event.target.value })}><option value="">Select a connection</option>{eligibleConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName} - {connection.kind}</option>)}</Select></Field>
-          <Field label="Model alias"><Input value={draft.modelAlias} required onChange={(event) => setDraft({ ...draft, modelAlias: event.target.value })} /></Field>
+          {editing ? (
+            <Field label="Model alias"><Input value={draft.modelAlias} required onChange={(event) => setDraft({ ...draft, modelAlias: event.target.value })} /></Field>
+          ) : null}
           <Field label="Immutable version"><Input value={draft.version} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></Field>
           <Field label="Context window"><Input type="number" min={1024} max={4194304} value={draft.contextWindowTokens} required onChange={(event) => setDraft({ ...draft, contextWindowTokens: parseLimitInput(event.target.value) })} /></Field>
           <Field label="Maximum output"><Input type="number" min={64} max={131072} value={draft.maxOutputTokens} required onChange={(event) => setDraft({ ...draft, maxOutputTokens: parseLimitInput(event.target.value) })} /></Field>
           <Field label="Concurrency limit"><Input type="number" min={1} max={1024} value={draft.maxConcurrentRequests} required onChange={(event) => setDraft({ ...draft, maxConcurrentRequests: Number(event.target.value) })} /></Field>
           <Field label="License / approval"><Input value={draft.license ?? ""} placeholder="Optional approved license reference" onChange={(event) => setDraft({ ...draft, license: event.target.value.trim() || null })} /></Field>
         </div>
+        {!editing && selectedObservation && usedFallbackLimits(selectedObservation) ? (
+          <p className="mb-0 mt-3 text-caption leading-relaxed text-muted">
+            This endpoint did not publish both limits. Context and maximum output are filled with safe defaults you can edit.
+          </p>
+        ) : null}
         </div>
         <Button variant="primary" type="submit" className="mt-4 shrink-0" disabled={busy || editing?.status === "ACTIVE" || eligibleConnections.length === 0}>
           {busy ? "Saving..." : editing ? "Save new revision" : "Create draft route"}
@@ -453,7 +491,7 @@ export function ModelsView({
           title="Refresh from the connected inference server"
           action={canManage && refreshConnection ? <Button variant="primary" onClick={() => void refresh()}>Refresh from endpoint</Button> : undefined}
         >
-          Observed ids, modalities and limits come from the last refresh. Admit a row to create a draft route.
+          Observed ids, modalities and limits come from the connected endpoint. Admit a row to fill a draft route from that payload.
         </EmptyState>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto" role="table" aria-label="Observed models">

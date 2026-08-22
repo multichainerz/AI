@@ -113,7 +113,7 @@ vi.mock("./api.js", async () => {
 });
 
 const { ModelsView } = await import("./models-view.js");
-const { OrcaSynapseApiError } = await import("./api.js");
+const { OrcaSynapseApiError, refreshConnectionModels } = await import("./api.js");
 
 async function view() {
   render(
@@ -150,6 +150,7 @@ afterEach(() => {
   updateModelDeployment.mockReset();
   changeModelDeploymentState.mockReset();
   createModelDeployment.mockReset();
+  vi.mocked(refreshConnectionModels).mockClear();
 });
 
 describe("a route another operator moved first", () => {
@@ -345,7 +346,12 @@ describe("models catalogue", () => {
     expect(screen.getAllByRole("button", { name: "Refresh from endpoint" }).length).toBeGreaterThan(0);
   });
 
-  it("does not prefill Laguna dummy limits when observed capabilities are unknown", async () => {
+  it("fetches the live catalogue from the connected endpoint when the screen opens", async () => {
+    await view();
+    expect(refreshConnectionModels).toHaveBeenCalled();
+  });
+
+  it("fills safe limits when the endpoint did not publish them, and says so", async () => {
     observed = [sampleObservation];
     catalogue = [];
     render(
@@ -360,10 +366,65 @@ describe("models catalogue", () => {
     );
     await waitFor(() => screen.getByText("local-qwen"));
     fireEvent.click(screen.getByRole("button", { name: "Admit" }));
-    expect(screen.getByLabelText(/^Context window/)).toHaveProperty("value", "");
-    expect(screen.getByLabelText(/^Maximum output/)).toHaveProperty("value", "");
-    expect(screen.getByLabelText(/^Context window/)).not.toHaveProperty("value", "131072");
-    expect(screen.getByLabelText(/^Maximum output/)).not.toHaveProperty("value", "8192");
+    expect(screen.getByLabelText(/^Context window/)).toHaveProperty("value", "131072");
+    expect(screen.getByLabelText(/^Maximum output/)).toHaveProperty("value", "8192");
+    expect(screen.getByText(/did not publish both limits/i)).toBeTruthy();
+  });
+
+  it("uses observed limits when the endpoint published them", async () => {
+    observed = [{
+      ...sampleObservation,
+      observedContextWindowTokens: 200_000,
+      observedMaxOutputTokens: 8_192,
+    }];
+    catalogue = [];
+    render(
+      <main>
+        <ModelsView
+          session={session}
+          connections={connections}
+          onConfigureConnections={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    await waitFor(() => screen.getByText("local-qwen"));
+    fireEvent.click(screen.getByRole("button", { name: "Admit" }));
+    expect(screen.getByLabelText(/^Context window/)).toHaveProperty("value", "200000");
+    expect(screen.getByLabelText(/^Maximum output/)).toHaveProperty("value", "8192");
+    expect(screen.queryByText(/did not publish both limits/i)).toBeNull();
+  });
+
+  it("refills the admit form from another catalogue id", async () => {
+    observed = [
+      sampleObservation,
+      {
+        ...sampleObservation,
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        alias: "other-model",
+        displayName: "Other model",
+        observedContextWindowTokens: 32_768,
+        observedMaxOutputTokens: 2_048,
+      },
+    ];
+    catalogue = [];
+    render(
+      <main>
+        <ModelsView
+          session={session}
+          connections={connections}
+          onConfigureConnections={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    await waitFor(() => screen.getByText("local-qwen"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Admit" })[0]!);
+    expect(screen.getByLabelText(/^Display name/)).toHaveProperty("value", "Local Qwen");
+    fireEvent.change(screen.getByLabelText("Served model"), { target: { value: "other-model" } });
+    expect(screen.getByLabelText(/^Display name/)).toHaveProperty("value", "Other model");
+    expect(screen.getByLabelText(/^Context window/)).toHaveProperty("value", "32768");
+    expect(screen.getByLabelText(/^Maximum output/)).toHaveProperty("value", "2048");
   });
 
   it("marks an active route Degraded when it disappeared from upstream", async () => {

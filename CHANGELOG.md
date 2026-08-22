@@ -5,6 +5,15 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.8.2 — 2026-08-22
+
+Fills a new model route from the live inference catalogue so operators do not type alias and limits by hand.
+
+### Changes
+
+- fetch the OpenRouter or local `/v1/models` catalogue when Gateway → Models opens
+- fill Admit from that payload, with safe limits when the endpoint omitted them
+
 ## v9.8.1 — 2026-08-22
 
 Keeps a fresh local-admin session on Setup until the agent runtime is online, and advances the wizard after a green inference check.
