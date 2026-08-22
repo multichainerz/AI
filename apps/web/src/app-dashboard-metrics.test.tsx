@@ -21,7 +21,10 @@ import type {
   AgentRuntimeControl,
   ChatMetrics,
   ConnectionMonitoringControl,
+  HermesRuntimeNode,
+  ModelDeployment,
   PlatformMeta,
+  ServiceConnectionSummary,
   ToolMetrics,
 } from "@orcasynapse/contracts";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -40,6 +43,8 @@ const api = vi.hoisted(() => ({
   getAgentRuntime: vi.fn(),
   getAgentProfiles: vi.fn(),
   getHermesRuntimeNodes: vi.fn(),
+  getModelDeployments: vi.fn(),
+  getOnboardingSnapshot: vi.fn(),
   getGatewayUsage: vi.fn(),
   getAgentRuns: vi.fn(),
   getOperationalIncidents: vi.fn(),
@@ -108,7 +113,17 @@ beforeEach(() => {
   for (const mock of Object.values(api)) mock.mockReset();
   api.getPlatformMeta.mockResolvedValue({ bootstrapState: "READY", version: "5.1.0" } as PlatformMeta);
   api.getEnterpriseSession.mockRejectedValue(new Error("no enterprise session"));
-  api.getConnections.mockResolvedValue({ items: [] });
+  /*
+   * These cases are about Dashboard figures, not first-run Setup. An empty
+   * fleet now locks the shell to Setup, so the fixtures already have a runtime
+   * that makes step 3 current and returns the full rail.
+   */
+  api.getConnections.mockResolvedValue({
+    items: [
+      { id: "inference-connection", kind: "INFERENCE", enabled: true, status: "HEALTHY" },
+      { id: "hermes-connection", kind: "HERMES", enabled: true, status: "HEALTHY" },
+    ] as ServiceConnectionSummary[],
+  });
   api.getConnectionMonitoring.mockResolvedValue({
     enabled: true, intervalSeconds: 300, reason: null, updatedAt: "2026-08-15T00:00:00.000Z", updatedBy: null,
   } as ConnectionMonitoringControl);
@@ -117,7 +132,23 @@ beforeEach(() => {
   api.getToolMetrics.mockResolvedValue(toolMetrics(8_431));
   api.getAgentRuntime.mockResolvedValue({ enabled: false } as AgentRuntimeControl);
   api.getAgentProfiles.mockResolvedValue({ items: [] });
-  api.getHermesRuntimeNodes.mockResolvedValue({ items: [] });
+  api.getHermesRuntimeNodes.mockResolvedValue({
+    items: [{
+      status: "ONLINE",
+      revokedAt: null,
+      lastSeenAt: new Date().toISOString(),
+      enrolledAt: "2026-08-15T00:00:00.000Z",
+    } as HermesRuntimeNode],
+  });
+  api.getModelDeployments.mockResolvedValue({
+    items: [{
+      workload: "AGENT",
+      status: "ACTIVE",
+      isDefault: true,
+      connection: { id: "inference-connection" },
+    } as ModelDeployment],
+  });
+  api.getOnboardingSnapshot.mockResolvedValue({ architecture: { targetEnvironment: "DEVELOPMENT" } });
   // The Dashboard's own reads, pending on purpose: these cases are about the
   // three metric scalars the shell wires, not the panels HomeView fetches.
   api.getGatewayUsage.mockReturnValue(new Promise(() => undefined));

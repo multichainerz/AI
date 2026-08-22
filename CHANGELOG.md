@@ -5,6 +5,16 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.8.1 — 2026-08-22
+
+Keeps a fresh local-admin session on Setup until the agent runtime is online, and advances the wizard after a green inference check.
+
+### Changes
+
+- lock the rail to Setup after first-run admin login until step 3 is current
+- move Setup from step 1 to step 2 when inference becomes healthy
+- restore the full rail once VM2 is online and Hermes is healthy
+
 ## v9.8.0 — 2026-08-22
 
 Lets an operator pick the first default Agent model on Setup step 2, so the VM2 installer can be generated without leaving the wizard.

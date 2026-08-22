@@ -18,7 +18,7 @@ import {
   getOnboardingSnapshot,
   runOnboardingValidation,
 } from "./api.js";
-import { deriveWorkspaceReadiness } from "./platform-readiness.js";
+import { deriveInferenceReadiness, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import {
   DEFAULT_HERMES_COMMIT,
   RuntimeNodesPanel,
@@ -134,9 +134,29 @@ export function OnboardingView({
   // run wrote stored values back into fields an operator was typing into. The
   // route effect above carries a disable for the same hazard.
   const latestOnSessionExpired = useRef(onSessionExpired);
+  const latestOnSelectStep = useRef(onSelectStep);
   useEffect(() => {
     latestOnSessionExpired.current = onSessionExpired;
-  }, [onSessionExpired]);
+    latestOnSelectStep.current = onSelectStep;
+  }, [onSelectStep, onSessionExpired]);
+
+  /*
+   * Step 1 → 2 without a click. Save and Test both refresh `connections`;
+   * this watches the step becoming done rather than which button caused it.
+   *
+   * `null` means "not yet observed", so a visit to an already-done step 1
+   * does not count as the transition.
+   */
+  const inferenceDone = deriveInferenceReadiness(connections).healthy.length > 0;
+  const inferenceWasDone = useRef<boolean | null>(null);
+  useEffect(() => {
+    const viewingInference = openStep === "inference" || (openStep === null && !inferenceDone);
+    if (inferenceWasDone.current === false && inferenceDone && viewingInference) {
+      setOpenStep("runtime");
+      latestOnSelectStep.current?.("runtime");
+    }
+    inferenceWasDone.current = inferenceDone;
+  }, [inferenceDone, openStep]);
 
   useEffect(() => {
     if (!unlocked) {

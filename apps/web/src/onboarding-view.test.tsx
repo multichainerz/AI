@@ -381,6 +381,29 @@ describe("the setup wizard", () => {
     }
   });
 
+  it("moves to step 2 when inference becomes healthy while the operator is on step 1", async () => {
+    const onSelectStep = vi.fn();
+    const view = render(<OnboardingView {...props({ onSelectStep, initialStep: "inference" })} />);
+    await waitFor(() => expect(api.getOnboardingSnapshot).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByRole("region", { name: "Step 1: Connect an inference server" })).toBeTruthy();
+
+    view.rerender(<OnboardingView {...props({
+      onSelectStep,
+      initialStep: "inference",
+      connections: [connection("INFERENCE", "http://vllm.internal:8000")],
+    })} />);
+    await waitFor(() => expect(screen.getByRole("region", { name: "Step 2: Install the agent runtime" })).toBeTruthy());
+    expect(onSelectStep).toHaveBeenCalledWith("runtime");
+  });
+
+  it("does not leave step 1 when that step was already done", async () => {
+    const onSelectStep = vi.fn();
+    await open({ ...inferenceDone, initialStep: "inference", onSelectStep });
+    expect(screen.getByRole("region", { name: "Step 1: Connect an inference server" })).toBeTruthy();
+    expect(onSelectStep).not.toHaveBeenCalledWith("runtime");
+  });
+
   it("picks the default Agent on step 2 so Generate does not require leaving Setup", async () => {
     const user = userEvent.setup();
     const free = {

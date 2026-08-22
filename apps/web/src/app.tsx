@@ -70,6 +70,7 @@ import { FrontPage } from "./front-page.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
 import { DotGridField } from "./dot-grid-field.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
+import { setupLockActive, setupLockStep, viewAllowedDuringSetupLock } from "./setup-lock.js";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ui/theme-toggle.js";
@@ -475,8 +476,11 @@ function App() {
   // be `deploymentInitialTab` here, which is why Back from the nodes panel left
   // Settings and a reload mid-enrolment returned to the overview.
   const [setupStep, setSetupStep] = useState<SetupStepKey | null>(() => setupStepFromHash(window.location.hash));
+  const [workspaceHydrated, setWorkspaceHydrated] = useState(false);
   const sessionGeneration = useRef(0);
   const activeNavigationItem = useRef<HTMLButtonElement | null>(null);
+  const setupLockedRef = useRef(false);
+  const setupLockStepRef = useRef<SetupStepKey>("inference");
 
   /*
    * The session probes often complete quickly enough that the old lone mark
@@ -503,8 +507,18 @@ function App() {
 
   useEffect(() => {
     const synchronizeRoute = () => {
-      setActiveView(viewFromHash(window.location.hash));
-      setSetupStep(setupStepFromHash(window.location.hash));
+      let view = viewFromHash(window.location.hash);
+      let step = setupStepFromHash(window.location.hash);
+      if (setupLockedRef.current && !viewAllowedDuringSetupLock(view)) {
+        view = "Deployment";
+        step = setupLockStepRef.current;
+        const target = `${window.location.pathname}${pathForView(view, step)}`;
+        if (`${window.location.pathname}${window.location.hash}` !== target) {
+          window.history.replaceState(null, "", target);
+        }
+      }
+      setActiveView(view);
+      setSetupStep(view === "Deployment" ? step : null);
     };
     window.addEventListener("hashchange", synchronizeRoute);
     return () => window.removeEventListener("hashchange", synchronizeRoute);
@@ -700,6 +714,7 @@ function App() {
 
   useEffect(() => {
     if (!unlocked) {
+      setWorkspaceHydrated(false);
       setAgentRuntime(null);
       setAgentProfiles([]);
       setRuntimeNodes([]);
@@ -744,6 +759,8 @@ function App() {
       } catch {
         // Individual workspaces surface actionable errors. This background
         // reconciler must never sign the operator out because of a transient VM2 gap.
+      } finally {
+        if (active) setWorkspaceHydrated(true);
       }
     };
     void refresh();
@@ -758,6 +775,9 @@ function App() {
     runtime: agentRuntime,
     modelDeployments,
   });
+  const setupLocked = unlocked && workspaceHydrated && setupLockActive(readiness);
+  setupLockedRef.current = setupLocked;
+  setupLockStepRef.current = setupLockStep(readiness);
   const healthyConnections = managedConnections.filter(({ enabled, status }) => enabled && status === "HEALTHY").length;
   const inferenceConnection = connectionFor(managedConnections, "INFERENCE");
   const hermesConnection = connectionFor(managedConnections, "HERMES");
@@ -842,6 +862,12 @@ function App() {
       setSettingsError(null);
       setDrawerOpen(false);
       selectView("Deployment", "runtime");
+      return;
+    }
+    if (setupLocked && kind === "INFERENCE") {
+      setSettingsError(null);
+      setDrawerOpen(false);
+      selectView("Deployment", "inference");
       return;
     }
     setDrawerKind(kind);
@@ -1126,6 +1152,10 @@ function App() {
   };
 
   const selectView = (view: ActiveView, step?: SetupStepKey) => {
+    if (setupLockedRef.current && !viewAllowedDuringSetupLock(view)) {
+      view = "Deployment";
+      step = setupLockStepRef.current;
+    }
     setActiveView(view);
     setSetupStep(view === "Deployment" ? step ?? null : null);
 
@@ -1161,12 +1191,25 @@ function App() {
     setToolMetrics(null);
     setManagedConnections([]);
     setModelDeployments([]);
+    setWorkspaceHydrated(false);
     setConnectionMonitoring(null);
     await Promise.allSettled([
       revokeAdministratorSession(),
       revokeEnterpriseSession(),
     ]);
   };
+
+  useEffect(() => {
+    if (!setupLocked) return;
+    if (activeView === "Deployment" && setupStep !== "profile") return;
+    const step = setupLockStep(readiness);
+    setActiveView("Deployment");
+    setSetupStep(step);
+    const target = `${window.location.pathname}${pathForView("Deployment", step)}`;
+    if (`${window.location.pathname}${window.location.hash}` !== target) {
+      window.history.replaceState(null, "", target);
+    }
+  }, [setupLocked, activeView, setupStep, readiness.inferenceReady]);
 
   const activeArea = productAreaForView(activeView);
 
@@ -1353,7 +1396,14 @@ function App() {
             * the rows are unmounted rather than hidden so a folded group is
             * skipped by tab order and by a screen reader alike.
             */}
-          {primaryNavigationGroups
+          {setupLocked ? (
+            <div className="nav-group">
+              {primaryNavigationGroups
+                .flatMap((group) => group.items)
+                .filter((item) => item.area === "Settings")
+                .map(renderNavigationRow)}
+            </div>
+          ) : primaryNavigationGroups
             .filter((group) => group.placement === "top")
             .map((group) => {
               if (!group.collapsible) {
@@ -1464,7 +1514,7 @@ function App() {
       >
         <div className="mobile-brand"><BrandMark size={26} /><strong>OrcaSynapse</strong></div>
         <WorkspaceHeader area={activeArea} operator={operator} onSignOut={() => void signOut()} immersive={activeView === "Overview"}>
-          {activeView !== "Chat" && activeView !== "Overview" && (
+          {activeView !== "Chat" && activeView !== "Overview" && !setupLocked && (
             <WorkspaceContextBar area={activeArea} activeView={activeView} onSelect={selectView} />
           )}
         </WorkspaceHeader>
