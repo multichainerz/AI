@@ -58,6 +58,22 @@ describe("CSP safety", () => {
   });
 });
 
+describe("Select", () => {
+  it("clips a long option list to one closed row", () => {
+    // appearance-none plus hundreds of options sizes the closed control to
+    // its min-content height on several engines. The native popup is a
+    // separate layer; this is the in-page box.
+    const html = markup(
+      <Select>
+        {Array.from({ length: 40 }, (_, index) => <option key={index}>model-{index}</option>)}
+      </Select>,
+    );
+    expect(html).toContain("max-h-9");
+    expect(html).toContain("overflow-hidden");
+    expect(html).not.toMatch(/\sstyle=/);
+  });
+});
+
 describe("Button", () => {
   it("defaults to type=button so it cannot submit a form it merely sits inside", () => {
     expect(markup(<Button>Cancel</Button>)).toContain('type="button"');

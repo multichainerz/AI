@@ -8,7 +8,7 @@ import type {
   ServiceConnectionSummary,
 } from "@orcasynapse/contracts";
 import { Boxes } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Switch } from "@/components/ui/switch";
 import {
   OrcaSynapseApiError,
@@ -144,6 +144,82 @@ function parseLimitInput(value: string): LimitValue {
   if (value.trim() === "") return "";
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : "";
+}
+
+function observationLabel(item: ModelObservation): string {
+  return item.displayName ? `${item.displayName} (${item.alias})` : item.alias;
+}
+
+/**
+ * OpenRouter lists hundreds of ids. A native `<select>` of that size paints as
+ * an in-page listbox — `appearance-none` plus the option min-content height —
+ * and the workspace lock (`overflow: hidden` from 761px) crops the admitted
+ * route cards underneath. The list is capped; the filter is how you find an
+ * id, not scrolling the page.
+ */
+function ServedModelPicker({
+  items,
+  value,
+  onSelect,
+}: {
+  items: ModelObservation[];
+  value: string;
+  onSelect: (observation: ModelObservation) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const selectedRef = useRef<HTMLButtonElement>(null);
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return items;
+    return items.filter((item) =>
+      item.alias.toLowerCase().includes(needle)
+      || (item.displayName ?? "").toLowerCase().includes(needle)
+    );
+  }, [items, query]);
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [value, visible]);
+
+  return (
+    <div className="grid gap-1.5 sm:col-span-2 lg:col-span-3">
+      <span className="text-micro font-semibold uppercase tabular-nums text-faint">Served model</span>
+      <Input
+        value={query}
+        placeholder="Filter by alias or name"
+        aria-label="Filter served models"
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <ul
+        role="listbox"
+        aria-label="Served model"
+        className="m-0 max-h-48 list-none overflow-y-auto overscroll-contain rounded-md border border-input p-1"
+      >
+        {visible.length === 0 ? (
+          <li className="px-2 py-1.5 text-caption text-muted">No models match the filter.</li>
+        ) : visible.map((item) => {
+          const selected = item.alias === value;
+          return (
+            <li key={item.id} role="none">
+              <button
+                type="button"
+                role="option"
+                aria-selected={selected}
+                ref={selected ? selectedRef : undefined}
+                className={cn(
+                  "flex w-full min-w-0 rounded px-2 py-1.5 text-left text-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  selected ? "bg-soft font-medium text-text" : "text-muted hover:bg-raised hover:text-text",
+                )}
+                onClick={() => onSelect(item)}
+              >
+                <span className="min-w-0 truncate">{observationLabel(item)}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 export function ModelsView({
@@ -419,7 +495,7 @@ export function ModelsView({
     {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
     {message && <Alert className="shrink-0" tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
 
-    {showEditor && <Panel className="flex min-h-0 flex-col">
+    {showEditor && <Panel className="flex min-h-0 flex-col overflow-hidden">
       <form className="flex min-h-0 flex-col" onSubmit={(event) => void save(event)}>
         <header className="mb-4 flex shrink-0 items-start justify-between gap-6">
           <div className="min-w-0">
@@ -437,22 +513,11 @@ export function ModelsView({
         <div className="min-h-0 flex-1 overflow-y-auto" data-testid="route-editor-body">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {!editing && admitChoices.length > 0 ? (
-            <Field label="Served model" className="sm:col-span-2 lg:col-span-3">
-              <Select
-                aria-label="Served model"
-                value={draft.modelAlias}
-                onChange={(event) => {
-                  const observation = admitChoices.find((item) => item.alias === event.target.value);
-                  if (observation) setDraft(draftFromObservation(observation, draft.workload));
-                }}
-              >
-                {admitChoices.map((item) => (
-                  <option key={item.id} value={item.alias}>
-                    {item.displayName ? `${item.displayName} (${item.alias})` : item.alias}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            <ServedModelPicker
+              items={admitChoices}
+              value={draft.modelAlias}
+              onSelect={(observation) => setDraft(draftFromObservation(observation, draft.workload))}
+            />
           ) : null}
           <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
           <Field label="Slug"><Input value={draft.slug} required disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })} onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))} /></Field>
@@ -479,8 +544,8 @@ export function ModelsView({
       </form>
     </Panel>}
 
-    <Panel className="flex min-h-0 flex-col">
-      <header className="mb-3 flex flex-wrap items-center justify-between gap-3">
+    <Panel className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <header className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Observed catalogue</h2>
         <Field label="Filter" className="min-w-[16rem]">
           <Input value={filter} placeholder="Alias or name" onChange={(event) => setFilter(event.target.value)} />
@@ -533,7 +598,7 @@ export function ModelsView({
       )}
     </Panel>
 
-    <section className="grid min-h-0 content-start items-start gap-3 overflow-y-auto lg:grid-cols-2" aria-label="Configured model routes">
+    <section className="grid shrink-0 content-start items-start gap-3 lg:grid-cols-2" aria-label="Configured model routes">
       {models.length === 0 && observations.length > 0 && (
         <EmptyState className="lg:col-span-2" title="No admitted routes yet">
           Admit an observed id from the catalogue.

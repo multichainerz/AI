@@ -115,6 +115,8 @@ vi.mock("./api.js", async () => {
 const { ModelsView } = await import("./models-view.js");
 const { OrcaSynapseApiError, refreshConnectionModels } = await import("./api.js");
 
+Element.prototype.scrollIntoView = () => undefined;
+
 async function view() {
   render(
     <main>
@@ -421,7 +423,7 @@ describe("models catalogue", () => {
     await waitFor(() => screen.getByText("local-qwen"));
     fireEvent.click(screen.getAllByRole("button", { name: "Admit" })[0]!);
     expect(screen.getByLabelText(/^Display name/)).toHaveProperty("value", "Local Qwen");
-    fireEvent.change(screen.getByLabelText("Served model"), { target: { value: "other-model" } });
+    fireEvent.click(screen.getByRole("option", { name: "Other model (other-model)" }));
     expect(screen.getByLabelText(/^Display name/)).toHaveProperty("value", "Other model");
     expect(screen.getByLabelText(/^Context window/)).toHaveProperty("value", "32768");
     expect(screen.getByLabelText(/^Maximum output/)).toHaveProperty("value", "2048");
@@ -431,5 +433,78 @@ describe("models catalogue", () => {
     catalogue = [model({ missingFromUpstream: true })];
     await view();
     expect(screen.getByText("Degraded")).toBeTruthy();
+  });
+
+  it("caps the served-model list so a long catalogue cannot crop admitted routes", async () => {
+    /*
+     * OpenRouter's live catalogue is hundreds of ids. A native <select> of
+     * that size paints as an in-page listbox on the viewport-locked workspace
+     * and the active route cards underneath are the thing that disappear.
+     * jsdom has no layout, so this pins the structure that keeps the list
+     * inside a pane and the admitted cards from shrinking away.
+     */
+    observed = Array.from({ length: 40 }, (_, index) => ({
+      ...sampleObservation,
+      id: `obs-${index}`,
+      alias: `openrouter/model-${index}`,
+      displayName: `Model ${index}`,
+      admittedWorkloads: [],
+    }));
+    render(
+      <main>
+        <ModelsView
+          session={session}
+          connections={connections}
+          onConfigureConnections={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    await waitFor(() => screen.getByText("openrouter/model-0"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Admit" })[0]!);
+
+    const list = screen.getByRole("listbox", { name: "Served model" });
+    expect(list.className).toContain("max-h-48");
+    expect(list.className).toContain("overflow-y-auto");
+    expect(list.querySelectorAll('[role="option"]')).toHaveLength(40);
+    expect(screen.getByRole("option", { name: "Model 0 (openrouter/model-0)" }).getAttribute("aria-selected")).toBe("true");
+
+    const catalogue = screen.getByRole("heading", { name: "Observed catalogue" }).closest("section");
+    expect(catalogue?.className).toContain("flex-1");
+    expect(catalogue?.className).toContain("min-h-0");
+    expect(catalogue?.className).toContain("overflow-hidden");
+
+    expect(screen.getByRole("region", { name: "Configured model routes" }).className).toContain("shrink-0");
+    expect(screen.getByText("Laguna Hermes")).toBeTruthy();
+  });
+
+  it("filters the served-model list without dumping every id into a native select", async () => {
+    observed = [
+      sampleObservation,
+      {
+        ...sampleObservation,
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        alias: "openrouter/other",
+        displayName: "Other model",
+      },
+    ];
+    catalogue = [];
+    render(
+      <main>
+        <ModelsView
+          session={session}
+          connections={connections}
+          onConfigureConnections={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    await waitFor(() => screen.getByText("local-qwen"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Admit" })[0]!);
+
+    expect(screen.queryByRole("combobox", { name: "Served model" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Filter served models"), { target: { value: "other" } });
+    expect(screen.queryByRole("option", { name: /local-qwen/ })).toBeNull();
+    expect(screen.getByRole("option", { name: "Other model (openrouter/other)" })).toBeTruthy();
   });
 });

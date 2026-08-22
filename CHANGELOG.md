@@ -5,6 +5,16 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.8.3 — 2026-08-22
+
+Stops an OpenRouter catalogue from painting the served-model picker as a full-height listbox and cropping admitted routes.
+
+### Changes
+
+- cap the Admit served-model list and filter it, instead of a native select of every observed id
+- give the observed catalogue the leftover canvas and keep admitted route cards from shrinking away
+- lock native selects to one closed row so a long option list cannot expand in-page
+
 ## v9.8.2 — 2026-08-22
 
 Fills a new model route from the live inference catalogue so operators do not type alias and limits by hand.
