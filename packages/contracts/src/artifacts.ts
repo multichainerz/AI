@@ -24,6 +24,47 @@ export const CHAT_ARTIFACT_INLINE_LIMIT_BYTES = 4 * 1024 * 1024;
 /** ceil(limit / 3) * 4: the base64 spelling of exactly the inline limit. */
 export const CHAT_ARTIFACT_CONTENT_BASE64_MAX = 5_592_408;
 
+const INJECTABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+export function normalizeMediaType(mediaType: string): string {
+  const trimmed = mediaType.trim().toLowerCase();
+  // JavaScript `split(sep, limit)` caps the *returned array length*.
+  // `split(";", 1)` is therefore the whole string, not the type without
+  // parameters. Python `split(";", 1)` is the other convention. Cut with
+  // `split(";")[0]` or `indexOf(";")`.
+  const base = (trimmed.split(";")[0] ?? trimmed).trim();
+  return base === "image/jpg" ? "image/jpeg" : base;
+}
+
+export function injectableImageMediaType(
+  mediaType: string,
+): "image/png" | "image/jpeg" | "image/gif" | "image/webp" | null {
+  const normalized = normalizeMediaType(mediaType);
+  return (INJECTABLE_IMAGE_TYPES.has(normalized) ? normalized : null) as
+    "image/png" | "image/jpeg" | "image/gif" | "image/webp" | null;
+}
+
+const INJECTABLE_TEXT_TYPES = new Set([
+  "text/plain",
+  "text/markdown",
+  "text/x-markdown",
+  "text/csv",
+  "text/tab-separated-values",
+  "application/json",
+  "application/ld+json",
+]);
+const INJECTABLE_TEXT_EXTENSIONS = new Set(["txt", "md", "markdown", "csv", "tsv", "json"]);
+
+/** Media-type (or octet-stream + extension) that *may* be inlined as text. Bytes still have to decode. */
+export function injectableTextMediaType(mediaType: string, name: string): boolean {
+  const normalized = normalizeMediaType(mediaType);
+  if (INJECTABLE_TEXT_TYPES.has(normalized)) return true;
+  if (normalized !== "application/octet-stream") return false;
+  const dot = name.lastIndexOf(".");
+  if (dot < 0 || dot === name.length - 1) return false;
+  return INJECTABLE_TEXT_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
+
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 /**
  * Signed node payloads carry no JSON numbers (the canonicalizers disagree on

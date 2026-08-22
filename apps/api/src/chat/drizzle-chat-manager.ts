@@ -34,7 +34,8 @@ import {
   chatFeedback,
   chatMessage,
   chatSchedule,
-  guardrailPolicy,
+  DEFAULT_RUNTIME_TEXT_POLICY,
+  resolveRuntimeTextPolicy,
   type ChatRunWakeHub,
   type ChatRunWatch,
   type OrcaSynapseDatabase,
@@ -1631,45 +1632,29 @@ export class DrizzleChatManager implements ChatManager {
   }
 
   private async resolvePolicy(): Promise<ChatPolicy> {
-    /*
-     * The latch is "a policy has been authored", not "a policy was ever
-     * activated". It used to be the latter, and the gap between the two was a
-     * silent one: an operator who created a policy and its rules but never
-     * pressed Activate got a success toast, a configured-looking screen, and a
-     * chat that enforced nothing -- with no error anywhere saying so. Counting
-     * every row keeps a fresh install (zero policies) permissive while making
-     * an authored-but-inactive catalogue refuse with instructions instead of
-     * quietly waving everything through.
-     */
-    const [enforcement] = await this.database
-      .select({ total: count() })
-      .from(guardrailPolicy);
-    const catalogueEnforced = (enforcement?.total ?? 0) > 0;
-    const policies = !catalogueEnforced ? [] : await this.database
-      .select({
-        id: guardrailPolicy.id,
-        version: guardrailPolicy.version,
-        maxInputCharacters: guardrailPolicy.maxInputCharacters,
-        maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
-        blockControlCharacters: guardrailPolicy.blockControlCharacters,
-        blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
-        rules: guardrailPolicy.rules,
-      })
-      .from(guardrailPolicy)
-      .where(eq(guardrailPolicy.status, "ACTIVE"))
-      .limit(2);
-    if (catalogueEnforced && policies.length === 0) throw new ChatConfigurationError("Activate one guardrail policy before using Chat.");
-    if (policies.length > 1) throw new ChatConfigurationError("More than one chat guardrail policy is active.");
-    const policy = policies[0];
+    const resolved = await resolveRuntimeTextPolicy(this.database);
+    if (resolved.status === "unresolved") {
+      throw new ChatConfigurationError(resolved.activeCount === 0
+        ? "Activate one guardrail policy before using Chat."
+        : "More than one chat guardrail policy is active.");
+    }
+    if (resolved.status === "default") {
+      return {
+        requestsPerMinute: 12,
+        ...DEFAULT_RUNTIME_TEXT_POLICY,
+        guardrailPolicyId: null,
+        guardrailPolicyVersion: null,
+      };
+    }
     return {
       requestsPerMinute: 12,
-      maxInputCharacters: policy?.maxInputCharacters ?? 128_000,
-      maxOutputCharacters: policy?.maxOutputCharacters ?? 256_000,
-      blockControlCharacters: policy?.blockControlCharacters ?? true,
-      blockCredentialPatterns: policy?.blockCredentialPatterns ?? true,
-      rules: (policy?.rules ?? []) as GuardrailRule[],
-      guardrailPolicyId: policy?.id ?? null,
-      guardrailPolicyVersion: policy?.version ?? null,
+      maxInputCharacters: resolved.policy.maxInputCharacters,
+      maxOutputCharacters: resolved.policy.maxOutputCharacters,
+      blockControlCharacters: resolved.policy.blockControlCharacters,
+      blockCredentialPatterns: resolved.policy.blockCredentialPatterns,
+      rules: resolved.policy.rules,
+      guardrailPolicyId: resolved.policy.id,
+      guardrailPolicyVersion: resolved.policy.version,
     };
   }
 

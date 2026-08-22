@@ -347,6 +347,8 @@ describe("DrizzleChatManager message submission", () => {
   });
 
   it("fails the pending turn when Hermes submission throws", async () => {
+    await seedActiveGuardrail();
+    const [policy] = await context.database.select({ id: guardrailPolicy.id, version: guardrailPolicy.version }).from(guardrailPolicy);
     const conversationId = await conversation();
     const agentManager = agents({
       submitRun: vi.fn(async () => { throw new Error("hermes unreachable"); }) as never,
@@ -360,6 +362,9 @@ describe("DrizzleChatManager message submission", () => {
     const failures = (await context.database.select().from(auditEvent))
       .filter(({ action }) => action === "chat.hermes_run_failed");
     expect(failures).toHaveLength(1);
+    expect(failures[0]?.metadata).toMatchObject({ guardrailPolicyId: policy!.id });
+    expect(failures[0]?.metadata).not.toHaveProperty("policyId");
+    expect(policy!.version).toBe("1");
   });
 
   it("enforces the guardrail input limit and records the block", async () => {
@@ -372,7 +377,13 @@ describe("DrizzleChatManager message submission", () => {
     const blocks = (await context.database.select().from(auditEvent))
       .filter(({ action }) => action === "guardrail.request_blocked");
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]?.metadata).toMatchObject({ reason: "INPUT_CHARACTER_LIMIT", observedCharacters: 101 });
+    expect(blocks[0]?.metadata).toMatchObject({
+      reason: "INPUT_CHARACTER_LIMIT",
+      observedCharacters: 101,
+      policyVersion: "1",
+    });
+    expect(blocks[0]?.metadata).toHaveProperty("policyId");
+    expect(blocks[0]?.metadata).not.toHaveProperty("guardrailPolicyId");
     // Nothing was written to the conversation.
     expect(await context.database.select().from(chatMessage)).toHaveLength(0);
   });
@@ -393,6 +404,9 @@ describe("DrizzleChatManager message submission", () => {
       .filter(({ action }) => action === "guardrail.request_blocked");
     expect(JSON.stringify(block?.metadata)).toContain("Internal codename");
     expect(JSON.stringify(block?.metadata)).not.toContain("seahorse");
+    expect(block?.metadata).toHaveProperty("policyId");
+    expect(block?.metadata).toMatchObject({ policyVersion: "1" });
+    expect(block?.metadata).not.toHaveProperty("guardrailPolicyId");
     expect(await context.database.select().from(chatMessage)).toHaveLength(0);
   });
 
@@ -433,6 +447,11 @@ describe("DrizzleChatManager message submission", () => {
       expect.objectContaining({ input: "about the [redacted] programme" }),
       expect.anything(),
     );
+    const redactions = (await context.database.select().from(auditEvent))
+      .filter(({ action }) => action === "guardrail.request_redacted");
+    expect(redactions[0]?.metadata).toMatchObject({ policyVersion: "1" });
+    expect(redactions[0]?.metadata).toHaveProperty("policyId");
+    expect(redactions[0]?.metadata).not.toHaveProperty("guardrailPolicyId");
   });
 
   it("refuses chat when the catalogue is enforced but no policy is active", async () => {
@@ -598,6 +617,22 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
     // Forking must not disturb the source.
     expect((await manager().get(principal, conversationId)).messages).toHaveLength(2);
     expect(sessions.forkSession).toHaveBeenCalledWith(conversationId, fork.id);
+  });
+
+  it("does not copy source uploads onto the fork conversation", async () => {
+    const conversationId = await completedExchange();
+    await context.database.insert(chatArtifact).values({
+      conversationId, origin: "UPLOADED", ownerSubject: principal.subject,
+      name: "shot.png", path: "shot.png", mediaType: "image/png",
+      sizeBytes: 5, sha256: "0".repeat(64), storage: "INLINE", observedAt: new Date(),
+    });
+    const sessions = nativeSessions();
+
+    const fork = await manager(agents(), NO_CHAT_RUN_WAKE, sessions).fork(principal, conversationId, {} as never);
+
+    const copied = await context.database.select().from(chatArtifact)
+      .where(eq(chatArtifact.conversationId, fork.id));
+    expect(copied).toHaveLength(0);
   });
 
   it("rejects a historical fork point that Hermes cannot represent faithfully", async () => {

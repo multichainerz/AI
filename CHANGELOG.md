@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.1 — 2026-08-22
+
+Presents this-turn Session images and small UTF-8 files on the Hermes POST.
+
+### Upgrade notes
+
+- **The model sees the image on the turn you attach it.** Later turns see
+  `[screenshot]`. Re-attach to show it again. An image on a message that
+  already uses the full input ceiling is skipped (`ceiling`) so later
+  turns do not refuse.
+- Notes, Markdown, CSV, and JSON bound to this turn and under **16,384**
+  UTF-8 bytes ride the Hermes POST as extra text, framed as user material,
+  never as `AgentRun.input`. Combined flatten length stays within the
+  active `maxInputCharacters`; overflow is skip-and-labelled (`ceiling`).
+  A credential or operator-rule BLOCK is skip-and-labelled (`guardrail`).
+- PDF, Word, zip, audio, video, and oversize files stay on Files. There is
+  no session inbox and no `read_file` token in ATTACHED FILES.
+
+### Changes
+
+- inject this-turn PNG/JPEG/GIF/WebP on the Hermes native-session POST as
+  image parts, skip-and-label when persist flatten would exceed the input
+  ceiling or the guardrail catalogue is unresolved, and rewrite ATTACHED
+  FILES so it never names `read_file`
+- inline this-turn small UTF-8 text/markdown/CSV/JSON as extra Hermes text
+  parts, skip-and-label on the combined persist bound, per-excerpt and
+  flattened `inspectInput`, and a closed 16,384-byte cap
+- move `inspectInput` into `@orcasynapse/security` so the worker uses the
+  same detectors as submit and the gateway
+
 ## v9.7.0 — 2026-08-22
 
 Makes Setup step 1 endpoint-only, puts the served model on Gateway → Models,

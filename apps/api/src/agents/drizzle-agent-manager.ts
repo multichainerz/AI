@@ -25,9 +25,10 @@ import {
   auditEvent,
   chatConversation,
   componentCompatibility,
+  DEFAULT_RUNTIME_TEXT_POLICY,
   governedTool,
-  guardrailPolicy,
   hermesRuntimeNode,
+  resolveRuntimeTextPolicy,
   modelDeployment,
   platformArchitectureDecision,
   runtimeToolsetAdmission,
@@ -925,35 +926,19 @@ export class DrizzleAgentManager implements AgentManager {
     blockCredentialPatterns: boolean;
     rules: GuardrailRule[];
   }> {
-    const [enforced] = await this.database
-      .select({ total: sql<number>`count(*)::int` })
-      .from(guardrailPolicy);
-    const catalogueEnforced = (enforced?.total ?? 0) > 0;
-
-    const active = !catalogueEnforced ? [] : await this.database
-      .select({
-        maxInputCharacters: guardrailPolicy.maxInputCharacters,
-        maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
-        blockControlCharacters: guardrailPolicy.blockControlCharacters,
-        blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
-        rules: guardrailPolicy.rules,
-      })
-      .from(guardrailPolicy)
-      .where(eq(guardrailPolicy.status, "ACTIVE"))
-      .limit(2);
-
-    if (catalogueEnforced && active.length !== 1) {
-      throw new AgentConflictError(active.length === 0
+    const resolved = await resolveRuntimeTextPolicy(this.database);
+    if (resolved.status === "unresolved") {
+      throw new AgentConflictError(resolved.activeCount === 0
         ? "Activate one guardrail policy before submitting agent runs."
         : "More than one guardrail policy is active.");
     }
-    const policy = active[0];
+    if (resolved.status === "default") return { ...DEFAULT_RUNTIME_TEXT_POLICY };
     return {
-      maxInputCharacters: policy?.maxInputCharacters ?? 128_000,
-      maxOutputCharacters: policy?.maxOutputCharacters ?? 256_000,
-      blockControlCharacters: policy?.blockControlCharacters ?? true,
-      blockCredentialPatterns: policy?.blockCredentialPatterns ?? true,
-      rules: (policy?.rules ?? []) as GuardrailRule[],
+      maxInputCharacters: resolved.policy.maxInputCharacters,
+      maxOutputCharacters: resolved.policy.maxOutputCharacters,
+      blockControlCharacters: resolved.policy.blockControlCharacters,
+      blockCredentialPatterns: resolved.policy.blockCredentialPatterns,
+      rules: resolved.policy.rules,
     };
   }
 

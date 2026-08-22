@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/security",
-  "version": "9.7.0",
+  "version": "9.7.1",
   "description": "Envelope encryption and credential primitives for OrcaSynapse",
   "license": "BUSL-1.1",
   "private": true,
@@ -17,5 +17,8 @@
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --exclude=dist/**"
+  },
+  "dependencies": {
+    "@orcasynapse/contracts": "workspace:*"
   }
 }

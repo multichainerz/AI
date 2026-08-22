@@ -1,7 +1,7 @@
 import { AGENT_RUN_ENDED_EVENT_TYPE } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient, SAFE_EVENT_TYPES } from "./hermes-client.js";
+import { HermesClient, frameUserFileText, nativeSessionChatBody, persistFlattenedUserText, SAFE_EVENT_TYPES } from "./hermes-client.js";
 
 function resolver(): DrizzleRuntimeConnectionResolver {
   return {
@@ -106,13 +106,16 @@ describe("HermesClient native sessions", () => {
       throw new Error(`Unexpected Hermes request: ${url}`);
     });
     const client = new HermesClient(resolver(), fetcher);
-    const id = await client.start({
+    const submission = {
       input: "New question",
       instructions: "Stay bounded",
       sessionId: "session-1",
       idempotencyKey: "request-1",
       modelAlias: "hermes-agent",
-    });
+    };
+    const id = await client.start(submission);
+    const streamCall = fetcher.mock.calls.find(([input]) => input.toString().endsWith("/api/sessions/session-1/chat/stream"));
+    expect(String(streamCall?.[1]?.body)).toBe(JSON.stringify(nativeSessionChatBody(submission)));
     const events: string[] = [];
     await client.events(id, (event) => { events.push(event.type); }, new AbortController().signal);
     await expect(client.status(id)).resolves.toMatchObject({ status: "completed", output: "Native answer", totalTokens: 14 });
@@ -156,6 +159,55 @@ describe("HermesClient native sessions", () => {
     );
 
     expect(streamed.name).toBe("HermesRunDetachedError");
+  });
+
+  it("posts image parts when images are present and a string message when they are empty", async () => {
+    const withImages = {
+      input: "describe this",
+      instructions: "Stay bounded",
+      sessionId: "session-1",
+      idempotencyKey: "request-2",
+      modelAlias: "hermes-agent",
+      images: [{ mediaType: "image/png" as const, base64: "QUJD" }],
+    };
+    expect(nativeSessionChatBody(withImages)).toEqual({
+      message: [
+        { type: "text", text: "describe this" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+      ],
+      instructions: "Stay bounded",
+      model: "hermes-agent",
+    });
+    expect(nativeSessionChatBody({ ...withImages, images: [] }).message).toBe("describe this");
+    expect(persistFlattenedUserText(withImages)).toBe("describe this\n[screenshot]");
+    expect(persistFlattenedUserText({ ...withImages, images: [] })).toBe("describe this");
+  });
+
+  it("posts framed text excerpts before image parts and keeps an empty pair as a string", () => {
+    const excerpt = { name: "notes.txt", mediaType: "text/plain", text: "hello" };
+    const framed = frameUserFileText("notes.txt", "text/plain", "hello");
+    const withExcerpts = {
+      input: "describe this",
+      instructions: "Stay bounded",
+      sessionId: "session-1",
+      idempotencyKey: "request-3",
+      modelAlias: "hermes-agent",
+      textExcerpts: [excerpt],
+      images: [{ mediaType: "image/png" as const, base64: "QUJD" }],
+    };
+    expect(framed.startsWith("\n")).toBe(false);
+    expect(nativeSessionChatBody(withExcerpts)).toEqual({
+      message: [
+        { type: "text", text: "describe this" },
+        { type: "text", text: framed },
+        { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+      ],
+      instructions: "Stay bounded",
+      model: "hermes-agent",
+    });
+    expect(persistFlattenedUserText(withExcerpts)).toBe(`describe this\n${framed}\n[screenshot]`);
+    expect(persistFlattenedUserText({ ...withExcerpts, images: [] })).toBe(`describe this\n${framed}`);
+    expect(nativeSessionChatBody({ ...withExcerpts, images: [], textExcerpts: [] }).message).toBe("describe this");
   });
 });
 

@@ -7,3 +7,4 @@ export * from "./drizzle/chat-wake.js";
 export * from "./drizzle/channel-listener.js";
 export * from "./drizzle/relations.js";
 export * from "./testing.js";
+export * from "./runtime-text-policy.js";

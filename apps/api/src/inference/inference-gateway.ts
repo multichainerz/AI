@@ -3,9 +3,10 @@ import type { GuardrailRule, InferenceBackend, InferenceGatewayChatRequest } fro
 import { and, eq, gte, lt, notInArray, sql } from "drizzle-orm";
 import {
   auditEvent,
+  DEFAULT_RUNTIME_TEXT_POLICY,
   inferenceGatewayRequest,
-  guardrailPolicy,
   modelDeployment,
+  resolveRuntimeTextPolicy,
   serviceConnection,
   hermesRuntimeNode,
   type OrcaSynapseDatabase,
@@ -31,13 +32,7 @@ import {
  */
 type ResolvedPolicy = RuntimeTextPolicy & { rules: GuardrailRule[] };
 
-const DEFAULT_POLICY: ResolvedPolicy = {
-  maxInputCharacters: 128_000,
-  maxOutputCharacters: 256_000,
-  blockControlCharacters: true,
-  blockCredentialPatterns: true,
-  rules: [],
-};
+const DEFAULT_POLICY: ResolvedPolicy = { ...DEFAULT_RUNTIME_TEXT_POLICY };
 
 export class InferenceGatewayError extends Error {
   constructor(
@@ -286,27 +281,18 @@ export class DrizzleInferenceGateway {
   private async resolvePolicy(): Promise<ResolvedPolicy> {
     // Latched on "a policy has been authored", like chat and agent runs: a
     // catalogue of never-activated drafts must refuse, not silently default.
-    const [enforced] = await this.database
-      .select({ total: sql<number>`count(*)::int` })
-      .from(guardrailPolicy);
-    if ((enforced?.total ?? 0) === 0) return DEFAULT_POLICY;
-
-    const active = await this.database
-      .select({
-        maxInputCharacters: guardrailPolicy.maxInputCharacters,
-        maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
-        blockControlCharacters: guardrailPolicy.blockControlCharacters,
-        blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
-        rules: guardrailPolicy.rules,
-      })
-      .from(guardrailPolicy)
-      .where(eq(guardrailPolicy.status, "ACTIVE"))
-      .limit(2);
-    if (active.length !== 1) {
+    const resolved = await resolveRuntimeTextPolicy(this.database);
+    if (resolved.status === "default") return DEFAULT_POLICY;
+    if (resolved.status === "unresolved") {
       throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one evaluated OrcaSynapse guardrail policy must be active.");
     }
-    const policy = active[0]!;
-    return { ...policy, rules: policy.rules as GuardrailRule[] };
+    return {
+      maxInputCharacters: resolved.policy.maxInputCharacters,
+      maxOutputCharacters: resolved.policy.maxOutputCharacters,
+      blockControlCharacters: resolved.policy.blockControlCharacters,
+      blockCredentialPatterns: resolved.policy.blockCredentialPatterns,
+      rules: resolved.policy.rules,
+    };
   }
 
   private async resolveInference(): Promise<{ connection: ResolvedConnection; modelAlias: string; maxOutputTokens: number; requestsPerMinute: number }> {
