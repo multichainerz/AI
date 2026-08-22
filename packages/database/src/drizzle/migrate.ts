@@ -214,11 +214,11 @@ const LOCAL_PEOPLE_GROUP = "orcasynapse:people";
  *
  * Permissive is also cheap here, because granting these changes no boundary.
  * All are `READ_ONLY`, none acts on the world, and the scope a call reads and
- * writes -- the division for memory, the conversation for attached files --
- * comes from the run authorization rather than the grant, so a wider grant
- * lets more agents use the feature, never lets any agent read another scope's
- * rows. A `CONSEQUENTIAL` tool would be a different decision, and still passes
- * through the human approval inbox at call time regardless.
+ * writes -- the division -- comes from the run authorization rather than the
+ * grant, so a wider grant lets more agents use the feature, never lets any
+ * agent read another scope's rows. A `CONSEQUENTIAL` tool would be a different
+ * decision, and still passes through the human approval inbox at call time
+ * regardless.
  */
 const BUILT_IN_TOOLS = [
   {
@@ -242,33 +242,37 @@ const BUILT_IN_TOOLS = [
       properties: { query: { type: "string", description: "Words to search for. Omit for the most recent." } },
     },
   },
-  {
-    // Underscore, not hyphen: `governedToolSchema` bounds slugs to
-    // /^[a-z][a-z0-9_]{2,79}$/, and this shipped one release as `read-file`,
-    // which made the whole tool list unparseable on the Tools screen.
-    slug: "read_file",
-    displayName: "Read attached file",
-    description: "Read a file the user attached to this conversation. Text comes back in pages; a binary file reports its metadata only.",
-    handlerKey: "orcasynapse.files.read",
-    inputSchema: {
-      type: "object",
-      properties: {
-        artifactId: { type: "string", description: "The file's artifactId." },
-        offset: { type: "number", description: "Character position to continue a long text file from. Omit to start at the beginning." },
-      },
-      required: ["artifactId"],
-    },
-  },
 ] as const;
 
-async function seedBuiltInTools(pool: Pool): Promise<void> {
+async function retireControlPlaneFileRead(pool: Pool): Promise<void> {
   /*
-   * Heals the one release (v9.5.4 through v9.5.9) that seeded this slug with
-   * a hyphen the tooling contract refuses. The rename is safe mid-flight:
-   * grants and calls reference the tool by id, and Hermes rediscovers tools
-   * by slug on every run.
+   * Session uploads now live on the Hermes node inbox. Native `file` tools
+   * read that path. The control-plane pager was unreachable under enrolment
+   * (`no_mcp`) and is no longer named in ATTACHED FILES.
    */
-  await pool.query(`UPDATE "GovernedTool" SET "slug" = 'read_file' WHERE "slug" = 'read-file'`);
+  await pool.query(
+    `DELETE FROM "ToolApproval" WHERE "callId" IN (
+       SELECT c."id" FROM "GovernedToolCall" c
+        JOIN "GovernedTool" t ON t."id" = c."toolId"
+       WHERE t."handlerKey" = 'orcasynapse.files.read' OR t."slug" IN ('read_file', 'read-file'))`,
+  );
+  await pool.query(
+    `DELETE FROM "GovernedToolCall" WHERE "toolId" IN (
+       SELECT "id" FROM "GovernedTool"
+        WHERE "handlerKey" = 'orcasynapse.files.read' OR "slug" IN ('read_file', 'read-file'))`,
+  );
+  await pool.query(
+    `DELETE FROM "AgentToolGrant" WHERE "toolId" IN (
+       SELECT "id" FROM "GovernedTool"
+        WHERE "handlerKey" = 'orcasynapse.files.read' OR "slug" IN ('read_file', 'read-file'))`,
+  );
+  await pool.query(
+    `DELETE FROM "GovernedTool"
+      WHERE "handlerKey" = 'orcasynapse.files.read' OR "slug" IN ('read_file', 'read-file')`,
+  );
+}
+
+async function seedBuiltInTools(pool: Pool): Promise<void> {
   for (const tool of BUILT_IN_TOOLS) {
     await pool.query(
       `INSERT INTO "GovernedTool" ("slug", "displayName", "description", "risk", "status", "handlerKey", "inputSchema", "updatedAt")
@@ -354,9 +358,10 @@ export async function runMigrations(connectionString: string): Promise<void> {
     // has no set, and the seeded profile's version must be one of them.
     await seedDefaultConfigurationSets(pool);
     await seedBuiltInTools(pool);
+    await retireControlPlaneFileRead(pool);
     await pool.query(
-      `INSERT INTO "RuntimeToolsetAdmission" ("toolsetName", "admitted", "reason")
-       VALUES ('file', true, 'The approved baseline, admitted so Session uploads can be edited on the node.')
+      `INSERT INTO "RuntimeToolsetAdmission" ("toolsetName", "admitted", "reason", "createdAt", "updatedAt")
+       VALUES ('file', true, 'The approved baseline, admitted so Session uploads can be edited on the node.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        ON CONFLICT ("toolsetName") DO NOTHING`,
     );
     await pool.query(

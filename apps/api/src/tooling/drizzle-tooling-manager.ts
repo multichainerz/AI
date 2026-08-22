@@ -24,8 +24,6 @@ import {
   agentRun,
   agentToolGrant,
   auditEvent,
-  chatArtifact,
-  chatArtifactContent,
   enterpriseUser,
   enterpriseUserSession,
   governedTool,
@@ -69,17 +67,6 @@ const APPROVAL_POLL_MS = 1_000;
  * in its 5-1440 range.
  */
 const MAXIMUM_INLINE_WAIT_MS = 5 * 60_000;
-
-/**
- * How much of an attached text file one `read_file` call returns.
- *
- * Characters, because the page rides a JSON tool result straight into the
- * model's context window: the 4 MiB upload cap decoded whole would be on the
- * order of a million tokens. Sixty thousand characters is a page a context can
- * afford, and the result carries `nextOffset` so the model can keep reading
- * where a page ended.
- */
-const FILE_READ_PAGE_CHARACTERS = 60_000;
 
 /** The database handle or a transaction opened from it. */
 type Executor = OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
@@ -1242,84 +1229,6 @@ export class DrizzleToolingManager implements ToolingManager {
         .limit(20);
       return {
         entries: rows.map(({ content, createdAt }) => ({ content, at: createdAt.toISOString() })),
-      };
-    }
-
-    if (handlerKey === "orcasynapse.files.read") {
-      const artifactId = typeof _arguments.artifactId === "string" ? _arguments.artifactId.trim() : "";
-      if (!UUID.test(artifactId)) {
-        throw new ToolingConflictError("'artifactId' must be a file id from the ATTACHED FILES list.");
-      }
-      /*
-       * The conversation is the run's session, resolved from the authorization
-       * like the division above -- there is no argument through which the agent
-       * could name another conversation's file. A run with no chat conversation
-       * (its sessionId is not a conversation id) simply matches no artifact and
-       * gets the same answer a wrong id gets.
-       */
-      const [artifact] = UUID.test(scope.sessionId)
-        ? await this.database
-            .select({
-              id: chatArtifact.id,
-              name: chatArtifact.name,
-              path: chatArtifact.path,
-              mediaType: chatArtifact.mediaType,
-              sizeBytes: chatArtifact.sizeBytes,
-              sha256: chatArtifact.sha256,
-              storage: chatArtifact.storage,
-            })
-            .from(chatArtifact)
-            .where(and(eq(chatArtifact.id, artifactId), eq(chatArtifact.conversationId, scope.sessionId)))
-            .limit(1)
-        : [];
-      if (!artifact) {
-        throw new ToolingConflictError("No file with that id is attached to this conversation. The ATTACHED FILES section of your instructions lists the ones that are.");
-      }
-      if (artifact.storage !== "INLINE") {
-        throw new ToolingConflictError(`The bytes of '${artifact.name}' live on the runtime node, not on the control plane. Read it from your session's deliverables directory at ${artifact.path}.`);
-      }
-      const [content] = await this.database
-        .select({ bytes: chatArtifactContent.bytes })
-        .from(chatArtifactContent)
-        .where(eq(chatArtifactContent.artifactId, artifact.id))
-        .limit(1);
-      if (!content) throw new ToolingConflictError(`The content of '${artifact.name}' is no longer retained.`);
-
-      /*
-       * Text or nothing. A tool result is JSON in the model's context, where
-       * base64 spends tokens on bytes the model cannot use -- so a file that is
-       * not UTF-8 answers with its metadata rather than an encoding of itself.
-       * Strict decoding plus the NUL probe is the test: NUL is the one byte no
-       * text file carries but every UTF-8-valid-by-luck binary prefix does.
-       */
-      let text: string;
-      try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(content.bytes);
-      } catch {
-        text = "\u0000";
-      }
-      const metadata = { name: artifact.name, mediaType: artifact.mediaType, sizeBytes: artifact.sizeBytes, sha256: artifact.sha256 };
-      if (text.includes("\u0000")) {
-        return {
-          ...metadata,
-          binary: true,
-          content: null,
-          note: "This file is not UTF-8 text, so its bytes cannot be delivered through this tool. Report its name, type and size to the user instead of guessing at its contents.",
-        };
-      }
-      const requested = typeof _arguments.offset === "number" && Number.isFinite(_arguments.offset)
-        ? Math.floor(_arguments.offset)
-        : 0;
-      const offset = Math.min(Math.max(requested, 0), text.length);
-      const page = text.slice(offset, offset + FILE_READ_PAGE_CHARACTERS);
-      const truncated = offset + page.length < text.length;
-      return {
-        ...metadata,
-        totalCharacters: text.length,
-        offset,
-        content: page,
-        truncated,
-        ...(truncated ? { nextOffset: offset + page.length } : {}),
       };
     }
 

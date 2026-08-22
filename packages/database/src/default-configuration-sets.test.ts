@@ -1,7 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "./testing.js";
-import { DEFAULT_SKILL_SET_SLUG, DEFAULT_TOOL_SET_SLUG } from "./drizzle/migrate.js";
+import { DEFAULT_SKILL_SET_SLUG, DEFAULT_TOOL_SET_SLUG, runMigrations } from "./drizzle/migrate.js";
 import { agentProfileVersion, agentToolGrant, governedTool, skillSet, toolSet } from "./drizzle/schema.js";
 
 let context: TestDatabase;
@@ -66,22 +66,19 @@ describe("the default configuration sets seeded at installation", () => {
 });
 
 /*
- * A fresh install should arrive able to remember and to read what a person
- * attaches, not able to be configured to. An administrator who has just
- * installed this has no basis yet for deciding which agents get these; making
- * them configure it first means the feature is off for everyone who did not
- * already know it existed.
+ * A fresh install should arrive able to remember, not able to be configured
+ * to. An administrator who has just installed this has no basis yet for
+ * deciding which agents get these; making them configure it first means the
+ * feature is off for everyone who did not already know it existed.
  *
  * Cheap to be permissive here because the grant is not the boundary: every
- * built-in is READ_ONLY, and the scope a call reads -- the division for
- * memory, the conversation for attached files -- comes from the run
- * authorization. A wider grant lets more agents use the feature; it never lets
- * one read another scope's rows.
+ * built-in is READ_ONLY, and the scope a call reads -- the division -- comes
+ * from the run authorization. A wider grant lets more agents use the feature;
+ * it never lets one read another scope's rows.
  */
 const BUILT_IN_HANDLER_KEYS = [
   "orcasynapse.memory.remember",
   "orcasynapse.memory.recall",
-  "orcasynapse.files.read",
 ];
 
 describe("the governed built-in tools seeded at installation", () => {
@@ -93,7 +90,33 @@ describe("the governed built-in tools seeded at installation", () => {
     expect(tools).toHaveLength(BUILT_IN_HANDLER_KEYS.length);
     expect(tools.every((tool) => tool.status === "ACTIVE" && tool.risk === "READ_ONLY")).toBe(true);
     // The slug is the name a governed call uses, not a display label.
-    expect(tools.map((tool) => tool.slug).sort()).toEqual(["read_file", "recall", "remember"]);
+    expect(tools.map((tool) => tool.slug).sort()).toEqual(["recall", "remember"]);
+  });
+
+  it("does not seed the retired control-plane file pager", async () => {
+    const tools = await context.database
+      .select({ slug: governedTool.slug, handlerKey: governedTool.handlerKey })
+      .from(governedTool);
+    expect(tools.some((tool) => tool.handlerKey === "orcasynapse.files.read")).toBe(false);
+    expect(tools.some((tool) => tool.slug === "read_file" || tool.slug === "read-file")).toBe(false);
+  });
+
+  it("deletes a leftover control-plane file pager on migrate", async () => {
+    await context.database.insert(governedTool).values({
+      slug: "read_file",
+      displayName: "Read attached file",
+      description: "Retired.",
+      risk: "READ_ONLY",
+      status: "ACTIVE",
+      handlerKey: "orcasynapse.files.read",
+      inputSchema: { type: "object" },
+    });
+    await runMigrations(context.connectionString);
+    const leftover = await context.database
+      .select({ id: governedTool.id })
+      .from(governedTool)
+      .where(inArray(governedTool.handlerKey, ["orcasynapse.files.read"]));
+    expect(leftover).toHaveLength(0);
   });
 
   /*

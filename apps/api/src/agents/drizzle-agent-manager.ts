@@ -452,7 +452,6 @@ export class DrizzleAgentManager implements AgentManager {
       .where(inArray(governedTool.handlerKey, [
         "orcasynapse.memory.remember",
         "orcasynapse.memory.recall",
-        "orcasynapse.files.read",
       ]));
     if (tools.length === 0) return;
     await transaction.insert(agentToolGrant).values(tools.map(({ id }) => ({

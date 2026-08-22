@@ -5,6 +5,23 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.5 — 2026-08-22
+
+Removes the unused control-plane `read_file` governed tool.
+
+### Upgrade notes
+
+- **API and database must ship together.** Session uploads are opened with
+  Hermes native `file` tools on the inbox path (v9.7.2). Migrate deletes
+  `orcasynapse.files.read`, its grants, and its call history. The Tools
+  screen no longer lists `read_file`.
+
+### Changes
+
+- drop the `orcasynapse.files.read` handler, seed, and new-version grants
+- retire leftover `read_file` / `read-file` rows on migrate
+- stamp `createdAt`/`updatedAt` on the file-admission seed so migrate can insert the row
+
 ## v9.7.4 — 2026-08-22
 
 Removes leftover Session-inject helpers after inbox materialize.
