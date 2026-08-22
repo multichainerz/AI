@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v9.7.5"
+INSTALLER_VERSION="v9.7.6"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -684,13 +684,12 @@ memory:
   user_char_limit: 1375
   nudge_interval: 10
   flush_min_turns: 6
-# Hermes otherwise falls back to its broad api_server platform preset. Keep
-# the production baseline limited to native memory (and no dynamically
-# configured MCP servers) until OrcaSynapse explicitly distributes and verifies
-# another governed toolset.
+# Native memory and file tools. Hermes otherwise falls back to its broad
+# api_server preset; unadmitted native toolsets are still disabled by the
+# reconciler. MCP discovery stays on unless an operator later admits `no_mcp`
+# under Agents → Tools, which puts that sentinel on this list.
 platform_toolsets:
   api_server:
-    - no_mcp
     - memory
     - file
 security:
@@ -1555,12 +1554,15 @@ fi
 
 # Admitted names drive two settings, because one is not enough.
 #
-# `platform_toolsets` allowlists this platform, and `no_mcp` suppresses MCP
-# servers — but a toolset enabled globally still runs regardless of both.
-# Verified on the pilot: admitting `clarify` alone left `bfl` enabled too, which
-# the control plane then correctly refused as drift. `agent.disabled_toolsets`
-# is subtracted after every other rule, so naming everything unadmitted there is
-# what actually produces the admitted set and nothing else.
+# `platform_toolsets` allowlists this platform. `no_mcp` on that list
+# suppresses MCP servers, so it is included only when an operator has
+# admitted it — hardcoding it here used to pin MCP off even after they
+# revoked the row. A toolset enabled globally still runs regardless of
+# the allowlist. Verified on the pilot: admitting `clarify` alone left
+# `bfl` enabled too, which the control plane then correctly refused as
+# drift. `agent.disabled_toolsets` is subtracted after every other rule,
+# so naming everything unadmitted there is what actually produces the
+# admitted native set and nothing else.
 KEY="$(sed -n 's/^API_SERVER_KEY=//p' "${STATE_ROOT}/data/.env" 2>/dev/null || true)"
 # Never place the gateway credential in curl's argv. On an ordinary Linux /proc
 # mount every local user can inspect another process's command line, and this
@@ -1618,7 +1620,7 @@ text = open(config_path).read()
 # Drop any block a previous pass wrote, so this stays idempotent.
 text = re.sub(r"\nagent:\n  disabled_toolsets:\n(?:    - .*\n)*", "\n", text)
 
-allowlist = list(dict.fromkeys(["no_mcp", "memory", "file"] + admitted))
+allowlist = list(dict.fromkeys(["memory", "file"] + admitted))
 text = re.sub(
     r"(platform_toolsets:\n  api_server:\n)(?:    - .*\n)+",
     lambda m: m.group(1) + "".join(f"    - {name}\n" for name in allowlist),

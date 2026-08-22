@@ -244,6 +244,21 @@ const BUILT_IN_TOOLS = [
   },
 ] as const;
 
+async function retireEnrolmentNoMcpPin(pool: Pool): Promise<void> {
+  /*
+   * Enrolment used to admit `no_mcp` so MCP discovery stayed off. The
+   * installer no longer hardcodes that sentinel; MCP is on until an
+   * operator admits `no_mcp` themselves. Drop only the enrolment-seeded
+   * row so a later, reasoned pin survives the upgrade.
+   */
+  await pool.query(
+    `DELETE FROM "RuntimeToolsetAdmission"
+      WHERE "toolsetName" = 'no_mcp'
+        AND "admitted" = true
+        AND "reason" = 'The approved baseline, admitted when the Agentic System node enrolled.'`,
+  );
+}
+
 async function retireControlPlaneFileRead(pool: Pool): Promise<void> {
   /*
    * Session uploads now live on the Hermes node inbox. Native `file` tools
@@ -359,6 +374,7 @@ export async function runMigrations(connectionString: string): Promise<void> {
     await seedDefaultConfigurationSets(pool);
     await seedBuiltInTools(pool);
     await retireControlPlaneFileRead(pool);
+    await retireEnrolmentNoMcpPin(pool);
     await pool.query(
       `INSERT INTO "RuntimeToolsetAdmission" ("toolsetName", "admitted", "reason", "createdAt", "updatedAt")
        VALUES ('file', true, 'The approved baseline, admitted so Session uploads can be edited on the node.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)

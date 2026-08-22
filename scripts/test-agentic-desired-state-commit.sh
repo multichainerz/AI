@@ -228,6 +228,9 @@ assert_allowlist_applied() {
     || fail "$1: the admitted toolset never reached the managed policy"
   grep -Fq 'disabled_toolsets' "${CASE_ROOT}/managed/config.yaml" \
     || fail "$1: the unadmitted toolsets were never disabled in the managed policy"
+  if grep -Fqx '    - no_mcp' "${CASE_ROOT}/managed/config.yaml"; then
+    fail "$1: no_mcp was hardcoded onto the allowlist without being admitted"
+  fi
 }
 
 # ---------------------------------------------------------------------------

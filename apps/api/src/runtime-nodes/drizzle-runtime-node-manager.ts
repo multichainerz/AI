@@ -59,23 +59,22 @@ import {
  * What a newly enrolled node is allowed to run before an operator says anything.
  *
  * The same names the installer writes into managed scope
- * (`platform_toolsets: api_server: [no_mcp, memory, file]`), stated here because the
+ * (`platform_toolsets: api_server: [memory, file]`), stated here because the
  * dashboard and the node have to agree on the starting position: the reconciler
  * computes what to suppress as everything-minus-admitted, so an admission set
  * wider than this one silently empties that suppression list.
  *
  * `memory` is the built-in the runbook names. `file` is native read/write/patch
  * so a Session upload materialized under `artifacts/<session>/inbox/` can be
- * edited on the node. `no_mcp` is not a capability but the marker that
- * suppresses dynamic MCP discovery, and it is admitted for the same reason it
- * appears in the installer's allowlist -- it has to survive the intersection or
- * discovery comes back.
+ * edited on the node. MCP discovery is on until an operator admits `no_mcp`
+ * under Agents → Tools; that sentinel is not a baseline capability.
  *
- * Widening past this set is a product decision, not a deployment one. An
- * operator widens their own deployment through the admission screen, which is
- * the recorded, audited path this seeding deliberately does not replace.
+ * Widening native toolsets past this set is a product decision, not a
+ * deployment one. An operator widens their own deployment through the
+ * admission screen, which is the recorded, audited path this seeding
+ * deliberately does not replace.
  */
-const BASELINE_ADMITTED_TOOLSETS = ["no_mcp", "memory", "file"] as const;
+const BASELINE_ADMITTED_TOOLSETS = ["memory", "file"] as const;
 
 const SIGNATURE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const NONCE_RETENTION_MS = 24 * 60 * 60 * 1_000;
@@ -440,8 +439,9 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
    * posture: `docs/CURRENT_STATE_HANDOFF.md` invariant 7 is "native toolsets are
    * default-deny except built-in memory and explicit operator admissions", and
    * step 7 of the enrolment runbook promises "admitting only the built-in
-   * `memory` tool and disabling default MCP discovery and every other unapproved
-   * native toolset". Reading the catalogue could not deliver that on two counts.
+   * `memory` tool" while disabling every other unapproved native toolset.
+   * MCP discovery is left on; admitting `no_mcp` later is how an operator
+   * pins it off. Reading the catalogue could not deliver that on two counts.
    *
    * The first is ordering: enrolment happens before the installer writes the
    * managed policy, so the catalogue read is of *stock* Hermes with its broad

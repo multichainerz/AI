@@ -2,7 +2,7 @@ import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "./testing.js";
 import { DEFAULT_SKILL_SET_SLUG, DEFAULT_TOOL_SET_SLUG, runMigrations } from "./drizzle/migrate.js";
-import { agentProfileVersion, agentToolGrant, governedTool, skillSet, toolSet } from "./drizzle/schema.js";
+import { agentProfileVersion, agentToolGrant, governedTool, runtimeToolsetAdmission, skillSet, toolSet } from "./drizzle/schema.js";
 
 let context: TestDatabase;
 
@@ -117,6 +117,33 @@ describe("the governed built-in tools seeded at installation", () => {
       .from(governedTool)
       .where(inArray(governedTool.handlerKey, ["orcasynapse.files.read"]));
     expect(leftover).toHaveLength(0);
+  });
+
+  it("drops an enrolment-seeded no_mcp pin and keeps an operator pin", async () => {
+    await context.database.insert(runtimeToolsetAdmission).values({
+      toolsetName: "no_mcp",
+      admitted: true,
+      reason: "The approved baseline, admitted when the Agentic System node enrolled.",
+    });
+    await runMigrations(context.connectionString);
+    expect(
+      await context.database
+        .select({ id: runtimeToolsetAdmission.id })
+        .from(runtimeToolsetAdmission)
+        .where(eq(runtimeToolsetAdmission.toolsetName, "no_mcp")),
+    ).toHaveLength(0);
+
+    await context.database.insert(runtimeToolsetAdmission).values({
+      toolsetName: "no_mcp",
+      admitted: true,
+      reason: "Block MCP until the security review finishes.",
+    });
+    await runMigrations(context.connectionString);
+    const kept = await context.database
+      .select({ admitted: runtimeToolsetAdmission.admitted, reason: runtimeToolsetAdmission.reason })
+      .from(runtimeToolsetAdmission)
+      .where(eq(runtimeToolsetAdmission.toolsetName, "no_mcp"));
+    expect(kept).toEqual([{ admitted: true, reason: "Block MCP until the security review finishes." }]);
   });
 
   /*

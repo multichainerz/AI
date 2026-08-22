@@ -5,6 +5,30 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.6 — 2026-08-22
+
+Leaves Hermes MCP discovery on until an operator pins it off.
+
+### Upgrade notes
+
+- **API, database, and the Agentic System node must ship together.** Repair
+  or re-enroll VM2 so the desired-state client stops hardcoding `no_mcp`.
+  Migrate deletes only the enrolment-seeded `no_mcp` admission (reason
+  *The approved baseline, admitted when the Agentic System node enrolled.*).
+  An operator pin with a different reason is kept.
+- Native toolsets stay default-deny (`memory` and `file` only until admitted).
+  MCP servers Hermes already has enabled become reachable. To pin MCP off
+  later, allow `no_mcp` under Agents → Tools.
+- This does not wire VM1 governed tools (`remember` / `recall`) over MCP.
+  That still needs per-run authorization the `api_server` platform cannot
+  send.
+
+### Changes
+
+- drop `no_mcp` from the enrolment baseline and the installer allowlist prefix
+- retire enrolment-seeded `no_mcp` rows on migrate; keep operator pins
+- put `no_mcp` on `platform_toolsets` only when it is admitted
+
 ## v9.7.5 — 2026-08-22
 
 Removes the unused control-plane `read_file` governed tool.

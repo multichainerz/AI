@@ -482,7 +482,6 @@ describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () =
     expect(await admissions()).toEqual([
       { name: "file", admitted: true },
       { name: "memory", admitted: true },
-      { name: "no_mcp", admitted: true },
     ]);
   });
 
@@ -494,7 +493,7 @@ describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () =
       .from(auditEvent)
       .where(eq(auditEvent.action, "tool.toolset_admitted_on_enrollment"));
     expect(event).toMatchObject({ actorType: "SERVICE", resourceId: node.id, outcome: "SUCCESS" });
-    expect((event!.metadata as { toolsets: string[] }).toolsets.sort()).toEqual(["file", "memory", "no_mcp"]);
+    expect((event!.metadata as { toolsets: string[] }).toolsets.sort()).toEqual(["file", "memory"]);
   });
 
   it("never re-admits a toolset an operator revoked", async () => {
@@ -513,7 +512,6 @@ describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () =
     expect(await admissions()).toEqual([
       { name: "file", admitted: true },
       { name: "memory", admitted: false },
-      { name: "no_mcp", admitted: true },
     ]);
   });
 
@@ -528,8 +526,13 @@ describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () =
     expect(await admissions()).toEqual([
       { name: "file", admitted: true },
       { name: "memory", admitted: true },
-      { name: "no_mcp", admitted: true },
     ]);
+  });
+
+  it("does not pin MCP off as part of the baseline", async () => {
+    await enrolledNode();
+    const admitted = (await admissions()).map(({ name }) => name);
+    expect(admitted).not.toContain("no_mcp");
   });
 
   it("leaves everything outside the baseline unadmitted, so drift is still detectable", async () => {
@@ -923,7 +926,7 @@ describe("runtime node pure helpers", () => {
         nodeId: node.id,
         // The enrolment baseline is always present; `clarify` is this test's
         // own operator admission on top of it.
-        admittedToolsets: ["clarify", "file", "memory", "no_mcp"],
+        admittedToolsets: ["clarify", "file", "memory"],
       });
     });
 
@@ -940,7 +943,7 @@ describe("runtime node pure helpers", () => {
       const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
       expect(Object.hasOwn(document, "admittedToolsets")).toBe(true);
-      expect(document.admittedToolsets).toEqual(["file", "memory", "no_mcp"]);
+      expect(document.admittedToolsets).toEqual(["file", "memory"]);
     });
 
     it("omits a toolset whose admission was revoked", async () => {
@@ -951,8 +954,18 @@ describe("runtime node pure helpers", () => {
       ]);
       const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
-      expect(document.admittedToolsets).toEqual(["clarify", "file", "memory", "no_mcp"]);
+      expect(document.admittedToolsets).toEqual(["clarify", "file", "memory"]);
       expect(document.admittedToolsets).not.toContain("code_execution");
+    });
+
+    it("names no_mcp only when an operator admitted it", async () => {
+      const { node, identity } = await enrolledNode();
+      await context.database.insert(runtimeToolsetAdmission).values({
+        toolsetName: "no_mcp", admitted: true, reason: "Pin MCP off.",
+      });
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
+      const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
+      expect(document.admittedToolsets).toEqual(["file", "memory", "no_mcp"]);
     });
 
     /*
