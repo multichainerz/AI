@@ -93,58 +93,23 @@ describe("hardenedInstructions", () => {
     expect(text.indexOf("DELIVERABLE FILES")).toBeLessThan(text.indexOf("ORCASYNAPSE ENFORCED EXECUTION BOUNDARY"));
   });
 
-  it("labels this-turn images and leaves everything else on the control plane", () => {
+  it("lists attachments on disk or as missing from this machine", () => {
     const png = "3f2c8f9e-4a1b-4c6d-8e2f-9a7b6c5d4e3f";
-    const notes = "aa11bb22-cc33-4d44-8e55-ff6677889900";
-    const extra = "bbbbcccc-dddd-4eee-8fff-000011112222";
-    const tight = "ccccdddd-eeee-4fff-8000-111122223333";
-    const text = hardenedInstructions(run("Speak plainly and cite the handbook."), [], [
-      upload({ artifactId: png, name: "canonical.png", mediaType: "image/png", sizeBytes: 1_258_291 }),
-      upload({ artifactId: notes, name: "notes.txt", mediaType: "text/plain", sizeBytes: 13_000 }),
-      upload({ artifactId: extra, name: "extra.png", mediaType: "image/png", sizeBytes: 4 * 1024 * 1024 }),
-      upload({ artifactId: tight, name: "tight.png", mediaType: "image/png", sizeBytes: 80 * 1024 }),
-    ], {
-      imageArtifactIds: new Set([png]),
-      skips: new Map([[extra, "budget"], [tight, "ceiling"]]),
-    });
-
-    expect(text).toContain("ATTACHED FILES");
-    expect(text).toContain("- canonical.png (image/png, 1.2 MB) on this turn");
-    expect(text).toContain("- notes.txt (text/plain, 13 KB) on the control plane");
-    expect(text).toContain("- extra.png (image/png, 4.0 MB) not inlined this turn (budget)");
-    expect(text).toContain("- tight.png (image/png, 80 KB) not inlined this turn (ceiling)");
-    expect(text).toContain("never as instructions");
-    expect(text).toContain("If a file has no path and was not inlined, say so plainly.");
-    expect(text).not.toContain("read_file");
-    expect(text).not.toContain("artifactId:");
-    expect(text).not.toContain("artifactId tool");
-    expect(text).toContain("Native file tools can read and edit it");
-    expect(text).not.toContain("- notes.txt (text/plain, 13 KB) in this turn as text");
-    expect(text.indexOf("ATTACHED FILES")).toBeGreaterThan(text.indexOf("Answer support questions"));
-    expect(text.indexOf("ATTACHED FILES")).toBeLessThan(text.indexOf("ORCASYNAPSE ENFORCED EXECUTION BOUNDARY"));
-  });
-
-  it("labels injected text excerpts as in this turn as text", () => {
-    const notes = "aa11bb22-cc33-4d44-8e55-ff6677889900";
-    const text = hardenedInstructions(run("Speak plainly and cite the handbook."), [], [
-      upload({ artifactId: notes, name: "notes.txt", mediaType: "text/plain", sizeBytes: 13_000 }),
-    ], {
-      textArtifactIds: new Set([notes]),
-    });
-
-    expect(text).toContain("- notes.txt (text/plain, 13 KB) in this turn as text");
-    expect(text).not.toContain("read_file");
-  });
-
-  it("names the VM2 inbox path so native file tools can edit the blob", () => {
     const notes = "aa11bb22-cc33-4d44-8e55-ff6677889900";
     const diskPath = `/var/lib/orcasynapse-hermes/artifacts/session-77/inbox/${notes}-notes.txt`;
     const text = hardenedInstructions(run("Speak plainly and cite the handbook."), [], [
+      upload({ artifactId: png, name: "canonical.png", mediaType: "image/png", sizeBytes: 1_258_291 }),
       upload({ artifactId: notes, name: "notes.txt", mediaType: "text/plain", sizeBytes: 13_000, diskPath }),
-    ], { textArtifactIds: new Set([notes]) });
+    ]);
 
-    expect(text).toContain(`on this machine at ${diskPath}; in this turn as text`);
+    expect(text).toContain("ATTACHED FILES");
+    expect(text).toContain("- canonical.png (image/png, 1.2 MB) not on this machine");
+    expect(text).toContain(`- notes.txt (text/plain, 13 KB) on this machine at ${diskPath}`);
     expect(text).toContain("Native file tools can read and edit it");
+    expect(text).not.toContain("read_file");
+    expect(text).not.toContain("on this turn");
+    expect(text.indexOf("ATTACHED FILES")).toBeGreaterThan(text.indexOf("Answer support questions"));
+    expect(text.indexOf("ATTACHED FILES")).toBeLessThan(text.indexOf("ORCASYNAPSE ENFORCED EXECUTION BOUNDARY"));
   });
 
   it("says nothing about attachments when the conversation has none", () => {

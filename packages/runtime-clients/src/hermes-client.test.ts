@@ -1,7 +1,7 @@
 import { AGENT_RUN_ENDED_EVENT_TYPE } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient, frameUserFileText, hermesInboxOrigin, nativeSessionChatBody, persistFlattenedUserText, SAFE_EVENT_TYPES } from "./hermes-client.js";
+import { HermesClient, hermesInboxOrigin, nativeSessionChatBody, SAFE_EVENT_TYPES } from "./hermes-client.js";
 
 function resolver(): DrizzleRuntimeConnectionResolver {
   return {
@@ -159,55 +159,6 @@ describe("HermesClient native sessions", () => {
     );
 
     expect(streamed.name).toBe("HermesRunDetachedError");
-  });
-
-  it("posts image parts when images are present and a string message when they are empty", async () => {
-    const withImages = {
-      input: "describe this",
-      instructions: "Stay bounded",
-      sessionId: "session-1",
-      idempotencyKey: "request-2",
-      modelAlias: "hermes-agent",
-      images: [{ mediaType: "image/png" as const, base64: "QUJD" }],
-    };
-    expect(nativeSessionChatBody(withImages)).toEqual({
-      message: [
-        { type: "text", text: "describe this" },
-        { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
-      ],
-      instructions: "Stay bounded",
-      model: "hermes-agent",
-    });
-    expect(nativeSessionChatBody({ ...withImages, images: [] }).message).toBe("describe this");
-    expect(persistFlattenedUserText(withImages)).toBe("describe this\n[screenshot]");
-    expect(persistFlattenedUserText({ ...withImages, images: [] })).toBe("describe this");
-  });
-
-  it("posts framed text excerpts before image parts and keeps an empty pair as a string", () => {
-    const excerpt = { name: "notes.txt", mediaType: "text/plain", text: "hello" };
-    const framed = frameUserFileText("notes.txt", "text/plain", "hello");
-    const withExcerpts = {
-      input: "describe this",
-      instructions: "Stay bounded",
-      sessionId: "session-1",
-      idempotencyKey: "request-3",
-      modelAlias: "hermes-agent",
-      textExcerpts: [excerpt],
-      images: [{ mediaType: "image/png" as const, base64: "QUJD" }],
-    };
-    expect(framed.startsWith("\n")).toBe(false);
-    expect(nativeSessionChatBody(withExcerpts)).toEqual({
-      message: [
-        { type: "text", text: "describe this" },
-        { type: "text", text: framed },
-        { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
-      ],
-      instructions: "Stay bounded",
-      model: "hermes-agent",
-    });
-    expect(persistFlattenedUserText(withExcerpts)).toBe(`describe this\n${framed}\n[screenshot]`);
-    expect(persistFlattenedUserText({ ...withExcerpts, images: [] })).toBe(`describe this\n${framed}`);
-    expect(nativeSessionChatBody({ ...withExcerpts, images: [], textExcerpts: [] }).message).toBe("describe this");
   });
 
   it("puts session uploads on the inbox port, not the Hermes chat port", async () => {

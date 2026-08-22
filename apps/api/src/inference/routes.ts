@@ -104,12 +104,9 @@ export async function registerInferenceGatewayRoutes(
   });
 
   /*
-   * 16 MiB, on this one route only: this-turn `data:image` parts plus the
-   * replayed transcript. Hermes persist stores `[screenshot]`, so later
-   * turns do not re-send old pixels; the ceiling is the current user
-   * message, not a historical-PNG lock. Nginx `client_max_body_size` on
-   * `/internal/v1/` must stay at least this high. Every other route keeps
-   * the tight default as its own defense.
+   * 16 MiB, on this one route only, because the body is the whole transcript.
+   * Nginx `client_max_body_size` on `/internal/v1/` must stay at least this
+   * high. Every other route keeps the tight default as its own defense.
    */
   app.post("/chat/completions", { bodyLimit: 16 * 1_048_576 }, async (request, reply) => {
     const gateway = gatewayOrLocked(options, reply);

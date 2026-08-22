@@ -8,8 +8,5 @@ publisher skips `inbox/` so those files are not echoed back as agent
 deliverables. Save a copy the user should keep under the session deliverables
 directory.
 
-This-turn PNG/JPEG/GIF/WebP still ride the Hermes POST as `image_url` /
-`data:image` parts (later turns persist `[screenshot]`). Small this-turn UTF-8
-still inlines as extra text. There is no session-inbox companion besides the
-existing publisher binary serving `--serve-inbox` on TCP/8643 with the Hermes
-API key.
+The Hermes POST is the typed prompt only. Images and text are not inlined on
+the wire; the agent opens the inbox path with native file tools.

@@ -11,7 +11,6 @@ import {
   serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
-import { frameUserFileText } from "@orcasynapse/runtime-clients";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionDiagnosticStore } from "../connections/diagnostics/types.js";
 import { InferenceGatewayError, DrizzleInferenceGateway } from "./inference-gateway.js";
@@ -453,49 +452,6 @@ describe("DrizzleInferenceGateway", () => {
       new AbortController().signal,
     )).resolves.toBeDefined();
 
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
-
-  it("allows an extra file-text part under the default 128k ceiling", async () => {
-    const { gateway, fetcher } = await harness();
-    await expect(gateway.chat(
-      "runtime-key",
-      {
-        ...request,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "text", text: "summarize" },
-            { type: "text", text: frameUserFileText("notes.txt", "text/plain", "hello") },
-          ],
-        }],
-      },
-      new AbortController().signal,
-    )).resolves.toBeDefined();
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not POLICY_REJECT a collapsed prompt-plus-excerpt under a 32,000 policy", async () => {
-    const { gateway, fetcher } = await harness();
-    await context.database.insert(guardrailPolicy).values({
-      slug: `policy-${randomUUID().slice(0, 8)}`,
-      displayName: "Historical 32k",
-      description: "Successful inject must stay inside this ceiling.",
-      version: "1",
-      status: "ACTIVE",
-      maxInputCharacters: 32_000,
-      maxOutputCharacters: 256_000,
-      firstActivatedAt: new Date(),
-      rules: [],
-    });
-    const collapsed = ["Summarize the policy.", frameUserFileText("notes.txt", "text/plain", "hello from notes")].join("\n");
-
-    await expect(gateway.chat(
-      "runtime-key",
-      { ...request, messages: [{ role: "user", content: collapsed }] },
-      new AbortController().signal,
-    )).resolves.toBeDefined();
-    expect(collapsed.length).toBeLessThanOrEqual(32_000);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 

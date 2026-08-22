@@ -5,6 +5,23 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.7.3 — 2026-08-22
+
+Stops inlining Session images and notes on the Hermes POST.
+
+### Upgrade notes
+
+- **API and worker must ship together.** This-turn `data:image` and extra
+  UTF-8 parts are gone. Attachments reach the agent only as files under
+  `artifacts/<sessionId>/inbox/` (v9.7.2). Open a PNG with native file/vision
+  tools on that path; a short note is `read_file`, not extra prompt text.
+
+### Changes
+
+- drop this-turn image and small UTF-8 inject from the worker and Hermes
+  native-session body
+- announce attachments by inbox path only
+
 ## v9.7.2 — 2026-08-22
 
 Puts Session uploads on the Hermes node so the agent can edit the actual file.
@@ -19,7 +36,8 @@ Puts Session uploads on the Hermes node so the agent can edit the actual file.
   unit. Open TCP/8643 from VM1 to VM2.
 - The publisher does not re-upload `inbox/` files. Edited copies the user
   should keep belong under the session deliverables directory.
-- This-turn image and small UTF-8 inject from v9.7.1 still runs.
+- This-turn image and small UTF-8 inject from v9.7.1 still ran in this tag
+  (removed in v9.7.3).
 
 ### Changes
 
@@ -27,7 +45,7 @@ Puts Session uploads on the Hermes node so the agent can edit the actual file.
 - skip `inbox/` in the artifact publisher so user files are not ingested as
   agent deliverables
 - admit the native `file` toolset in the enrolment baseline
-- keep this-turn image and small UTF-8 inject on the Hermes POST
+- keep this-turn image and small UTF-8 inject on the Hermes POST (removed in v9.7.3)
 
 ## v9.7.1 — 2026-08-22
 
